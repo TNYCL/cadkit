@@ -13,6 +13,7 @@ pub fn options() -> ReadOptions {
             max_depth: 32,
             max_string_bytes: 1 << 20,
             max_vertices: 500_000,
+            max_total_vertices: 2_000_000,
         },
         ..ReadOptions::default()
     }
