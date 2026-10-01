@@ -82,6 +82,8 @@ pub struct CompoundFile<'a> {
     mini_fat: Vec<u32>,
     mini_stream: Vec<u8>,
     entries: Vec<DirEntry>,
+    /// Storage/stream paths in tree order, computed once at parse time.
+    paths: Vec<PathEntry>,
 }
 
 impl<'a> CompoundFile<'a> {
@@ -105,10 +107,18 @@ impl<'a> CompoundFile<'a> {
         let sector_size = match sector_shift {
             9 => 512usize,
             12 => 4096,
-            s => return Err(Error::invalid(0x1E, format!("unsupported CFB sector shift {s}"))),
+            s => {
+                return Err(Error::invalid(
+                    0x1E,
+                    format!("unsupported CFB sector shift {s}"),
+                ));
+            }
         };
         if mini_shift != 6 {
-            return Err(Error::invalid(0x20, format!("unsupported CFB mini sector shift {mini_shift}")));
+            return Err(Error::invalid(
+                0x20,
+                format!("unsupported CFB mini sector shift {mini_shift}"),
+            ));
         }
         let mini_sector_size = 64usize;
         let num_fat = field(0x2C);
@@ -122,13 +132,19 @@ impl<'a> CompoundFile<'a> {
         let max_sectors = data.len() / sector_size;
 
         // DIFAT: 109 entries in the header, then chained DIFAT sectors.
-        let mut difat: Vec<u32> = (0..109).filter_map(|i| le::u32_at(header, 0x4C + 4 * i)).collect();
+        let mut difat: Vec<u32> = (0..109)
+            .filter_map(|i| le::u32_at(header, 0x4C + 4 * i))
+            .collect();
         let per_difat = sector_size / 4 - 1;
         let mut next = first_difat;
         let mut seen = 0usize;
         while next <= MAX_REGSECT && seen < (num_difat as usize).min(max_sectors) {
-            let sec = sector_slice(data, sector_size, next)
-                .ok_or_else(|| Error::invalid(sector_offset(sector_size, next), "DIFAT sector outside the file"))?;
+            let sec = sector_slice(data, sector_size, next).ok_or_else(|| {
+                Error::invalid(
+                    sector_offset(sector_size, next),
+                    "DIFAT sector outside the file",
+                )
+            })?;
             difat.extend((0..per_difat).filter_map(|i| le::u32_at(sec, 4 * i)));
             next = le::u32_at(sec, 4 * per_difat).unwrap_or(ENDOFCHAIN);
             seen += 1;
@@ -141,9 +157,14 @@ impl<'a> CompoundFile<'a> {
                 continue;
             }
             match sector_slice(data, sector_size, sid) {
-                Some(sec) => fat.extend((0..sector_size / 4).filter_map(|i| le::u32_at(sec, 4 * i))),
+                Some(sec) => {
+                    fat.extend((0..sector_size / 4).filter_map(|i| le::u32_at(sec, 4 * i)))
+                }
                 None => {
-                    return Err(Error::invalid(sector_offset(sector_size, sid), "FAT sector outside the file"));
+                    return Err(Error::invalid(
+                        sector_offset(sector_size, sid),
+                        "FAT sector outside the file",
+                    ));
                 }
             }
         }
@@ -158,21 +179,32 @@ impl<'a> CompoundFile<'a> {
             mini_fat: Vec::new(),
             mini_stream: Vec::new(),
             entries: Vec::new(),
+            paths: Vec::new(),
         };
 
         let dir = cf.read_chain(first_dir, None)?;
-        let entries: Vec<DirEntry> = dir.chunks_exact(DIR_ENTRY_LEN).map(parse_dir_entry).collect();
+        let entries: Vec<DirEntry> = dir
+            .chunks_exact(DIR_ENTRY_LEN)
+            .map(parse_dir_entry)
+            .collect();
         if entries.first().map(|e| e.kind) != Some(EntryKind::Root) {
-            return Err(Error::invalid(sector_offset(sector_size, first_dir), "CFB directory has no root entry"));
+            return Err(Error::invalid(
+                sector_offset(sector_size, first_dir),
+                "CFB directory has no root entry",
+            ));
         }
         cf.entries = entries;
+        cf.paths = cf.collect_paths();
 
         if !load_mini {
             return Ok(cf);
         }
         if first_mini_fat <= MAX_REGSECT {
             let mf = cf.read_chain(first_mini_fat, None)?;
-            cf.mini_fat = mf.chunks_exact(4).filter_map(|c| le::u32_at(c, 0)).collect();
+            cf.mini_fat = mf
+                .chunks_exact(4)
+                .filter_map(|c| le::u32_at(c, 0))
+                .collect();
         }
         if let Some(root) = cf.entries.first().cloned() {
             if root.start <= MAX_REGSECT && root.size > 0 {
@@ -188,7 +220,12 @@ impl<'a> CompoundFile<'a> {
     }
 
     /// Every storage and stream below the root, with full paths, in tree order.
-    pub fn paths(&self) -> Vec<PathEntry> {
+    /// Computed once when the file is parsed.
+    pub fn paths(&self) -> &[PathEntry] {
+        &self.paths
+    }
+
+    fn collect_paths(&self) -> Vec<PathEntry> {
         let mut out = Vec::new();
         if let Some(root) = self.entries.first() {
             let mut visited = vec![false; self.entries.len()];
@@ -200,7 +237,14 @@ impl<'a> CompoundFile<'a> {
         out
     }
 
-    fn collect(&self, start: u32, prefix: &str, depth: usize, visited: &mut [bool], out: &mut Vec<PathEntry>) {
+    fn collect(
+        &self,
+        start: u32,
+        prefix: &str,
+        depth: usize,
+        visited: &mut [bool],
+        out: &mut Vec<PathEntry>,
+    ) {
         if depth > MAX_TREE_DEPTH {
             return;
         }
@@ -214,9 +258,20 @@ impl<'a> CompoundFile<'a> {
                 cur = e.left;
             }
             let Some(id) = stack.pop() else { break };
-            let Some(e) = self.entries.get(id as usize) else { break };
-            let path = if prefix.is_empty() { e.name.clone() } else { format!("{prefix}/{}", e.name) };
-            out.push(PathEntry { path: path.clone(), index: id as usize, kind: e.kind, size: e.size });
+            let Some(e) = self.entries.get(id as usize) else {
+                break;
+            };
+            let path = if prefix.is_empty() {
+                e.name.clone()
+            } else {
+                format!("{prefix}/{}", e.name)
+            };
+            out.push(PathEntry {
+                path: path.clone(),
+                index: id as usize,
+                kind: e.kind,
+                size: e.size,
+            });
             if e.kind == EntryKind::Storage {
                 self.collect(e.child, &path, depth + 1, visited, out);
             }
@@ -234,13 +289,18 @@ impl<'a> CompoundFile<'a> {
             return None;
         }
         *slot = true;
-        self.entries.get(id as usize).filter(|e| e.kind != EntryKind::Empty)
+        self.entries
+            .get(id as usize)
+            .filter(|e| e.kind != EntryKind::Empty)
     }
 
     /// Index of the entry at `path` (`/` separated, case-insensitive as in CFB).
     pub fn find(&self, path: &str) -> Option<usize> {
         let want = path.trim_start_matches('/');
-        self.paths().into_iter().find(|p| p.path.eq_ignore_ascii_case(want)).map(|p| p.index)
+        self.paths
+            .iter()
+            .find(|p| p.path.eq_ignore_ascii_case(want))
+            .map(|p| p.index)
     }
 
     /// Reads the stream with directory index `index`. Fails on missing or truncated data.
@@ -250,13 +310,19 @@ impl<'a> CompoundFile<'a> {
             .get(index)
             .ok_or_else(|| Error::invalid(0, format!("no CFB directory entry {index}")))?;
         if e.kind != EntryKind::Stream {
-            return Err(Error::invalid(0, format!("CFB entry {} is not a stream", e.name)));
+            return Err(Error::invalid(
+                0,
+                format!("CFB entry {} is not a stream", e.name),
+            ));
         }
         if e.size == 0 {
             return Ok(Vec::new());
         }
         if e.size > self.data.len() as u64 {
-            return Err(Error::invalid(0, format!("CFB stream {} is larger than the file", e.name)));
+            return Err(Error::invalid(
+                0,
+                format!("CFB stream {} is larger than the file", e.name),
+            ));
         }
         if e.size < self.mini_cutoff {
             self.read_mini_chain(e.start, e.size)
@@ -273,10 +339,17 @@ impl<'a> CompoundFile<'a> {
         let mut count = 0usize;
         while sid <= MAX_REGSECT {
             if count >= max_sectors {
-                return Err(Error::invalid(sector_offset(self.sector_size, sid), "CFB sector chain loops"));
+                return Err(Error::invalid(
+                    sector_offset(self.sector_size, sid),
+                    "CFB sector chain loops",
+                ));
             }
-            let sec = sector_slice(self.data, self.sector_size, sid)
-                .ok_or_else(|| Error::invalid(sector_offset(self.sector_size, sid), "CFB sector outside the file"))?;
+            let sec = sector_slice(self.data, self.sector_size, sid).ok_or_else(|| {
+                Error::invalid(
+                    sector_offset(self.sector_size, sid),
+                    "CFB sector outside the file",
+                )
+            })?;
             out.extend_from_slice(sec);
             count += 1;
             if let Some(s) = size {
@@ -306,7 +379,11 @@ impl<'a> CompoundFile<'a> {
             if out.len() as u64 >= size {
                 break;
             }
-            sid = self.mini_fat.get(sid as usize).copied().unwrap_or(ENDOFCHAIN);
+            sid = self
+                .mini_fat
+                .get(sid as usize)
+                .copied()
+                .unwrap_or(ENDOFCHAIN);
         }
         finish(out, Some(size))
     }
@@ -316,7 +393,10 @@ fn finish(mut out: Vec<u8>, size: Option<u64>) -> Result<Vec<u8>> {
     if let Some(s) = size {
         let s = usize::try_from(s).unwrap_or(usize::MAX);
         if out.len() < s {
-            return Err(Error::Truncated { offset: 0, needed: (s - out.len()) as u64 });
+            return Err(Error::Truncated {
+                offset: 0,
+                needed: (s - out.len()) as u64,
+            });
         }
         out.truncate(s);
     }
@@ -363,12 +443,18 @@ fn parse_dir_entry(e: &[u8]) -> DirEntry {
 /// stream or storage named `name` (case-insensitive). Reads the header, the FAT and the
 /// directory chain only; no stream data is touched.
 pub fn root_contains(data: &[u8], name: &str) -> bool {
-    let Ok(cf) = CompoundFile::parse_impl(data, false) else { return false };
-    let Some(root) = cf.entries.first() else { return false };
+    let Ok(cf) = CompoundFile::parse_impl(data, false) else {
+        return false;
+    };
+    let Some(root) = cf.entries.first() else {
+        return false;
+    };
     let mut visited = vec![false; cf.entries.len()];
     let mut stack = vec![root.child];
     while let Some(id) = stack.pop() {
-        let Some(e) = cf.entry_once(id, &mut visited) else { continue };
+        let Some(e) = cf.entry_once(id, &mut visited) else {
+            continue;
+        };
         if e.name.eq_ignore_ascii_case(name) {
             return true;
         }
@@ -397,13 +483,22 @@ pub(crate) mod tests {
             children: Vec<usize>,
             data: Vec<u8>,
         }
-        let mut nodes = vec![Node { name: "Root Entry".into(), kind: 5, children: vec![], data: vec![] }];
+        let mut nodes = vec![Node {
+            name: "Root Entry".into(),
+            kind: 5,
+            children: vec![],
+            data: vec![],
+        }];
         for (path, data) in streams {
             let mut parent = 0usize;
             let parts: Vec<&str> = path.split('/').collect();
             for (i, part) in parts.iter().enumerate() {
                 let last = i + 1 == parts.len();
-                let found = nodes[parent].children.iter().copied().find(|&c| nodes[c].name == *part);
+                let found = nodes[parent]
+                    .children
+                    .iter()
+                    .copied()
+                    .find(|&c| nodes[c].name == *part);
                 parent = match found {
                     Some(c) => c,
                     None => {
@@ -433,7 +528,11 @@ pub(crate) mod tests {
                 let mut s = data[i * SS..((i + 1) * SS).min(data.len())].to_vec();
                 s.resize(SS, 0);
                 sectors.push(s);
-                fat.push(if i + 1 == n { ENDOFCHAIN } else { start + i as u32 + 1 });
+                fat.push(if i + 1 == n {
+                    ENDOFCHAIN
+                } else {
+                    start + i as u32 + 1
+                });
             }
             start
         };
@@ -449,7 +548,11 @@ pub(crate) mod tests {
                 let start = (mini.len() / 64) as u32;
                 let k = n.data.len().div_ceil(64);
                 for j in 0..k {
-                    minifat.push(if j + 1 == k { ENDOFCHAIN } else { start + j as u32 + 1 });
+                    minifat.push(if j + 1 == k {
+                        ENDOFCHAIN
+                    } else {
+                        start + j as u32 + 1
+                    });
                 }
                 mini.extend_from_slice(&n.data);
                 mini.resize(mini.len().div_ceil(64) * 64, 0);
@@ -497,15 +600,27 @@ pub(crate) mod tests {
             dir.extend_from_slice(&e);
         }
         let dir_start = alloc(&dir, &mut sectors, &mut fat);
-        assert!(fat.len() <= SS / 4, "test builder supports one FAT sector");
-        let mut fat_sec = vec![0u8; SS];
-        for (i, v) in fat.iter().enumerate() {
-            fat_sec[i * 4..i * 4 + 4].copy_from_slice(&v.to_le_bytes());
+        // Sector 0 is the first FAT sector; files with more than 128 sectors get extra FAT
+        // sectors appended at the end (each also listed in the FAT and the header DIFAT).
+        const PER_FAT: usize = SS / 4;
+        let mut fat_sectors = vec![0u32];
+        while fat_sectors.len() * PER_FAT < fat.len() {
+            fat_sectors.push(sectors.len() as u32);
+            sectors.push(vec![0; SS]);
+            fat.push(0xFFFF_FFFD);
         }
-        for i in fat.len()..SS / 4 {
-            fat_sec[i * 4..i * 4 + 4].copy_from_slice(&NOSTREAM.to_le_bytes());
+        assert!(
+            fat_sectors.len() <= 109,
+            "test builder supports header DIFAT only"
+        );
+        fat.resize(fat_sectors.len() * PER_FAT, NOSTREAM);
+        for (k, &sec) in fat_sectors.iter().enumerate() {
+            let mut fat_sec = vec![0u8; SS];
+            for (i, v) in fat[k * PER_FAT..(k + 1) * PER_FAT].iter().enumerate() {
+                fat_sec[i * 4..i * 4 + 4].copy_from_slice(&v.to_le_bytes());
+            }
+            sectors[sec as usize] = fat_sec;
         }
-        sectors[0] = fat_sec;
         let mut h = vec![0u8; 512];
         h[..8].copy_from_slice(&SIGNATURE);
         h[0x18..0x1A].copy_from_slice(&0x3Eu16.to_le_bytes());
@@ -513,14 +628,14 @@ pub(crate) mod tests {
         h[0x1C..0x1E].copy_from_slice(&0xFFFEu16.to_le_bytes());
         h[0x1E..0x20].copy_from_slice(&9u16.to_le_bytes());
         h[0x20..0x22].copy_from_slice(&6u16.to_le_bytes());
-        h[0x2C..0x30].copy_from_slice(&1u32.to_le_bytes());
+        h[0x2C..0x30].copy_from_slice(&(fat_sectors.len() as u32).to_le_bytes());
         h[0x30..0x34].copy_from_slice(&dir_start.to_le_bytes());
         h[0x38..0x3C].copy_from_slice(&cutoff.to_le_bytes());
         h[0x3C..0x40].copy_from_slice(&minifat_start.to_le_bytes());
         h[0x40..0x44].copy_from_slice(&((mf_bytes.len().div_ceil(SS)) as u32).to_le_bytes());
         h[0x44..0x48].copy_from_slice(&ENDOFCHAIN.to_le_bytes());
         for i in 0..109 {
-            let v: u32 = if i == 0 { 0 } else { NOSTREAM };
+            let v: u32 = fat_sectors.get(i).copied().unwrap_or(NOSTREAM);
             h[0x4C + i * 4..0x50 + i * 4].copy_from_slice(&v.to_le_bytes());
         }
         let mut out = h;
@@ -533,9 +648,13 @@ pub(crate) mod tests {
     #[test]
     fn reads_mini_and_regular_streams() {
         let big: Vec<u8> = (0..10_000u32).map(|i| (i % 251) as u8).collect();
-        let file = build(&[("A/small", b"hello".to_vec()), ("A/B/big", big.clone()), ("top", vec![1, 2, 3])]);
+        let file = build(&[
+            ("A/small", b"hello".to_vec()),
+            ("A/B/big", big.clone()),
+            ("top", vec![1, 2, 3]),
+        ]);
         let cf = CompoundFile::parse(&file).unwrap();
-        let paths: Vec<String> = cf.paths().into_iter().map(|p| p.path).collect();
+        let paths: Vec<String> = cf.paths().iter().map(|p| p.path.clone()).collect();
         assert!(paths.contains(&"A/small".to_string()));
         assert!(paths.contains(&"A/B/big".to_string()));
         let small = cf.find("/A/small").unwrap();

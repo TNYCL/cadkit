@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.dwg binary
+*.dgn binary
+*.png binary
+*.pdf binary
+*.wasm binary
