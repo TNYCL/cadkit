@@ -7,7 +7,7 @@ is taken there), so it installs as `pycadkit` and imports as `cadkit`.
 
 ## Install
 
-From PyPI (after the first release): `pip install pycadkit`. Wheels cover Linux x86_64 and
+From PyPI: `pip install pycadkit`. Wheels cover Linux x86_64 and
 aarch64 (manylinux), macOS arm64 and x86_64, and Windows x64; other platforms build from the
 sdist, which needs a Rust toolchain.
 

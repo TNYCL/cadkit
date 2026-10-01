@@ -6,8 +6,11 @@ library, a command-line tool, Python and JavaScript (WebAssembly) bindings, and 
 API. It is dual-licensed under MIT or Apache-2.0 and is developed clean-room: every source of
 format knowledge is recorded in [docs/PROVENANCE.md](docs/PROVENANCE.md).
 
-> Status: early development (0.1.0, unreleased). Readers do not cover every entity type yet; see the support
-> matrix below. Nothing has been published to crates.io, PyPI or npm yet.
+> Status: early development. Readers do not cover every entity type yet; see the support
+> matrix below.
+>
+> 0.1.0 is not released yet: until it is, the package commands below do not work and you
+> need to [build from source](#from-source).
 
 ## Format support
 
@@ -34,18 +37,19 @@ certified by any CAD vendor.
 
 ## Install
 
-Nothing is published yet. From the first release on, the packages are:
-
 | Target | Install |
 |---|---|
-| Rust library | `cargo add cadkit` |
-| CLI | prebuilt binaries on [GitHub Releases](https://github.com/TNYCL/cadkit/releases), `cargo binstall cadkit-cli` or `cargo install cadkit-cli` |
 | Python | `pip install pycadkit` (imports as `cadkit`) |
-| JavaScript | `npm install cadkit-wasm` |
-| C / C++ | headers and libraries in the `cadkit-capi-<target>` archives on GitHub Releases |
+| JavaScript (browser, Node) | `npm install cadkit-wasm` |
+| Rust library | `cargo add cadkit` |
+| CLI | download from [GitHub Releases](https://github.com/TNYCL/cadkit/releases/latest), or `cargo binstall cadkit-cli` / `cargo install cadkit-cli` |
+| C / C++ | `cadkit-capi-<target>` archive from [GitHub Releases](https://github.com/TNYCL/cadkit/releases/latest): headers, shared and static library |
 
-The release process is described in [docs/RELEASING.md](docs/RELEASING.md). Until the first
-release, build from a checkout:
+Python wheels and CLI binaries cover Linux x86_64 and aarch64, macOS arm64 and x86_64, and
+Windows x64; the Linux CLI is a static binary. Python 3.9 or newer; minimum supported Rust
+version 1.85. How releases are made: [docs/RELEASING.md](docs/RELEASING.md).
+
+### From source
 
 ```sh
 git clone https://github.com/TNYCL/cadkit
@@ -54,13 +58,11 @@ cd cadkit
 
 | Target | Command (from a checkout) |
 |---|---|
-| Rust library | `cadkit = { git = "https://github.com/TNYCL/cadkit" }` in `Cargo.toml` (crates.io after the first release) |
+| Rust library | `cadkit = { git = "https://github.com/TNYCL/cadkit" }` in `Cargo.toml` |
 | CLI | `cargo install --path crates/cadkit-cli` |
 | Python | `pip install maturin && cd crates/cadkit-py && maturin develop --release` ([docs/python.md](docs/python.md)) |
 | JavaScript | `python crates/cadkit-wasm/build.py`, then import `crates/cadkit-wasm/pkg` ([docs/wasm.md](docs/wasm.md)) |
 | C / C++ | `cargo build -p cadkit-capi --release`, then use `crates/cadkit-capi/include/` ([docs/c-api.md](docs/c-api.md)) |
-
-Minimum supported Rust version: 1.85.
 
 ## Quick start
 
