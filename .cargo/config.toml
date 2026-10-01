@@ -1,0 +1,3 @@
+# Machine-safety rule: never more than 4 parallel rustc jobs (see AGENTS.md "Build lock").
+[build]
+jobs = 4

@@ -1,0 +1,23 @@
+/target
+/fuzz/target
+/fuzz/corpus
+/fuzz/artifacts
+**/*.rs.bk
+Cargo.lock.bak
+# Third-party references (copyrighted specs) and test corpora are fetched, never committed.
+/refs/
+/corpus/public/
+# Private corpus: client drawings. NEVER commit, never quote their contents anywhere.
+/corpus/private/
+/.venv/
+__pycache__/
+*.pyc
+/crates/cadkit-wasm/pkg/
+/crates/cadkit-py/python/cadkit/*.pyd
+/crates/cadkit-py/python/cadkit/*.so
+/crates/cadkit-py/python/cadkit/*.pdb
+node_modules/
+.DS_Store
+/crates/cadkit-wasm/.tools/
+/crates/cadkit-wasm/pkg-node/
+/out/

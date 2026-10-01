@@ -1,0 +1,58 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+# cadkit-py and cadkit-wasm need their own toolchains (maturin / wasm32); build them explicitly.
+default-members = [
+    "crates/cadkit-core",
+    "crates/cadkit-dgn",
+    "crates/cadkit-dwg",
+    "crates/cadkit-dxf",
+    "crates/cadkit",
+    "crates/cadkit-cli",
+    "crates/cadkit-capi",
+]
+exclude = ["fuzz"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/TNYCL/cadkit"
+homepage = "https://github.com/TNYCL/cadkit"
+authors = ["TNYCL"]
+keywords = ["cad", "dwg", "dgn", "dxf", "microstation"]
+categories = ["parser-implementations", "graphics", "encoding"]
+
+[workspace.dependencies]
+cadkit-core = { path = "crates/cadkit-core", version = "0.1.0" }
+cadkit-dgn = { path = "crates/cadkit-dgn", version = "0.1.0" }
+cadkit-dwg = { path = "crates/cadkit-dwg", version = "0.1.0" }
+cadkit-dxf = { path = "crates/cadkit-dxf", version = "0.1.0" }
+cadkit = { path = "crates/cadkit", version = "0.1.0" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+encoding_rs = "0.8"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+todo = "warn"
+dbg_macro = "deny"
+print_stdout = "warn"
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+
+[profile.fuzz]
+inherits = "release"
+debug = true

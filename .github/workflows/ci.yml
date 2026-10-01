@@ -1,0 +1,209 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  CARGO_BUILD_JOBS: "4"
+
+permissions:
+  contents: read
+
+jobs:
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Restore public corpus
+        id: corpus
+        uses: actions/cache@v4
+        with:
+          path: corpus/public
+          key: corpus-public-${{ hashFiles('scripts/fetch-corpus.py') }}
+      - name: Fetch public corpus
+        if: steps.corpus.outputs.cache-hit != 'true'
+        run: python scripts/fetch-corpus.py
+      # cadkit-py and cadkit-wasm need their own toolchains; they have dedicated jobs below.
+      - run: cargo test --locked
+      - run: cargo test --locked --doc
+
+  msrv:
+    name: MSRV 1.85
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --locked --all-targets
+
+  deny:
+    name: cargo deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          arguments: --all-features
+
+  wasm:
+    name: wasm32 build + node test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install wasm-bindgen CLI matching Cargo.lock
+        run: |
+          version=$(awk '/^name = "wasm-bindgen"$/{getline; gsub(/[^0-9.]/, "", $0); print; exit}' Cargo.lock)
+          echo "wasm-bindgen $version"
+          cargo install wasm-bindgen-cli --version "$version" --locked
+      - name: Build (crates/cadkit-wasm/build.py calls the build lock itself)
+        run: python crates/cadkit-wasm/build.py
+      - run: node --test crates/cadkit-wasm/tests/node_test.mjs
+
+  python:
+    name: python wheel + pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          args: --release --locked --out dist
+          working-directory: crates/cadkit-py
+          manylinux: auto
+      - name: Install wheel and run pytest
+        run: |
+          python -m pip install --upgrade pip pytest
+          python -m pip install --no-index --find-links crates/cadkit-py/dist cadkit
+          python -m pytest crates/cadkit-py/tests -q
+
+  capi:
+    name: C API build + examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Restore public corpus
+        id: corpus
+        uses: actions/cache@v4
+        with:
+          path: corpus/public
+          key: corpus-public-${{ hashFiles('scripts/fetch-corpus.py') }}
+      - name: Fetch public corpus
+        if: steps.corpus.outputs.cache-hit != 'true'
+        run: python scripts/fetch-corpus.py
+      - run: cargo build -p cadkit-capi --release --locked
+      - name: Compile C and C++ examples with CMake
+        run: |
+          cmake -S crates/cadkit-capi -B build/capi -DCADKIT_LIB_DIR="$PWD/target/release" -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/capi
+      - name: Compile with plain gcc/g++ and run
+        run: |
+          gcc -std=c11 -fsyntax-only -Icrates/cadkit-capi/include crates/cadkit-capi/tests/abi.c
+          g++ -std=c++17 -fsyntax-only -x c++ -Icrates/cadkit-capi/include crates/cadkit-capi/tests/abi.c
+          mkdir -p build
+          gcc -Wall -Wextra -Werror -std=c99 -Icrates/cadkit-capi/include crates/cadkit-capi/examples/c/info.c \
+            -Ltarget/release -lcadkit_capi -Wl,-rpath,"$PWD/target/release" -o build/info_c
+          g++ -Wall -Wextra -Werror -std=c++17 -Icrates/cadkit-capi/include crates/cadkit-capi/examples/cpp/info.cpp \
+            -Ltarget/release -lcadkit_capi -Wl,-rpath,"$PWD/target/release" -o build/info_cpp
+          for f in corpus/public/acadsharp/sample_AC1015_ascii.dxf; do
+            ./build/info_c "$f"
+            ./build/info_cpp "$f"
+          done
+
+  fuzz-smoke:
+    name: fuzz smoke (60 s per target)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Restore public corpus
+        id: corpus
+        uses: actions/cache@v4
+        with:
+          path: corpus/public
+          key: corpus-public-${{ hashFiles('scripts/fetch-corpus.py') }}
+      - name: Fetch public corpus
+        if: steps.corpus.outputs.cache-hit != 'true'
+        run: python scripts/fetch-corpus.py
+      - run: python scripts/seed-fuzz-corpus.py
+      - run: cargo install cargo-fuzz --locked
+      - name: Run every target for 60 seconds
+        run: |
+          for target in read_any dgn dwg dxf dxf_roundtrip svg; do
+            echo "::group::fuzz $target"
+            cargo +nightly fuzz run "$target" -- -max_total_time=60 -rss_limit_mb=2048
+            echo "::endgroup::"
+          done
+      - name: Upload crashes
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts

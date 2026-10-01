@@ -1,0 +1,31 @@
+[package]
+name = "cadkit-capi"
+description = "Stable C ABI (and C++ header) for cadkit."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lib]
+name = "cadkit_capi"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+cadkit.workspace = true
+serde_json.workspace = true
+
+# FFI crate: binding macros/ABI need `unsafe`, so workspace lints are restated without the unsafe ban.
+[lints.rust]
+missing_docs = "warn"
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+dbg_macro = "deny"

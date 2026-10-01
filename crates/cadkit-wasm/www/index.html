@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>cadkit viewer</title>
+<link rel="stylesheet" href="viewer.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27%3E%3Crect width=%2716%27 height=%2716%27 rx=%273%27 fill=%27%232563eb%27/%3E%3Crect x=%274%27 y=%274%27 width=%278%27 height=%278%27 rx=%271%27 fill=%27none%27 stroke=%27white%27 stroke-width=%271.5%27/%3E%3C/svg%3E">
+</head>
+<body>
+<a class="skip" href="#stage">Skip to drawing</a>
+<div class="app" id="app">
+  <header class="bar">
+    <div class="brand"><span class="logo" aria-hidden="true"></span><h1>cadkit viewer</h1></div>
+    <div class="bar-actions">
+      <button type="button" id="open-btn" class="primary">Open file</button>
+      <input type="file" id="file-input" accept=".dwg,.dgn,.dxf" hidden>
+      <button type="button" id="fit-btn" disabled title="Fit drawing to view (0)">Fit</button>
+      <button type="button" id="panel-btn" class="only-narrow" aria-expanded="false" aria-controls="side">Panels</button>
+    </div>
+  </header>
+
+  <main class="main">
+    <section class="stage-wrap" id="stage-wrap">
+      <div id="stage" class="stage" tabindex="0" role="application" aria-label="Drawing canvas. Arrow keys pan, plus and minus zoom, 0 fits the view."></div>
+      <div id="drop" class="drop" role="button" tabindex="0" aria-label="Drop a DWG, DGN or DXF file here, or press Enter to choose one">
+        <div class="drop-card">
+          <svg viewBox="0 0 48 48" width="48" height="48" aria-hidden="true"><path d="M24 33V9m0 0-9 9m9-9 9 9M8 31v7a2 2 0 0 0 2 2h28a2 2 0 0 0 2-2v-7" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <p class="drop-title">Drop a drawing here</p>
+          <p class="drop-sub">.dwg, .dgn or .dxf &middot; or click to choose a file</p>
+          <p class="privacy">Files are opened locally in your browser and never leave this machine.</p>
+        </div>
+      </div>
+      <div id="busy" class="busy" hidden>Reading&hellip;</div>
+      <div id="status" class="status" role="status" aria-live="polite" hidden></div>
+      <div class="zoom">
+        <button type="button" id="zoom-in" aria-label="Zoom in" disabled>+</button>
+        <button type="button" id="zoom-out" aria-label="Zoom out" disabled>&minus;</button>
+      </div>
+    </section>
+
+    <aside class="side" id="side" aria-label="Drawing details">
+      <section class="card" id="model-card" hidden>
+        <h2>Model</h2>
+        <label class="sr-only" for="model-select">Model</label>
+        <select id="model-select"></select>
+        <label class="check"><input type="checkbox" id="text-toggle" checked> Show text</label>
+        <label class="check"><input type="checkbox" id="images-toggle" checked> Images / raster frames</label>
+      </section>
+
+      <section class="card">
+        <h2>Information</h2>
+        <dl id="info" class="info"><dt>File</dt><dd>none loaded</dd></dl>
+        <details id="warn-box" hidden>
+          <summary id="warn-sum"></summary>
+          <ul id="warn-list" class="warn-list"></ul>
+        </details>
+      </section>
+
+      <section class="card layers-card">
+        <div class="row">
+          <h2 id="layers-h">Layers</h2>
+          <span class="spacer"></span>
+          <button type="button" id="layers-all" class="small" disabled>All</button>
+          <button type="button" id="layers-none" class="small" disabled>None</button>
+        </div>
+        <ul id="layers" class="layers" aria-labelledby="layers-h"></ul>
+      </section>
+
+      <section class="card">
+        <h2>Export</h2>
+        <div class="export">
+          <button type="button" id="exp-svg" disabled>SVG</button>
+          <button type="button" id="exp-dxf" disabled>DXF</button>
+          <button type="button" id="exp-json" disabled>JSON</button>
+        </div>
+        <p class="hint">Exports are generated in your browser.</p>
+      </section>
+    </aside>
+  </main>
+</div>
+<script type="module" src="viewer.js"></script>
+</body>
+</html>

@@ -1,0 +1,61 @@
+[package]
+name = "cadkit-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+cadkit = { path = "../crates/cadkit" }
+cadkit-core = { path = "../crates/cadkit-core" }
+cadkit-dgn = { path = "../crates/cadkit-dgn" }
+cadkit-dwg = { path = "../crates/cadkit-dwg" }
+cadkit-dxf = { path = "../crates/cadkit-dxf" }
+
+# Own workspace root: this project is excluded from the main workspace.
+[workspace]
+
+[[bin]]
+name = "read_any"
+path = "fuzz_targets/read_any.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dgn"
+path = "fuzz_targets/dgn.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dwg"
+path = "fuzz_targets/dwg.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dxf"
+path = "fuzz_targets/dxf.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dxf_roundtrip"
+path = "fuzz_targets/dxf_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "svg"
+path = "fuzz_targets/svg.rs"
+test = false
+doc = false
+bench = false

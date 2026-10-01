@@ -1,0 +1,22 @@
+[package]
+name = "cadkit-dxf"
+description = "DXF (ASCII and binary) reader and writer for the cadkit drawing model."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+cadkit-core.workspace = true
+encoding_rs.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

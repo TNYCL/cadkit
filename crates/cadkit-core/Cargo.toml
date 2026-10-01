@@ -1,0 +1,19 @@
+[package]
+name = "cadkit-core"
+description = "Format-neutral CAD drawing model, safe binary readers and SVG export for cadkit."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

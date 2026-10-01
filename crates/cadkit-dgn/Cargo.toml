@@ -1,0 +1,20 @@
+[package]
+name = "cadkit-dgn"
+description = "Clean-room reader for MicroStation DGN V7 and V8 files."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+cadkit-core.workspace = true
+flate2.workspace = true
+encoding_rs.workspace = true
+
+[lints]
+workspace = true
