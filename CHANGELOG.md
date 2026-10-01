@@ -6,6 +6,11 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-02
+
+CityGML export reports, GML circles and an optional local TKGM preflight. Closed CAD
+polylines now stay curves in generic GML export (see Changed).
+
 ### Added
 
 - Reported generic CityGML export with explicit metadata-only handling for
@@ -75,5 +80,6 @@ Fixed during development, before this first release:
 - No automatic TKGM/CityMax building inference or receiving-system acceptance.
 - DWG R13 (AC1012) is untested; entity coverage of all readers is still growing.
 
-[Unreleased]: https://github.com/TNYCL/cadkit/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/TNYCL/cadkit/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/TNYCL/cadkit/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/TNYCL/cadkit/releases/tag/v0.1.0

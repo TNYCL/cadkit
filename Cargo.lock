@@ -66,7 +66,7 @@ checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
 
 [[package]]
 name = "cadkit"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cadkit-core",
  "cadkit-dgn",
@@ -78,7 +78,7 @@ dependencies = [
 
 [[package]]
 name = "cadkit-capi"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cadkit",
  "serde",
@@ -87,7 +87,7 @@ dependencies = [
 
 [[package]]
 name = "cadkit-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cadkit",
  "clap",
@@ -96,7 +96,7 @@ dependencies = [
 
 [[package]]
 name = "cadkit-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -105,7 +105,7 @@ dependencies = [
 
 [[package]]
 name = "cadkit-dgn"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cadkit-core",
  "cfb",
@@ -116,7 +116,7 @@ dependencies = [
 
 [[package]]
 name = "cadkit-dwg"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cadkit-core",
  "cadkit-dxf",
@@ -126,7 +126,7 @@ dependencies = [
 
 [[package]]
 name = "cadkit-dxf"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cadkit-core",
  "encoding_rs",
@@ -135,7 +135,7 @@ dependencies = [
 
 [[package]]
 name = "cadkit-gml"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cadkit-core",
  "quick-xml",
@@ -145,7 +145,7 @@ dependencies = [
 
 [[package]]
 name = "cadkit-py"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cadkit",
  "pyo3",
@@ -155,7 +155,7 @@ dependencies = [
 
 [[package]]
 name = "cadkit-wasm"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cadkit",
  "js-sys",
