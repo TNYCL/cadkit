@@ -1,7 +1,8 @@
 [package]
 name = "cadkit-core"
-description = "Format-neutral CAD drawing model, safe binary readers and SVG export for cadkit."
+description = "Format-neutral CAD drawing model, bounded binary readers and SVG export for cadkit."
 version.workspace = true
+readme = "README.md"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

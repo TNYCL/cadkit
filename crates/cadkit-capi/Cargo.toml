@@ -10,6 +10,8 @@ homepage.workspace = true
 authors.workspace = true
 keywords.workspace = true
 categories.workspace = true
+# Shipped as prebuilt libraries and headers on GitHub Releases, not on crates.io.
+publish = false
 
 [lib]
 name = "cadkit_capi"

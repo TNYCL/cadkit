@@ -1,7 +1,8 @@
 [package]
 name = "cadkit-dwg"
-description = "Clean-room reader for AutoCAD DWG files (R13 through 2018)."
+description = "Clean-room DWG reader (R14 through 2018)."
 version.workspace = true
+readme = "README.md"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

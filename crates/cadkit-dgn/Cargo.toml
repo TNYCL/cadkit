@@ -1,7 +1,8 @@
 [package]
 name = "cadkit-dgn"
-description = "Clean-room reader for MicroStation DGN V7 and V8 files."
+description = "Clean-room DGN V7 and V8 reader and seed-based DGN V8 writer."
 version.workspace = true
+readme = "README.md"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

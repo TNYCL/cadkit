@@ -130,7 +130,7 @@ jobs:
       - name: Install wheel and run pytest
         run: |
           python -m pip install --upgrade pip pytest
-          python -m pip install --no-index --find-links crates/cadkit-py/dist cadkit
+          python -m pip install --no-index --find-links crates/cadkit-py/dist pycadkit
           python -m pytest crates/cadkit-py/tests -q
 
   capi:

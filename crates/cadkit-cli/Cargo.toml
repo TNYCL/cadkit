@@ -1,7 +1,8 @@
 [package]
 name = "cadkit-cli"
-description = "Command-line tool to inspect and convert DWG, DGN and DXF drawings."
+description = "Command-line tool to inspect and convert DWG, DGN, DXF and CityGML files."
 version.workspace = true
+readme = "README.md"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -24,3 +25,13 @@ clap = { version = "4", features = ["derive"] }
 
 [lints]
 workspace = true
+
+# `cargo binstall cadkit-cli` downloads the release archive instead of compiling.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/cadkit-{ target }.tar.gz"
+bin-dir = "cadkit-{ target }/{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-url = "{ repo }/releases/download/v{ version }/cadkit-{ target }.zip"
+pkg-fmt = "zip"

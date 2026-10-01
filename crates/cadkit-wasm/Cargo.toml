@@ -10,6 +10,8 @@ homepage.workspace = true
 authors.workspace = true
 keywords.workspace = true
 categories.workspace = true
+# Published to npm as `cadkit-wasm` (build.py), not to crates.io.
+publish = false
 
 [lib]
 crate-type = ["cdylib", "rlib"]

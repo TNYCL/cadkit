@@ -2,9 +2,14 @@
 
 Python bindings for cadkit (`crates/cadkit-py`), built with PyO3 (`abi3-py39`, one wheel per
 platform for Python 3.9+) and maturin. The extension module is `cadkit._cadkit`; the public
-package is `cadkit`.
+package is `cadkit`. The distribution is published on PyPI as `pycadkit` (the name `cadkit`
+is taken there), so it installs as `pycadkit` and imports as `cadkit`.
 
 ## Install
+
+From PyPI (after the first release): `pip install pycadkit`. Wheels cover Linux x86_64 and
+aarch64 (manylinux), macOS arm64 and x86_64, and Windows x64; other platforms build from the
+sdist, which needs a Rust toolchain.
 
 From a checkout:
 

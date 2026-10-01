@@ -22,8 +22,8 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/TNYCL/cadkit"
 homepage = "https://github.com/TNYCL/cadkit"
 authors = ["TNYCL"]
-keywords = ["cad", "dwg", "dgn", "dxf", "microstation"]
-categories = ["parser-implementations", "graphics", "encoding"]
+keywords = ["cad", "dwg", "dgn", "dxf", "citygml"]
+categories = ["parser-implementations", "graphics", "encoding", "science::geo"]
 
 [workspace.dependencies]
 cadkit-core = { path = "crates/cadkit-core", version = "0.1.0" }

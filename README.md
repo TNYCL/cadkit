@@ -34,7 +34,18 @@ certified by any CAD vendor.
 
 ## Install
 
-Nothing is published yet. Until the first release, build from a checkout:
+Nothing is published yet. From the first release on, the packages are:
+
+| Target | Install |
+|---|---|
+| Rust library | `cargo add cadkit` |
+| CLI | prebuilt binaries on [GitHub Releases](https://github.com/TNYCL/cadkit/releases), `cargo binstall cadkit-cli` or `cargo install cadkit-cli` |
+| Python | `pip install pycadkit` (imports as `cadkit`) |
+| JavaScript | `npm install cadkit-wasm` |
+| C / C++ | headers and libraries in the `cadkit-capi-<target>` archives on GitHub Releases |
+
+The release process is described in [docs/RELEASING.md](docs/RELEASING.md). Until the first
+release, build from a checkout:
 
 ```sh
 git clone https://github.com/TNYCL/cadkit

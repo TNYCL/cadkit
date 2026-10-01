@@ -2,10 +2,15 @@
 name = "cadkit-gml"
 description = "Bounded CityGML 2.0 reader, writer and neutral geometry bridge."
 version.workspace = true
+readme = "README.md"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 cadkit-core.workspace = true

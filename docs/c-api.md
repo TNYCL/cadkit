@@ -7,6 +7,13 @@ wrapper.
 - `crates/cadkit-capi/include/cadkit.hpp`: `cadkit::Document` RAII wrapper
 - `crates/cadkit-capi/examples/c/info.c`, `examples/cpp/info.cpp`, `CMakeLists.txt`
 
+## Prebuilt libraries
+
+Each GitHub release has a `cadkit-capi-<target>` archive (Linux x86_64 and aarch64 built
+against glibc 2.28, macOS arm64 and x86_64, Windows x64) with `include/`, the shared and
+static libraries in `lib/`, and the license files. `CADKIT_LIB_DIR` below can point at its
+`lib/` folder.
+
 ## Build
 
 ```sh

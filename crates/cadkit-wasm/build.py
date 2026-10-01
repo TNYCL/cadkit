@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Builds cadkit-wasm into pkg/ (--target web) and pkg-node/ (--target nodejs).
+"""Builds cadkit-wasm into pkg/ (--target web) and pkg-node/ (--target nodejs), then
+assembles the npm package `cadkit-wasm` in npm/ from both (web as the main entry, the
+Node build as the `cadkit-wasm/node` subpath).
 
 Run it from anywhere; it calls scripts/buildlock.py itself for every build step, so do NOT
 wrap it in the lock again. The wasm-bindgen CLI must match the `wasm-bindgen` version in
@@ -55,29 +57,56 @@ def workspace_version():
     return m.group(1)
 
 
-def write_package_json(dest, node):
-    pkg = {
-        "name": "cadkit",
+def write_json(path, data):
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        json.dump(data, f, indent=2)
+        f.write("\n")
+
+
+def write_dev_package_json(dest, node):
+    # pkg/ and pkg-node/ serve the viewer and the tests; only npm/ is published.
+    pkg = {"name": "cadkit-wasm-dev", "version": workspace_version(), "private": True}
+    if not node:
+        pkg["type"] = "module"
+    write_json(os.path.join(dest, "package.json"), pkg)
+
+
+def assemble_npm():
+    """npm/: web/ (ES module, needs `await init()`) and node/ (CommonJS, ready on load)."""
+    dest = os.path.join(HERE, "npm")
+    shutil.rmtree(dest, ignore_errors=True)
+    for src, sub in (("pkg", "web"), ("pkg-node", "node")):
+        shutil.copytree(os.path.join(HERE, src), os.path.join(dest, sub), ignore=shutil.ignore_patterns("package.json"))
+    # The package root is "type": "module"; the Node build is CommonJS.
+    write_json(os.path.join(dest, "node", "package.json"), {"type": "commonjs"})
+    for name in ("LICENSE-MIT", "LICENSE-APACHE", "NOTICE"):
+        shutil.copy(os.path.join(ROOT, name), dest)
+    shutil.copy(os.path.join(HERE, "README.md"), dest)
+    write_json(os.path.join(dest, "package.json"), {
+        "name": "cadkit-wasm",
         "version": workspace_version(),
-        "description": "Read DWG, DGN and DXF drawings in the browser or Node via WebAssembly.",
+        "description": "Read DWG, DGN, DXF and CityGML drawings in the browser or Node via WebAssembly.",
         "license": "MIT OR Apache-2.0",
         "author": "TNYCL (https://tnycl.com)",
-        "repository": {"type": "git", "url": "https://github.com/TNYCL/cadkit"},
-        "homepage": "https://github.com/TNYCL/cadkit",
-        "keywords": ["cad", "dwg", "dgn", "dxf", "wasm"],
-        "files": ["cadkit_wasm_bg.wasm", "cadkit_wasm.js", "cadkit_wasm.d.ts", "cadkit_wasm_bg.wasm.d.ts"],
-        "types": "cadkit_wasm.d.ts",
-        "main": "cadkit_wasm.js",
-    }
-    if node:
-        pkg["name"] = "cadkit-node"
-    else:
-        pkg["type"] = "module"
-        pkg["module"] = "cadkit_wasm.js"
-        pkg["sideEffects"] = ["./snippets/*"]
-    with open(os.path.join(dest, "package.json"), "w", encoding="utf-8") as f:
-        json.dump(pkg, f, indent=2)
-        f.write("\n")
+        "repository": {"type": "git", "url": "git+https://github.com/TNYCL/cadkit.git", "directory": "crates/cadkit-wasm"},
+        "homepage": "https://github.com/TNYCL/cadkit/blob/main/docs/wasm.md",
+        "bugs": "https://github.com/TNYCL/cadkit/issues",
+        "keywords": ["cad", "dwg", "dgn", "dxf", "citygml", "wasm"],
+        "type": "module",
+        "main": "./web/cadkit_wasm.js",
+        "module": "./web/cadkit_wasm.js",
+        "types": "./web/cadkit_wasm.d.ts",
+        "exports": {
+            ".": {"types": "./web/cadkit_wasm.d.ts", "default": "./web/cadkit_wasm.js"},
+            "./node": {"types": "./node/cadkit_wasm.d.ts", "default": "./node/cadkit_wasm.js"},
+            "./cadkit_wasm_bg.wasm": "./web/cadkit_wasm_bg.wasm",
+            "./package.json": "./package.json",
+        },
+        "files": ["web/", "node/", "NOTICE"],
+        "sideEffects": ["./web/snippets/*"],
+        "engines": {"node": ">=18"},
+    })
+    print(f"npm/: cadkit-wasm {workspace_version()}")
 
 
 def main():
@@ -106,9 +135,10 @@ def main():
         if opt:
             w = os.path.join(dest, "cadkit_wasm_bg.wasm")
             locked([opt, "-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int", "-o", w, w])
-        write_package_json(dest, target == "nodejs")
+        write_dev_package_json(dest, target == "nodejs")
         size = os.path.getsize(os.path.join(dest, "cadkit_wasm_bg.wasm"))
         print(f"{outdir}/cadkit_wasm_bg.wasm: {size:,} bytes")
+    assemble_npm()
 
 
 if __name__ == "__main__":
