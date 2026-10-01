@@ -81,3 +81,38 @@ Private client drawings in `corpus/private/` are used only for local, structural
 Private source files and derived drawing data are not copied into the repository,
 examples, schema cache or acceptance kit. The kit uses public and synthetic data.
 External vendor application and receiving-system acceptance remain untested.
+
+### Generic GML export and TKGM local preflight
+
+- [OGC GML 3.1.1 geometryPrimitives.xsd](https://schemas.opengis.net/gml/3.1.1/base/geometryPrimitives.xsd):
+  public Circle/ArcString layout, three distinct non-collinear circle positions,
+  fixed circularArc3Points interpolation and numArc=1. Circumcenter arithmetic
+  was written from the mathematical construction, using existing cadkit vector
+  helpers. No external CAD implementation was consulted.
+- [TKGM Digital Building production guide](https://cbs.tkgm.gov.tr/surdurulebilirlik/),
+  retrieved 2026-10-01: local registration field/type, object-role, coordinate
+  system and reference checks. The guide's revision list ends at TKGMCityGML
+  3.0.3 (2025-03-19), using OGC CityGML 2.0. Public examples exposed ambiguities in
+  buildingHeight and propertyLot typing; these remain explicit unchecked rules.
+  Downloaded public examples were inspected in memory only. Nothing from private
+  field values was used to construct the rule tables or regression fixtures.
+- Conversion reports, application new/edit/reopen tests and strict-versus-metadata
+  policy are original cadkit code. No new Rust dependency was introduced. Existing
+  pytest and lxml test tooling was used locally; neither is a library dependency.
+
+## TKGM architectural city-model tender preflight (2026-10-01)
+
+The optional workflow-specific common checks use only the public
+[TKGM production guide](https://cbs.tkgm.gov.tr/3d/html/giris.html), particularly
+[architectural fields](https://cbs.tkgm.gov.tr/3d/html/MimariBina.html),
+[storeys](https://cbs.tkgm.gov.tr/3d/html/kat.html),
+[independent sections](https://cbs.tkgm.gov.tr/3d/html/bagimsiz_bolum.html),
+[common areas](https://cbs.tkgm.gov.tr/3d/html/ortak_alanlar.html),
+[LoD requirements](https://cbs.tkgm.gov.tr/3d/html/LodSeviyeleri.html),
+[MAKS conditions](https://cbs.tkgm.gov.tr/3d/html/MAKSKontrolTablosu.html), and
+[revision history](https://cbs.tkgm.gov.tr/3d/html/VersiyonTakibi.html).
+Retrieved 2026-10-01; latest listed revision v2.50 (2025-05-06). These public
+field/type/reference rules are implemented independently; no validator binaries,
+vendor SDKs or third-party CAD implementation were consulted. Conditional tender
+rules are listed as unchecked instead of being replaced by registration defaults.
+Tests use invented identifiers/values. No dependencies were added.

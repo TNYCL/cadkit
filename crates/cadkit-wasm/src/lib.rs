@@ -140,6 +140,33 @@ impl CadDocument {
         )
         .map_err(|e| from_cadkit(&e))
     }
+    /// Returns JSON with XML and diagnostics; metadata-only fallback must be explicit.
+    #[wasm_bindgen(js_name=toCityGmlWithReport)]
+    pub fn to_citygml_with_report(
+        &self,
+        srs_name: String,
+        lod: u8,
+        metadata_only: bool,
+    ) -> Result<String, JsValue> {
+        let (bytes, report) = cadkit::gml::write_document_with_report(
+            &self.doc,
+            &cadkit::gml::ExportOptions {
+                srs_name,
+                lod,
+                limits: wasm_limits(cadkit::Limits::default()),
+            },
+            if metadata_only {
+                cadkit::gml::UnsupportedGeometry::MetadataOnly
+            } else {
+                cadkit::gml::UnsupportedGeometry::Reject
+            },
+        )
+        .map_err(|e| from_cadkit(&e))?;
+        let xml = String::from_utf8(bytes).map_err(|e| js_error("export", &e.to_string()))?;
+        serde_json::to_string(&serde_json::json!({"xml": xml, "report": report}))
+            .map_err(|e| js_error("export", &e.to_string()))
+    }
+
     /// Summary: format, version, application, units, models with entity counts, layer and
     /// warning counts.
     pub fn info(&self) -> Result<JsValue, JsValue> {
@@ -307,6 +334,23 @@ pub fn read_citygml(
 
 #[wasm_bindgen]
 impl CityGmlDocument {
+    /// Local TKGM checks; requires city-model-tender or digital-building-registration.
+    /// Never establishes official acceptance.
+    #[wasm_bindgen(js_name=preflightTkgm)]
+    pub fn preflight_tkgm(&self, profile: &str) -> Result<JsValue, JsValue> {
+        let profile = profile
+            .parse::<cadkit::gml::tkgm::Profile>()
+            .map_err(|e| from_cadkit(&e))?;
+        let report = cadkit::gml::tkgm::preflight(
+            &self.doc,
+            profile,
+            &wasm_limits(cadkit::Limits::default()),
+        )
+        .map_err(|e| from_cadkit(&e))?;
+        let text =
+            serde_json::to_string(&report).map_err(|e| js_error("invalid", &e.to_string()))?;
+        parse_json(&text)
+    }
     /// Tipli XML modelini JSON'dan oluşturur.
     #[wasm_bindgen(js_name=fromJsonString)]
     pub fn from_json_string(text: &str) -> Result<CityGmlDocument, JsValue> {

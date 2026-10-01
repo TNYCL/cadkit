@@ -944,6 +944,64 @@ pub unsafe extern "C" fn cadkit_document_to_citygml(
     })
 }
 
+/// Returns JSON containing `xml` and an `ExportReport`. Free it with `cadkit_string_free`.
+/// `metadata_only` must be 0 (reject unsupported geometry) or 1 (retain it as metadata).
+/// Coordinates use the supplied CRS without conversion. Metadata is not rendered geometry.
+///
+/// # Safety
+/// `srs_name` must be a valid NUL-terminated UTF-8 string and `out` must be writable.
+/// `doc` must be a live document handle. The output is NULL on failure.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cadkit_document_to_citygml_with_report(
+    doc: *const cadkit_document,
+    srs_name: *const c_char,
+    lod: u8,
+    metadata_only: i32,
+    out: *mut *mut c_char,
+) -> cadkit_status {
+    // SAFETY: Output is NULL or writable according to the caller's contract.
+    unsafe {
+        if !out.is_null() {
+            *out = std::ptr::null_mut();
+        }
+    }
+    guarded(|| {
+        let policy = match metadata_only {
+            0 => cadkit::gml::UnsupportedGeometry::Reject,
+            1 => cadkit::gml::UnsupportedGeometry::MetadataOnly,
+            _ => {
+                return fail(
+                    cadkit_status::InvalidArgument,
+                    "metadata_only must be 0 or 1",
+                );
+            }
+        };
+        // SAFETY: The CRS string is valid according to the caller's contract.
+        let srs = match unsafe { opt_str(srs_name, "srs_name") } {
+            Ok(Some(s)) => s.to_owned(),
+            Ok(None) => return fail(cadkit_status::InvalidArgument, "srs_name is required"),
+            Err(s) => return s,
+        };
+        // SAFETY: string_getter validates the handle and the output address.
+        unsafe {
+            string_getter(doc, out, |d| {
+                let (bytes, report) = cadkit::gml::write_document_with_report(
+                    d,
+                    &cadkit::gml::ExportOptions {
+                        srs_name: srs,
+                        lod,
+                        limits: cadkit::Limits::default(),
+                    },
+                    policy,
+                )?;
+                let xml = String::from_utf8(bytes).map_err(|e| Error::invalid(0, e.to_string()))?;
+                serde_json::to_string(&serde_json::json!({"xml": xml, "report": report}))
+                    .map_err(|e| Error::invalid(0, e.to_string()))
+            })
+        }
+    })
+}
+
 /// CityGML'in özgün nesne ağını JSON olarak okur; çıktı `cadkit_string_free` ile bırakılır.
 ///
 /// # Safety
@@ -1034,6 +1092,62 @@ pub unsafe extern "C" fn cadkit_citygml_write_json(
         match result {
             Ok(s) => {
                 // SAFETY: Çıktı adresi denetlendi; dize sahipliği çağırana aktarılır.
+                unsafe {
+                    *out = into_c_string(s).into_raw();
+                }
+                cadkit_status::Ok
+            }
+            Err(e) => map_error(&e),
+        }
+    })
+}
+
+/// Returns the local TKGM preflight report for native CityGML JSON.
+/// `profile` is required: `city-model-tender` or `digital-building-registration`.
+/// This never establishes official acceptance. Free the output with `cadkit_string_free`.
+///
+/// # Safety
+/// `json` and `profile` must be NUL-terminated UTF-8 and `out` must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cadkit_citygml_preflight_tkgm(
+    json: *const c_char,
+    profile: *const c_char,
+    out: *mut *mut c_char,
+) -> cadkit_status {
+    // SAFETY: A non-NULL output is writable by contract.
+    unsafe {
+        if !out.is_null() {
+            *out = std::ptr::null_mut();
+        }
+    }
+    guarded(|| {
+        if out.is_null() {
+            return fail(cadkit_status::NullPointer, "out is NULL");
+        }
+        // SAFETY: The caller provides a valid C string or NULL.
+        let text = match unsafe { opt_str(json, "json") } {
+            Ok(Some(s)) => s,
+            Ok(None) => return fail(cadkit_status::NullPointer, "json is NULL"),
+            Err(s) => return s,
+        };
+        // SAFETY: The caller provides a valid C string or NULL.
+        let profile = match unsafe { opt_str(profile, "profile") } {
+            Ok(Some(s)) => match s.parse::<cadkit::gml::tkgm::Profile>() {
+                Ok(p) => p,
+                Err(e) => return map_error(&e),
+            },
+            Ok(None) => return fail(cadkit_status::NullPointer, "profile is NULL"),
+            Err(s) => return s,
+        };
+        let options = ReadOptions::default();
+        let result = cadkit::gml::read_native_json(text, &options)
+            .and_then(|d| cadkit::gml::tkgm::preflight(&d, profile, &options.limits))
+            .and_then(|report| {
+                serde_json::to_string(&report).map_err(|e| Error::invalid(0, e.to_string()))
+            });
+        match result {
+            Ok(s) => {
+                // SAFETY: out was checked; ownership is transferred to the caller.
                 unsafe {
                     *out = into_c_string(s).into_raw();
                 }

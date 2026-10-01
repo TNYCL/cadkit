@@ -124,3 +124,40 @@ cadkit convert geometry.dxf output.gml --crs 'YOUR_EXPLICIT_CRS' --lod 1
 
 Schema validity and local geometry checks do not constitute receiving-system
 acceptance. No external receiving-system test has been performed.
+
+## CAD export coverage and diagnostics (2026-10-01 follow-up)
+
+- Closed neutral polylines serialize as closed `gml:LineString` curves. Closure
+  alone does not establish a planar surface: crossing or nonplanar CAD paths are
+  valid curves. Explicit `Polygon`, `Face` and mesh surfaces retain strict checks.
+- Circles use `gml:Curve/gml:segments/gml:Circle` with three distinct, non-collinear
+  positions, `numArc="1"` and `interpolation="circularArc3Points"`. This is exact
+  geometry, not tessellation. The neutral importer decodes single explicit Circle
+  segments; other Curve forms remain outside that subset. Circle positions are
+  bounded before allocation and their circumcenter is calculated in local,
+  scaled coordinates. Evidence: the public GML 3.1.1 geometryPrimitives schema,
+  invented tilted/negative-normal circles, mutation tests and corpus comparison.
+- `write_document_with_report` adds explicit `MetadataOnly` handling. Unsupported
+  entities remain in the existing `cadkit.entity` JSON attribute. Their geometry
+  is absent, the containing object gets `cadkit.geometry_status` and an embedded
+  issue list, and the API returns index-based diagnostics. Groups retain the
+  supported children. The ordinary API and all new bindings default to `Reject`.
+- Invalid coordinates, invalid explicit polygons, invalid circles and exhausted
+  limits still fail. JSON metadata is checked for non-finite-number loss before
+  serialization. External image pixels and referenced block definitions are not
+  embedded by this generic projection.
+- `tkgm::preflight` requires an explicit architectural city-model tender or Digital
+  Building registration profile. Neither subset certifies acceptance;
+  see [TKGM notes](TKGM.md) for checked rules and guide ambiguities.
+- Synthetic schema tests may use `CADKIT_XSD_VALIDATOR_SCRIPT` to invoke a local
+  Python validator over stdin (exit code only). The default CI path remains
+  `xmllint` with the official schema cache and mandatory missing-cache failure.
+
+```sh
+cadkit convert drawing.dgn geometry.gml --crs YOUR_EXPLICIT_CRS --lod 2 --gml-metadata-only
+cadkit validate-gml native-building.gml --tkgm-profile city-model-tender
+```
+
+The first command produces a generic CAD projection with diagnostics, not a
+TKGM building model. CLI diagnostics go to stderr; the XML keeps an embedded
+record of each unsupported geometry item even if that report is separated.

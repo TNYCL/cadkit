@@ -3,6 +3,11 @@
 use cadkit_core::{Document, Entity, EntityKind, Error, Model, Point3, ReadOptions, Value};
 use cadkit_gml::{native::*, *};
 
+#[path = "support/export_cases.rs"]
+mod export_cases;
+#[path = "support/tkgm_cases.rs"]
+mod tkgm_cases;
+
 fn ring(a: f64, b: f64) -> Vec<Point3> {
     vec![
         Point3::xy(a, a),
@@ -358,6 +363,23 @@ fn solid_shell_closure_and_orientation() {
 
 fn validate_xsd_if_cached(bytes: &[u8]) {
     use std::io::Write;
+    // Optional local Python/lxml validator: stdin is XML and exit status is the
+    // only diagnostic, so private values cannot escape through schema errors.
+    if let Some(script) = std::env::var_os("CADKIT_XSD_VALIDATOR_SCRIPT") {
+        let mut child = std::process::Command::new("python")
+            .arg(script)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(bytes).unwrap();
+        assert!(
+            child.wait().unwrap().success(),
+            "official CityGML XSD validation failed"
+        );
+        return;
+    }
     let cache = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../corpus/public/citygml-schemas");
     if !cache.join("profile.xsd").exists() {

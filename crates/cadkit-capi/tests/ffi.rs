@@ -312,6 +312,30 @@ fn citygml_native_json_and_binary_dgn_ownership() {
             msg()
         );
         assert!(take(output).contains("CityModel"));
+        assert_eq!(
+            cadkit_citygml_preflight_tkgm(json, c"city-model-tender".as_ptr(), &mut output),
+            cadkit_status::Ok
+        );
+        let report: serde_json::Value = serde_json::from_str(&take(output)).unwrap();
+        assert_eq!(report["acceptance_verified"], false);
+        assert_eq!(report["workflow"], "city_model_tender_architectural");
+        assert!(
+            report["issues"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|i| i["code"] == "tkgm.missing_building")
+        );
+        assert_eq!(
+            cadkit_citygml_preflight_tkgm(json, ptr::null(), &mut output),
+            cadkit_status::NullPointer
+        );
+        assert!(output.is_null());
+        assert_eq!(
+            cadkit_citygml_preflight_tkgm(json, c"unknown".as_ptr(), &mut output),
+            cadkit_status::InvalidData
+        );
+        assert!(output.is_null());
         cadkit_string_free(json);
     }
     let doc = read(MINIMAL_DXF.as_bytes()).unwrap();
@@ -365,5 +389,66 @@ fn citygml_native_json_and_binary_dgn_ownership() {
     // SAFETY: Son kullanımın ardından belge bırakılır.
     unsafe {
         cadkit_document_free(doc);
+    }
+}
+
+#[test]
+fn citygml_export_report_ownership_and_invalid_arguments() {
+    let doc = read(MINIMAL_DXF.as_bytes()).unwrap();
+    let mut out = ptr::null_mut();
+    // SAFETY: The document is live; strings and output address are valid.
+    unsafe {
+        assert_eq!(
+            cadkit_document_to_citygml_with_report(
+                doc,
+                c"urn:cadkit:synthetic".as_ptr(),
+                1,
+                0,
+                &mut out
+            ),
+            cadkit_status::Ok
+        );
+        let result: serde_json::Value = serde_json::from_str(&take(out)).unwrap();
+        assert!(result["xml"].as_str().unwrap().contains("CityModel"));
+        assert_eq!(result["report"]["metadata_only_entities"], 0);
+        out = ptr::dangling_mut();
+        assert_eq!(
+            cadkit_document_to_citygml_with_report(
+                doc,
+                c"urn:cadkit:synthetic".as_ptr(),
+                1,
+                2,
+                &mut out
+            ),
+            cadkit_status::InvalidArgument
+        );
+        assert!(out.is_null());
+        assert_eq!(
+            cadkit_document_to_citygml_with_report(doc, ptr::null(), 1, 0, &mut out),
+            cadkit_status::InvalidArgument
+        );
+        assert!(out.is_null());
+        assert_eq!(
+            cadkit_document_to_citygml_with_report(
+                doc,
+                c"urn:cadkit:synthetic".as_ptr(),
+                1,
+                0,
+                ptr::null_mut()
+            ),
+            cadkit_status::NullPointer
+        );
+        cadkit_document_free(doc);
+        assert_eq!(
+            cadkit_document_to_citygml_with_report(
+                doc,
+                c"urn:cadkit:synthetic".as_ptr(),
+                1,
+                0,
+                &mut out
+            ),
+            cadkit_status::InvalidHandle
+        );
+        assert!(out.is_null());
     }
 }

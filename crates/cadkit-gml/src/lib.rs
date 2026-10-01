@@ -1,14 +1,21 @@
 //! CityGML 2.0 için kaynak sınırları uygulayan okuma ve yazma katmanı.
 
+mod curves;
+mod export;
 mod geometry;
 mod mapping;
 pub mod native;
+pub mod tkgm;
 pub mod validate;
 mod xml;
 
 use cadkit_core::{Document, ReadOptions, Result};
+pub use export::{
+    ExportIssue, ExportOptions, ExportReport, UnsupportedGeometry, from_document,
+    from_document_with_report,
+};
 pub use geometry::{GeometryIssue, geometry_issues};
-pub use mapping::{ExportOptions, ImportOptions, from_document, to_document};
+pub use mapping::{ImportOptions, to_document};
 pub use native::CityGmlDocument;
 pub use validate::{ValidationOptions, ValidationReport, validate};
 
@@ -93,4 +100,23 @@ pub fn write_document(doc: &Document, options: &ExportOptions) -> Result<Vec<u8>
             ..Default::default()
         },
     )
+}
+
+/// Writes a generic CAD projection with explicit handling of unsupported geometry.
+/// The report identifies entities by model index and child-index path, never by client values.
+/// Metadata-only entities are not rendered CityGML geometry and are not a delivery profile.
+pub fn write_document_with_report(
+    doc: &Document,
+    options: &ExportOptions,
+    unsupported: UnsupportedGeometry,
+) -> Result<(Vec<u8>, ExportReport)> {
+    let (native, report) = from_document_with_report(doc, options, unsupported)?;
+    let bytes = write(
+        &native,
+        &ValidationOptions {
+            limits: options.limits,
+            ..Default::default()
+        },
+    )?;
+    Ok((bytes, report))
 }

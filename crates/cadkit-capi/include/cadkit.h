@@ -160,10 +160,18 @@ CADKIT_API cadkit_status cadkit_document_to_dgn(const cadkit_document *doc, cons
 CADKIT_API void cadkit_bytes_free(uint8_t *data);
 CADKIT_API cadkit_status cadkit_document_to_citygml(const cadkit_document *doc,
     const char *srs_name, uint8_t lod, char **out);
+/* Returns JSON {"xml":..., "report":...}; free with cadkit_string_free.
+   metadata_only: 0 rejects unsupported geometry; 1 retains it only as metadata.
+   Reports are generic CAD conversion diagnostics, not institutional acceptance. */
+CADKIT_API cadkit_status cadkit_document_to_citygml_with_report(const cadkit_document *doc,
+    const char *srs_name, uint8_t lod, int32_t metadata_only, char **out);
 CADKIT_API cadkit_status cadkit_citygml_read_json(const uint8_t *data, size_t len,
     const cadkit_options *options, char **out);
 CADKIT_API cadkit_status cadkit_citygml_write_json(const char *json,
     const char *validation_options_json, char **out);
+/* Local field/reference preflight of native CityGML JSON; never official TKGM acceptance. */
+/* Required profile: "city-model-tender" or "digital-building-registration". */
+CADKIT_API cadkit_status cadkit_citygml_preflight_tkgm(const char *json, const char *profile, char **out);
 
 /* Releases a string returned by this library. NULL is a no-op. */
 CADKIT_API void cadkit_string_free(char *s);

@@ -137,6 +137,11 @@ test("CityGML native and new geometry exports", () => {
   const native = wasm.readCityGml(bytes);
   try {
     assert.equal(native.validate().elements, 1);
+    const profile = native.preflightTkgm("city-model-tender");
+    assert.equal(profile.workflow, "city_model_tender_architectural");
+    assert.equal(profile.acceptance_verified, false);
+    assert.ok(profile.issues.some(i => i.code === "tkgm.missing_building"));
+    assert.equal(thrown(() => native.preflightTkgm("unknown"))?.kind, "invalid");
     assert.equal(wasm.detect(native.toGml()), "city_gml");
     const copy = wasm.CityGmlDocument.fromJsonString(native.toJsonString());
     try {
@@ -161,6 +166,30 @@ test("CityGML native and new geometry exports", () => {
       assert.equal(checked.validate().ids, 1);
     } finally {
       checked.free();
+    }
+  } finally {
+    doc.free();
+  }
+});
+
+test("CityGML export diagnostics require explicit metadata handling", () => {
+  const original = wasm.read(new TextEncoder().encode(DXF));
+  const source = original.toJSON();
+  original.free();
+  source.models[0].entities = source.models[0].entities.slice(0, 1);
+  source.models[0].entities[0].kind = { type: "unknown", type_name: "synthetic" };
+  const doc = wasm.CadDocument.fromJsonString(JSON.stringify(source));
+  try {
+    assert.equal(thrown(() => doc.toCityGmlWithReport("urn:cadkit:synthetic", 2, false))?.kind, "unsupported");
+    const result = JSON.parse(doc.toCityGmlWithReport("urn:cadkit:synthetic", 2, true));
+    assert.equal(result.report.metadata_only_entities, 1);
+    assert.deepEqual(result.report.issues[0].path, [0]);
+    assert.match(result.xml, /cadkit.geometry_status/);
+    const native = wasm.readCityGml(new TextEncoder().encode(result.xml));
+    try {
+      assert.equal(native.validate().ids, 1);
+    } finally {
+      native.free();
     }
   } finally {
     doc.free();
