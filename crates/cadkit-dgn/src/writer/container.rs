@@ -2,8 +2,9 @@
 
 use cadkit_core::{Error, ReadOptions, Result};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     io::{Cursor, Read, Seek, SeekFrom, Write},
+    path::{Component, Path},
 };
 
 pub(super) struct BoundedCursor {
@@ -86,15 +87,12 @@ pub(super) fn rewrite(
             output.create_storage_all(entry.path())?;
         }
     }
+    let mut replaced = BTreeSet::new();
     for entry in &entries {
         if !entry.is_stream() {
             continue;
         }
-        let key = entry
-            .path()
-            .to_string_lossy()
-            .trim_start_matches('/')
-            .to_owned();
+        let key = stream_key(entry.path());
         match replacements.get(&key) {
             Some(None) => {}
             Some(Some(bytes)) => {
@@ -104,20 +102,23 @@ pub(super) fn rewrite(
                 let mut src = source.open_stream(entry.path())?;
                 let mut dst = output.create_stream(entry.path())?;
                 std::io::copy(&mut src.by_ref().take(entry.len()), &mut dst)?;
+                continue;
             }
         }
+        replaced.insert(key);
     }
     for (name, data) in replacements {
         if let Some(data) = data {
-            let path = format!("/{name}");
-            if !source.is_stream(&path) {
-                if let Some((parent, _)) = path.rsplit_once('/') {
-                    if !parent.is_empty() {
-                        output.create_storage_all(parent)?;
-                    }
-                }
-                output.create_stream(&path)?.write_all(data)?;
+            if replaced.contains(name) {
+                continue;
             }
+            let path = format!("/{name}");
+            if let Some((parent, _)) = path.rsplit_once('/') {
+                if !parent.is_empty() {
+                    output.create_storage_all(parent)?;
+                }
+            }
+            output.create_stream(&path)?.write_all(data)?;
         }
     }
     let created: Vec<_> = output
@@ -145,6 +146,19 @@ pub(super) fn rewrite(
     Ok(output.into_inner().bytes())
 }
 
+/// Replacement key of a CFB entry: its names joined by `/`, without a leading slash.
+/// The `cfb` crate builds entry paths with `PathBuf::push`, which separates them with `\` on
+/// Windows, so the platform string form of the path cannot be used as the key.
+fn stream_key(path: &Path) -> String {
+    path.components()
+        .filter_map(|c| match c {
+            Component::Normal(name) => Some(name.to_string_lossy()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 pub(super) fn stream(seed: &[u8], name: &str, max: u64) -> Result<Vec<u8>> {
     let mut cf = ::cfb::CompoundFile::open(Cursor::new(seed))?;
     let n = cf.entry(name)?.len();
@@ -154,4 +168,22 @@ pub(super) fn stream(seed: &[u8], name: &str, max: u64) -> Result<Vec<u8>> {
     let mut data = vec![];
     cf.open_stream(name)?.take(n).read_to_end(&mut data)?;
     Ok(data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn stream_key_uses_slashes_on_every_platform() {
+        // Built the way the `cfb` crate builds entry paths, so the separator is the
+        // platform's own (`\` on Windows).
+        let mut path = PathBuf::from("/");
+        for name in ["Dgn-Md", "#000000", "Dgn^G", "$1"] {
+            path.push(name);
+        }
+        assert_eq!(stream_key(&path), "Dgn-Md/#000000/Dgn^G/$1");
+        assert_eq!(stream_key(Path::new("/Dgn~H")), "Dgn~H");
+    }
 }

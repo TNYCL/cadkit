@@ -69,6 +69,15 @@ left/right/child `0x44`/`0x48`/`0x4C`, start sector `0x74`, size `0x78`; the hig
 dword is ignored for version 3). Streams below the cutoff live in the mini stream (the
 root entry's chain). All observed DGN files are version 3.
 
+Short final sector: `[MS-CFB]` files are whole sectors, but 2 of 112 private V8 files
+(written by the same application version as the other 110) end inside their last sector,
+109 and 214 bytes after its start. That sector holds the tail of the last graphic page
+(`Dgn^G/$4`), and the stream's directory size ends within the bytes present. The reader
+accepts a final sector cut short when it covers the bytes the sized stream still needs
+(zlib inflation of the page then completes without a problem); a tail shorter than that
+is still truncation. Before this rule the whole page was skipped with
+`dgn.stream_unreadable`, losing 751 and 784 elements (about a quarter of each file).
+
 Safety: every sector id is bounds-checked, chains are cut after `file_len / sector_size`
 sectors (cycles), sibling trees are walked iteratively with a visited set, storage nesting
 is capped at 64. `sniff` parses only header + FAT + directory and requires a root entry
@@ -442,6 +451,13 @@ repeated output deterministic. Model graphic/control/auxiliary pages are replace
 named tables are retained and extended. Unknown seed streams are preserved, not
 interpreted or certified as free of references to cleared graphics.
 
+Streams are matched for replacement by their CFB names joined with `/`. The `cfb` crate
+builds entry paths with the platform separator (`\` on Windows), so its path strings are
+not used as keys; before this rule, Windows output kept every nested seed stream
+unchanged and dropped new pages whose numbers collided with seed pages. A numbered
+(`$n`) page the writer would replace but the reader could not decode is an error, since
+its content could be neither checked for emptiness nor carried into the named tables.
+
 | Written structure | Layout evidence |
 |---|---|
 | File header | Existing reader and own corpus analysis; zlib payload after `0x14`, expected 1,576 bytes; `0x128` high-water element ID updated |
@@ -459,7 +475,10 @@ complete binary format specification.
 Supported new entities: line, straight line string, closed shape, circle,
 ellipse, arc, baseline-left text, complex chain/shape and ordinary cell groups.
 Faces and meshes become shapes/cells. Polygons with holes become a cell with
-hole-marked shape components. Shared-cell instances, raster attachments, splines,
+hole-marked shape components. Polygon rings must lie within
+`WriteOptions::planarity_tolerance` (default 0.01 source units, 1 cm in metres) of the
+exterior ring's plane; 1e-6 rejected every polygon with a hole in 0.1 mm-rounded
+CityGML sources. Shared-cell instances, raster attachments, splines,
 hatches, dimensions, arbitrary text alignment and polyline bulges/widths require
 explicit conversion and currently return `Unsupported`.
 
@@ -467,7 +486,10 @@ Level names, tag sets and attached text/integer/double values are writable.
 Strings default to UTF-16; `codepage="windows-1254"` selects explicit legacy
 Turkish text encoding and codepage linkage. Names use UTF-16. Unrepresentable
 characters fail. IDs and tag owner dependencies are assigned together. DGN tag
-integers are restricted to the on-disk signed 32-bit range.
+integers are restricted to the on-disk signed 32-bit range. A tag definition has one
+value type, so when any integer value of a (tag set, tag) pair exceeds that range,
+every value of that tag is written as a double (type 4); values beyond ±2^53, which
+a double cannot hold exactly, fail.
 
 ACI/RGB colors are matched exactly against the seed's palette. An unavailable
 color fails unless the caller explicitly provides `dgn.color_index`. ByLayer

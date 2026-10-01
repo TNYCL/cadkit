@@ -13,8 +13,14 @@ pub struct ValidationOptions {
     pub limits: Limits,
     /// Poligon kesişimleri ve düzlemsellik denetlensin.
     pub geometry: bool,
-    /// Koordinat birimlerinde düzlemsellik/kesişim toleransı.
+    /// Koordinat birimlerinde kesişim toleransı: kenarların değiyor sayıldığı uzaklık.
     pub tolerance: f64,
+    /// Koordinat birimlerinde, halka noktalarının dış halka düzlemine en büyük uzaklığı.
+    /// Varsayılan 0,01 (metrik projeksiyonlu CRS'te 1 cm, val3dity'nin varsayılan
+    /// düzlemsellik uzaklığı). Koordinatları 0,1 mm'ye yuvarlanmış gerçek CityGML
+    /// dosyalarında delikler bu yuvarlama kadar düzlem dışına çıkar; 1e-6 gibi bir değer
+    /// bu gürültüyü hata sayar. Coğrafi (derece) CRS'te bu varsayılan anlamsızdır.
+    pub planarity_tolerance: f64,
     /// Tüm belge için kenar karşılaştırma bütçesi.
     pub max_geometry_work: u64,
 }
@@ -24,6 +30,7 @@ impl Default for ValidationOptions {
             limits: Limits::default(),
             geometry: true,
             tolerance: 1e-6,
+            planarity_tolerance: 0.01,
             max_geometry_work: 20_000_000,
         }
     }

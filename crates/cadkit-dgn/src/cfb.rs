@@ -344,12 +344,14 @@ impl<'a> CompoundFile<'a> {
                     "CFB sector chain loops",
                 ));
             }
-            let sec = sector_slice(self.data, self.sector_size, sid).ok_or_else(|| {
-                Error::invalid(
-                    sector_offset(self.sector_size, sid),
-                    "CFB sector outside the file",
-                )
-            })?;
+            let sec = sector_slice(self.data, self.sector_size, sid)
+                .or_else(|| self.short_final_sector(sid, size, out.len()))
+                .ok_or_else(|| {
+                    Error::invalid(
+                        sector_offset(self.sector_size, sid),
+                        "CFB sector outside the file",
+                    )
+                })?;
             out.extend_from_slice(sec);
             count += 1;
             if let Some(s) = size {
@@ -360,6 +362,18 @@ impl<'a> CompoundFile<'a> {
             sid = self.fat.get(sid as usize).copied().unwrap_or(ENDOFCHAIN);
         }
         finish(out, size)
+    }
+
+    /// The bytes a sized stream still needs from a sector that the end of the file cuts
+    /// short. Some DGN V8 writers end the file inside its last sector instead of padding it
+    /// to a whole sector; the stream is complete when the bytes it needs are present.
+    fn short_final_sector(&self, sid: u32, size: Option<u64>, read: usize) -> Option<&'a [u8]> {
+        let needed = size?.checked_sub(read as u64)?;
+        let needed = usize::try_from(needed)
+            .ok()
+            .filter(|&n| n > 0 && n < self.sector_size)?;
+        let off = usize::try_from(sector_offset(self.sector_size, sid)).ok()?;
+        le::bytes(self.data, off, needed)
     }
 
     fn read_mini_chain(&self, start: u32, size: u64) -> Result<Vec<u8>> {
@@ -663,6 +677,34 @@ pub(crate) mod tests {
         assert!(root_contains(&file, "top"));
         assert!(root_contains(&file, "A"));
         assert!(!root_contains(&file, "small"));
+    }
+
+    #[test]
+    fn reads_stream_whose_final_sector_is_cut_short() {
+        // Move the stream's last sector to the end of the file, then drop the part of that
+        // sector the stream does not use, as some DGN V8 files end.
+        let data: Vec<u8> = (0..5000u32).map(|i| (i % 253) as u8).collect();
+        let mut file = build(&[("s", data.clone())]);
+        let cf = CompoundFile::parse(&file).unwrap();
+        let start = cf.entries()[cf.find("s").unwrap()].start as usize;
+        let count = data.len().div_ceil(512);
+        let (prev, last) = (start + count - 2, start + count - 1);
+        let moved = (file.len() - 512) / 512;
+        let used = data.len() - (count - 1) * 512;
+        let tail = file[(last + 1) * 512..(last + 1) * 512 + used].to_vec();
+        let fat = |sid: usize| 512 + sid * 4;
+        file[fat(prev)..fat(prev) + 4].copy_from_slice(&(moved as u32).to_le_bytes());
+        file[fat(last)..fat(last) + 4].copy_from_slice(&NOSTREAM.to_le_bytes());
+        file[fat(moved)..fat(moved) + 4].copy_from_slice(&ENDOFCHAIN.to_le_bytes());
+        file.extend_from_slice(&tail);
+        assert_ne!(file.len() % 512, 0);
+        let cf = CompoundFile::parse(&file).unwrap();
+        assert_eq!(cf.read_stream(cf.find("s").unwrap()).unwrap(), data);
+
+        // One byte fewer than the stream needs is truncation, not a short final sector.
+        file.pop();
+        let cf = CompoundFile::parse(&file).unwrap();
+        assert!(cf.read_stream(cf.find("s").unwrap()).is_err());
     }
 
     #[test]

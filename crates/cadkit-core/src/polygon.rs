@@ -21,16 +21,25 @@ pub fn normal(ring: &[Point3]) -> Option<Vec3> {
 }
 
 /// Halkaları kapatma, düzlemsellik, kesişim ve delik içerme açısından denetler.
-/// `tolerance` çizim birimindedir; `work` kenar karşılaştırmaları için ortak bütçedir.
+/// İki tolerans da çizim birimindedir. `planarity_tolerance`, herhangi bir halka noktasının
+/// dış halka düzlemine izin verilen en büyük uzaklığıdır; kaynak koordinatların yuvarlama
+/// adımından büyük olmalıdır. `tolerance`, kesişim denetiminde kenarların değiyor sayıldığı
+/// uzaklıktır. `work` kenar karşılaştırmaları için ortak bütçedir.
 pub fn validate(
     exterior: &[Point3],
     interiors: &[Vec<Point3>],
+    planarity_tolerance: f64,
     tolerance: f64,
     work: &mut u64,
 ) -> Result<()> {
     let invalid = |s: &str| Error::invalid(0, s);
     if !tolerance.is_finite() || tolerance <= 0.0 {
         return Err(invalid("polygon tolerance must be finite and positive"));
+    }
+    if !planarity_tolerance.is_finite() || planarity_tolerance <= 0.0 {
+        return Err(invalid(
+            "polygon planarity tolerance must be finite and positive",
+        ));
     }
     let n = normal(exterior).ok_or_else(|| invalid("polygon exterior is degenerate"))?;
     let o = exterior
@@ -61,7 +70,9 @@ pub fn validate(
             if !p.x.is_finite() || !p.y.is_finite() || !p.z.is_finite() {
                 return Err(invalid("polygon contains non-finite coordinates"));
             }
-            if ((p.x - o.x) * n.x + (p.y - o.y) * n.y + (p.z - o.z) * n.z).abs() > tolerance {
+            if ((p.x - o.x) * n.x + (p.y - o.y) * n.y + (p.z - o.z) * n.z).abs()
+                > planarity_tolerance
+            {
                 return Err(invalid("polygon rings are not coplanar"));
             }
         }
@@ -193,8 +204,31 @@ mod tests {
     }
     #[test]
     fn holes_and_budgets() {
-        assert!(validate(&square(0.0, 10.0), &[square(2.0, 3.0)], 1e-8, &mut 1000).is_ok());
-        assert!(validate(&square(0.0, 10.0), &[square(9.0, 11.0)], 1e-8, &mut 1000).is_err());
-        assert!(validate(&square(0.0, 10.0), &[], 1e-8, &mut 0).is_err());
+        let ok = |e: &[Point3], h: &[Vec<Point3>], work: u64| {
+            validate(e, h, 1e-8, 1e-8, &mut { work }).is_ok()
+        };
+        assert!(ok(&square(0.0, 10.0), &[square(2.0, 3.0)], 1000));
+        assert!(!ok(&square(0.0, 10.0), &[square(9.0, 11.0)], 1000));
+        assert!(!ok(&square(0.0, 10.0), &[], 0));
+    }
+
+    #[test]
+    fn planarity_tolerance_is_separate_from_intersection_tolerance() {
+        // A hole 0.05 mm off the exterior plane, as 0.1 mm coordinate rounding produces.
+        let holes = vec![
+            square(2.0, 3.0)
+                .into_iter()
+                .map(|p| Point3::new(p.x, p.y, 0.000_05))
+                .collect::<Vec<_>>(),
+        ];
+        let exterior = square(0.0, 10.0);
+        let check = |planarity: f64| validate(&exterior, &holes, planarity, 1e-6, &mut 1000);
+        assert!(check(1e-6).is_err());
+        assert!(check(0.01).is_ok());
+        assert!(check(0.0).is_err());
+        assert!(check(f64::NAN).is_err());
+        // A larger planarity tolerance does not turn nearby edges into intersections.
+        let near = square(9.999, 9.9995);
+        assert!(validate(&exterior, &[near], 0.01, 1e-6, &mut 1000).is_ok());
     }
 }

@@ -62,6 +62,11 @@ Private client drawings in `corpus/private/` are used only for local, structural
   reference CSV are test data; no ODA SDK or V8 driver implementation was used.
 - `cadkit-core`'s existing serde_json workspace dependency is now used for a
   bounded streaming writer preflight; no new serialization format is introduced.
+- The default polygon planarity tolerance (0.01 coordinate units) matches the
+  documented default distance-to-plane tolerance of the
+  [val3dity](https://github.com/tudelft3d/val3dity) validator. Only that public
+  parameter value was used; no val3dity code was read or ported. The planarity
+  measurements behind it come from own analysis of private CityGML files.
 
 Private source files and derived drawing data are not copied into the repository,
 examples, schema cache or acceptance kit. The kit uses public and synthetic data.

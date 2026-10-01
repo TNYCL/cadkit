@@ -82,6 +82,67 @@ fn new_2d_and_3d_geometry_with_attached_unicode_tags() {
 }
 
 #[test]
+fn integer_tags_beyond_i32_are_written_as_doubles() {
+    let tagged = |n: i64| {
+        let mut e = line();
+        e.attributes.push(Attribute {
+            tag: "Number".into(),
+            value: Value::Int(n),
+            set: Some("Ids".into()),
+            position: None,
+            invisible: true,
+        });
+        e
+    };
+    // One value needs more than 32 bits, so the whole tag definition becomes a double.
+    let d = document(false, vec![tagged(5), tagged(12_345_678_901)]);
+    let bytes = write_v8(&d, &seed(false), &WriteOptions::default()).unwrap();
+    let read = crate::read(&bytes, &ReadOptions::default()).unwrap();
+    let mut values: Vec<_> = read.models[0]
+        .entities
+        .iter()
+        .map(|e| e.attributes[0].value.clone())
+        .collect();
+    values.sort_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
+    assert_eq!(values, [Value::Float(12_345_678_901.0), Value::Float(5.0)]);
+
+    let d = document(false, vec![tagged(i64::MAX)]);
+    assert!(write_v8(&d, &seed(false), &WriteOptions::default()).is_err());
+}
+
+#[test]
+fn planarity_tolerance_accepts_rounded_holes() {
+    let ring = |a: f64, b: f64, z: f64| {
+        vec![
+            Point3::new(a, a, z),
+            Point3::new(b, a, z),
+            Point3::new(b, b, z),
+            Point3::new(a, b, z),
+            Point3::new(a, a, z),
+        ]
+    };
+    // A hole 0.05 mm off the exterior plane, as 0.1 mm coordinate rounding produces.
+    let d = document(
+        true,
+        vec![Entity::new(EntityKind::Polygon {
+            exterior: ring(0.0, 10.0, 0.0),
+            interiors: vec![ring(2.0, 3.0, 0.000_05)],
+        })],
+    );
+    assert!(write_v8(&d, &seed(true), &WriteOptions::default()).is_ok());
+    let strict = WriteOptions {
+        planarity_tolerance: 1e-6,
+        ..Default::default()
+    };
+    assert!(write_v8(&d, &seed(true), &strict).is_err());
+    let invalid = WriteOptions {
+        planarity_tolerance: f64::NAN,
+        ..Default::default()
+    };
+    assert!(write_v8(&d, &seed(true), &invalid).is_err());
+}
+
+#[test]
 fn ellipse_complex_and_holes_survive_readback() {
     let ring = |a: f64, b: f64| {
         vec![
