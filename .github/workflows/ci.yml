@@ -195,9 +195,14 @@ jobs:
             ./build/info_cpp "$f"
           done
 
+  # One job per target, so all targets fuzz at the same time (about 3 minutes instead of 10+).
   fuzz-smoke:
-    name: fuzz smoke (60 s per target)
+    name: fuzz ${{ matrix.target }} (60 s)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [read_any, dgn, dgn_write, gml, dwg, dxf, dxf_roundtrip, svg]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
@@ -218,16 +223,11 @@ jobs:
         run: python scripts/fetch-corpus.py
       - run: python scripts/seed-fuzz-corpus.py
       - run: cargo install cargo-fuzz --locked
-      - name: Run every target for 60 seconds
-        run: |
-          for target in read_any dgn dgn_write gml dwg dxf dxf_roundtrip svg; do
-            echo "::group::fuzz $target"
-            python scripts/buildlock.py cargo +nightly fuzz run "$target" -- -max_total_time=60 -rss_limit_mb=2048
-            echo "::endgroup::"
-          done
+      - name: Fuzz ${{ matrix.target }} for 60 seconds
+        run: python scripts/buildlock.py cargo +nightly fuzz run "${{ matrix.target }}" -- -max_total_time=60 -rss_limit_mb=2048
       - name: Upload crashes
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: fuzz-artifacts
+          name: fuzz-artifacts-${{ matrix.target }}
           path: fuzz/artifacts
