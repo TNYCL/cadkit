@@ -20,11 +20,10 @@ pub fn normal(ring: &[Point3]) -> Option<Vec3> {
         .then(|| Vec3::new(n.x / length, n.y / length, n.z / length))
 }
 
-/// Halkaları kapatma, düzlemsellik, kesişim ve delik içerme açısından denetler.
-/// İki tolerans da çizim birimindedir. `planarity_tolerance`, herhangi bir halka noktasının
-/// dış halka düzlemine izin verilen en büyük uzaklığıdır; kaynak koordinatların yuvarlama
-/// adımından büyük olmalıdır. `tolerance`, kesişim denetiminde kenarların değiyor sayıldığı
-/// uzaklıktır. `work` kenar karşılaştırmaları için ortak bütçedir.
+/// Checks ring closure, coplanarity, intersections and hole containment.
+/// Both tolerances use drawing units: `planarity_tolerance` bounds distance from
+/// the exterior plane; `tolerance` controls boundary intersection checks.
+/// `work` is the shared budget for edge comparisons.
 pub fn validate(
     exterior: &[Point3],
     interiors: &[Vec<Point3>],

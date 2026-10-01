@@ -2,7 +2,10 @@
 
 mod container;
 mod encode;
+mod polyline;
+mod raster;
 mod tables;
+mod text;
 
 use crate::{
     le,
@@ -32,10 +35,12 @@ pub struct WriteOptions {
     pub timestamp_ms: f64,
     /// Dolu seed'in grafik ve kontrol kayıtlarının çıkarılmasına açık izin.
     pub clear_seed_model: bool,
-    /// Poligon halkalarındaki noktaların dış halka düzlemine izin verilen en büyük
-    /// uzaklığı, kaynak belge biriminde. Varsayılan 0,01 (metre biriminde 1 cm); kaynak
-    /// koordinatların yuvarlama adımından büyük olmalıdır.
+    /// Maximum distance of polygon ring points from the exterior plane, in source
+    /// drawing units. Defaults to 0.01 (1 cm for metres), allowing coordinate rounding.
     pub planarity_tolerance: f64,
+    /// Preserve unchanged raster attachments from the same seed, including their
+    /// opaque control and auxiliary records. New or edited attachments are rejected.
+    pub preserve_seed_rasters: bool,
 }
 impl Default for WriteOptions {
     fn default() -> Self {
@@ -45,6 +50,7 @@ impl Default for WriteOptions {
             timestamp_ms: 0.0,
             clear_seed_model: false,
             planarity_tolerance: 0.01,
+            preserve_seed_rasters: true,
         }
     }
 }
@@ -196,6 +202,7 @@ pub fn write_v8(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<V
         ));
     }
     let max_id = max_id.max(le::u64_at(&seed_header.data, 0x128).unwrap_or(0));
+    let rasters = raster::Preserved::prepare(doc, seed, model, &read, options)?;
     let mut state = State {
         tables: Tables::new(
             native
@@ -209,11 +216,12 @@ pub fn write_v8(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<V
         options,
         wide_tags: wide_integer_tags(&source.entities),
         layers: &doc.layers,
+        rasters: &rasters,
         records: vec![],
         tags: vec![],
         work: 0,
         vertices: 0,
-        bytes: 0,
+        bytes: rasters.bytes,
     };
     for layer in &doc.layers {
         state
@@ -291,6 +299,7 @@ pub fn write_v8(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<V
         version,
         options.limits.max_decompressed_bytes,
     )?;
+    rasters.write_auxiliary(&mut replacements)?;
     put_pages(
         &mut replacements,
         "Dgn^Nm",
@@ -398,17 +407,14 @@ fn put_pages(
     Ok(())
 }
 
-/// (tag set, tag) of an attribute, with the tag set name [`Tables::tag`] defaults to.
-fn tag_key(a: &Attribute) -> (String, String) {
-    (
-        a.set.as_deref().unwrap_or("CADKIT").to_owned(),
-        a.tag.clone(),
-    )
+/// An absent tag set is distinct from every explicitly named tag set.
+fn tag_key(a: &Attribute) -> (Option<String>, String) {
+    (a.set.clone(), a.tag.clone())
 }
 
 /// Tags holding an integer outside the signed 32-bit range of DGN integer tags. A tag
 /// definition has one value type, so every value of such a tag is written as a double.
-fn wide_integer_tags(entities: &[Entity]) -> BTreeSet<(String, String)> {
+fn wide_integer_tags(entities: &[Entity]) -> BTreeSet<(Option<String>, String)> {
     let mut wide = BTreeSet::new();
     let mut todo: Vec<&Entity> = entities.iter().collect();
     while let Some(e) = todo.pop() {
@@ -443,8 +449,9 @@ struct State<'a> {
     model: &'a ModelHeader,
     options: &'a WriteOptions,
     /// Tags written as doubles; see [`wide_integer_tags`].
-    wide_tags: BTreeSet<(String, String)>,
+    wide_tags: BTreeSet<(Option<String>, String)>,
     layers: &'a [cadkit_core::Layer],
+    rasters: &'a raster::Preserved,
     records: Vec<Vec<u8>>,
     tags: Vec<Vec<u8>>,
     work: u64,
@@ -509,7 +516,8 @@ impl State<'_> {
     fn add(&mut self, b: Vec<u8>, tag: bool) -> Result<()> {
         self.bytes = self.bytes.saturating_add(b.len() as u64);
         if self.bytes > self.options.limits.max_decompressed_bytes
-            || self.records.len().saturating_add(self.tags.len()) as u64
+            || (self.records.len().saturating_add(self.tags.len()) as u64)
+                .saturating_add(self.rasters.objects)
                 >= self.options.limits.max_objects
         {
             return Err(Error::LimitExceeded("DGN output record budget".into()));
@@ -529,6 +537,20 @@ impl State<'_> {
         let level = self
             .tables
             .level(e.layer.as_deref(), self.options.timestamp_ms)?;
+        if matches!(e.kind, EntityKind::Image { .. }) {
+            let (id, record) = self.rasters.frame(e, component)?;
+            self.add(record, false)?;
+            return self.attributes(e, id, level);
+        }
+        if matches!(&e.kind, EntityKind::Unknown { type_name } if type_name == "dgn.type_37") {
+            if e.attributes.len() != 1 {
+                return Err(Error::invalid(
+                    0,
+                    "standalone DGN tag requires exactly one attribute",
+                ));
+            }
+            return self.write_attributes(e, None, level);
+        }
         let id = self.tables.id()?;
         let three = self.model.is_3d;
         let psize = if three { 24 } else { 16 };
@@ -569,15 +591,36 @@ impl State<'_> {
                 b
             }
             EntityKind::Polyline {
-                vertices, closed, ..
+                vertices,
+                closed,
+                normal,
             } => {
                 if vertices
                     .iter()
-                    .any(|v| v.bulge != 0.0 || v.start_width != 0.0 || v.end_width != 0.0)
+                    .any(|v| v.start_width != 0.0 || v.end_width != 0.0)
                 {
                     return Err(Error::Unsupported(
-                        "DGN polyline bulges/widths require explicit conversion".into(),
+                        "DGN polyline widths require explicit conversion".into(),
                     ));
+                }
+                if vertices.iter().any(|v| v.bulge != 0.0) {
+                    let children = polyline::segments(e, vertices, *closed, *normal)?;
+                    self.group(
+                        e,
+                        id,
+                        level,
+                        flags,
+                        depth,
+                        &children,
+                        if *closed {
+                            GroupKind::ComplexShape
+                        } else {
+                            GroupKind::ComplexChain
+                        },
+                        None,
+                    )?;
+                    self.attributes(e, id, level)?;
+                    return Ok(());
                 }
                 self.points(
                     e,
@@ -702,7 +745,17 @@ impl State<'_> {
                 if normal.normalized().is_none() {
                     return Err(Error::invalid(0, "invalid normal"));
                 }
-                let (x, y, n) = cadkit_core::geom_ops::arbitrary_axes(*normal);
+                let (x, mut y, mut n) = cadkit_core::geom_ops::arbitrary_axes(*normal);
+                let mut start = *start_angle;
+                let mut sweep = cadkit_core::geom_ops::ccw_sweep(*start_angle, *end_angle);
+                // A clockwise XY arc is represented by -Z in the neutral model.
+                // V8 2D stores the same curve with a signed sweep and +Z axes.
+                if !three && n.z < -0.999999 {
+                    y = y.scaled(-1.0);
+                    n = n.scaled(-1.0);
+                    start = -start;
+                    sweep = -sweep;
+                }
                 self.ellipse(
                     e,
                     id,
@@ -714,10 +767,7 @@ impl State<'_> {
                     x,
                     y,
                     n,
-                    Some((
-                        *start_angle,
-                        cadkit_core::geom_ops::ccw_sweep(*start_angle, *end_angle),
-                    )),
+                    Some((start, sweep)),
                 )?
             }
             EntityKind::Ellipse {
@@ -754,14 +804,12 @@ impl State<'_> {
                 halign,
                 valign,
                 normal,
-                ..
+                end_point,
             } => {
-                if *oblique != 0.0
-                    || *halign != cadkit_core::HAlign::Left
-                    || *valign != cadkit_core::VAlign::Baseline
-                {
+                if *oblique != 0.0 || end_point.is_some() {
                     return Err(Error::Unsupported(
-                        "DGN text requires baseline-left alignment without oblique".into(),
+                        "DGN text oblique and fit/aligned endpoints require explicit conversion"
+                            .into(),
                     ));
                 }
                 if !height.is_finite()
@@ -783,9 +831,25 @@ impl State<'_> {
                         None => self.tables.fonts.values().next().copied().unwrap_or(0),
                     },
                 };
+                let (justification, fx, fy) = text::justification(e, *halign, *valign)?;
+                let length = text::length(e, value, *height * *width_factor, fx)?;
+                let (x, y, n) = cadkit_core::geom_ops::arbitrary_axes(*normal);
+                let a = x.scaled(angle.cos()).plus(y.scaled(angle.sin()));
+                let c = x.scaled(-angle.sin()).plus(y.scaled(angle.cos()));
+                // The neutral point is the justification anchor; DGN stores the
+                // lower-left baseline origin. Preserve the measured advance so
+                // center/right text is not positioned from a font-width guess.
+                let shift = a.scaled(fx * length).plus(c.scaled(fy * *height));
+                let origin = coordinate(
+                    Point3::new(
+                        position.x - shift.x,
+                        position.y - shift.y,
+                        position.z - shift.z,
+                    ),
+                    self.model,
+                )?;
                 let value = self.text(value)?;
                 let offset = if three { 0xca } else { 0xaa };
-                let origin = coordinate(*position, self.model)?;
                 let mut b = self.header(
                     17 | flags,
                     offset + value.len(),
@@ -796,7 +860,7 @@ impl State<'_> {
                     three,
                 )?;
                 u32_at(&mut b, 0x68, font)?;
-                put(&mut b, 0x6c, &2u16.to_le_bytes())?;
+                put(&mut b, 0x6c, &justification.to_le_bytes())?;
                 put(
                     &mut b,
                     0x6e,
@@ -810,12 +874,8 @@ impl State<'_> {
                     height * width_factor * self.model.uor_per_master / 0.006,
                 )?;
                 f64_at(&mut b, 0x78, height * self.model.uor_per_master / 0.006)?;
-                if normal.normalized().is_none() {
-                    return Err(Error::invalid(0, "invalid normal"));
-                }
-                let (x, y, n) = cadkit_core::geom_ops::arbitrary_axes(*normal);
-                let a = x.scaled(angle.cos()).plus(y.scaled(angle.sin()));
-                let c = x.scaled(-angle.sin()).plus(y.scaled(angle.cos()));
+                f64_at(&mut b, 0x80, length * self.model.uor_per_master)?;
+                f64_at(&mut b, 0x88, height * self.model.uor_per_master)?;
                 rotation(&mut b, 0x90, a, c, n, three)?;
                 point(&mut b, if three { 0xb0 } else { 0x98 }, origin, three)?;
                 put(&mut b, offset, &value)?;
@@ -1090,6 +1150,9 @@ impl State<'_> {
         Ok(b)
     }
     fn attributes(&mut self, e: &Entity, target: u64, level: u32) -> Result<()> {
+        self.write_attributes(e, Some(target), level)
+    }
+    fn write_attributes(&mut self, e: &Entity, target: Option<u64>, level: u32) -> Result<()> {
         for a in &e.attributes {
             let widened;
             let a = match a.value {
@@ -1137,9 +1200,11 @@ impl State<'_> {
             )?;
             put(&mut b, 0x140, &value)?;
             let mut links = dependency(0x2717, set)?;
-            links.extend(dependency(0x2710, target)?);
+            if let Some(target) = target {
+                links.extend(dependency(0x2710, target)?);
+            }
             links.extend(self.codepage_link()?);
-            self.add(finish(b, &links)?, true)?;
+            self.add(finish(b, &links)?, target.is_some())?;
         }
         Ok(())
     }

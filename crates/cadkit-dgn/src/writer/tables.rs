@@ -7,19 +7,19 @@ use crate::native::{
     v8::RawElement,
 };
 use cadkit_core::{Attribute, Error, Result, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 pub(super) struct Tables {
     pub records: Vec<Vec<u8>>,
     pub fonts: BTreeMap<String, u32>,
     pub palette: [[u8; 3]; 256],
     pub levels: BTreeMap<String, u32>,
-    pub sets: BTreeMap<String, (u64, TagSetData)>,
+    pub sets: BTreeMap<Option<String>, (u64, TagSetData)>,
     pub last_id: u64,
     max_level: u32,
     level_template: Option<Vec<u8>>,
     tag_set_template: Option<Vec<u8>>,
-    changed_sets: BTreeMap<String, ()>,
+    changed_sets: BTreeMap<Option<String>, ()>,
 }
 impl Tables {
     pub fn new(
@@ -39,6 +39,7 @@ impl Tables {
             tag_set_template: None,
             changed_sets: BTreeMap::new(),
         };
+        let mut level_names = HashSet::new();
         for raw in records {
             let e = decode_v8::decode(
                 &raw,
@@ -56,15 +57,19 @@ impl Tables {
                 }
                 ElementData::Level(level) => {
                     out.max_level = out.max_level.max(level.id);
-                    if let Some(name) = level.name {
-                        out.levels.insert(name, level.id);
-                    }
+                    // Use the same names as the reader: a name-only map of the raw
+                    // table would overwrite duplicate names and move their entities.
+                    let name = crate::level_names::assign(
+                        level.name.as_deref(),
+                        level.id,
+                        &mut level_names,
+                    );
+                    out.levels.insert(name, level.id);
                     out.level_template.get_or_insert(raw.primary().to_vec());
                 }
                 ElementData::TagSet(set) => {
-                    if let Some(name) = set.name.clone() {
-                        out.sets.insert(name, (raw.id().unwrap_or(0), set));
-                    }
+                    out.sets
+                        .insert(set.name.clone(), (raw.id().unwrap_or(0), set));
                     out.tag_set_template
                         .get_or_insert(raw.primary().get(..0x3c).unwrap_or(&[]).to_vec());
                 }
@@ -109,7 +114,7 @@ impl Tables {
         Ok(level)
     }
     pub fn tag(&mut self, attribute: &Attribute) -> Result<(u64, u16, u16)> {
-        let name = attribute.set.as_deref().unwrap_or("CADKIT");
+        let name = &attribute.set;
         let value_type = match attribute.value {
             Value::Text(_) => 1,
             Value::Int(_) => 3,
@@ -119,17 +124,17 @@ impl Tables {
         if !self.sets.contains_key(name) {
             let id = self.id()?;
             self.sets.insert(
-                name.into(),
+                name.clone(),
                 (
                     id,
                     TagSetData {
-                        name: Some(name.into()),
+                        name: name.clone(),
                         number: None,
                         tags: vec![],
                     },
                 ),
             );
-            self.changed_sets.insert(name.into(), ());
+            self.changed_sets.insert(name.clone(), ());
         }
         let (id, set) = self
             .sets
@@ -171,7 +176,7 @@ impl Tables {
             default,
             flags,
         });
-        self.changed_sets.insert(name.into(), ());
+        self.changed_sets.insert(name.clone(), ());
         Ok((*id, next, value_type))
     }
     pub fn finish(mut self, time: f64) -> Result<Vec<Vec<u8>>> {
@@ -213,7 +218,12 @@ impl Tables {
             u32_at(&mut b, 0x34, len)?;
             u32_at(&mut b, 0x38, len)?;
             b.extend(definitions);
-            let b = finish(b, &string_link(1, name)?)?;
+            let links = name
+                .as_deref()
+                .map(|name| string_link(1, name))
+                .transpose()?
+                .unwrap_or_default();
+            let b = finish(b, &links)?;
             if let Some(old) = self
                 .records
                 .iter_mut()

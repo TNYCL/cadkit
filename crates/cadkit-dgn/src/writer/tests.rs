@@ -4,6 +4,10 @@ use super::*;
 use cadkit_core::{Attribute, Color, Model};
 use std::io::{Cursor, Read};
 
+mod raster;
+mod regressions;
+mod text;
+
 fn seed(three: bool) -> Vec<u8> {
     let mut file =
         ::cfb::CompoundFile::create_with_version(::cfb::Version::V3, Cursor::new(vec![])).unwrap();
@@ -346,6 +350,7 @@ fn text_and_clockwise_wrapped_arc_use_neutral_conventions() {
             if let EntityKind::Text {
                 position,
                 height,
+                rotation,
                 valign,
                 value,
                 ..
@@ -353,6 +358,7 @@ fn text_and_clockwise_wrapped_arc_use_neutral_conventions() {
             {
                 assert!((position.x - 2.).abs() < 1e-8 && (position.y - 3.).abs() < 1e-8);
                 assert!((height - 1.5).abs() < 1e-8);
+                assert!((rotation - 0.2).abs() < 1e-8);
                 assert_eq!(*valign, cadkit_core::VAlign::Baseline);
                 assert_eq!(value, "Çizgi ölçüsü");
             } else {

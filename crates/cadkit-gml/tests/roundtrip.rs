@@ -361,6 +361,10 @@ fn validate_xsd_if_cached(bytes: &[u8]) {
     let cache = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../corpus/public/citygml-schemas");
     if !cache.join("profile.xsd").exists() {
+        assert!(
+            std::env::var_os("CADKIT_REQUIRE_GML_XSD").is_none(),
+            "required official CityGML schema cache is missing; run scripts/validate-citygml.py --fetch"
+        );
         return;
     }
     let mut child = std::process::Command::new("xmllint")

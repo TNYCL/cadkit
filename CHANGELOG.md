@@ -20,16 +20,6 @@ All notable changes are recorded here. The format follows
   `--planarity-tolerance`, default 0.01 coordinate units) for CityGML validation and
   DGN output; intersection checks keep 1e-6.
 
-### Fixed
-
-- DGN writer on Windows: seed streams were matched by a `\`-separated path, so seed
-  graphics were kept and colliding new pages were dropped. Undecodable seed pages are
-  now an error instead of being dropped silently.
-- DGN V8 reader: a final CFB sector cut short by the end of the file no longer drops
-  the stream when the bytes it needs are present.
-- DGN writer: integer tags beyond the signed 32-bit range are written as doubles
-  instead of failing.
-
 - Workspace of `cadkit-core`, `cadkit-dxf`, `cadkit-dgn`, `cadkit-dwg`, the `cadkit` facade
   and the bindings `cadkit-cli`, `cadkit-py`, `cadkit-wasm` and `cadkit-capi`.
 - Format-neutral document model with JSON, SVG and DXF output.
@@ -43,6 +33,30 @@ All notable changes are recorded here. The format follows
   wheel, C API, fuzz smoke, cargo-deny) and a manual/tag-triggered release workflow.
 - `deny.toml` permitting only permissive licenses.
 - README, CONTRIBUTING, SECURITY and `docs/c-api.md`.
+- Dedicated CityGML CI job requiring official XSD validation; a missing schema
+  cache fails when `CADKIT_REQUIRE_GML_XSD` is set.
+- DGN writing and GML targets included in the CI fuzz smoke loop.
+- DGN text anchor writing for all 15 documented justification codes, exact
+  zero-width bulged-polyline decomposition and unchanged seed-raster retention.
+- Release workflow: one `v*` tag publishes crates.io, PyPI (`pycadkit`), npm
+  (`cadkit-wasm`) and GitHub Releases (CLI and C API archives, checksums, provenance)
+  after approval; `scripts/release.py` and `docs/RELEASING.md`.
+
+### Fixed
+
+- DGN writer on Windows: seed streams were matched by a `\`-separated path, so seed
+  graphics were kept and colliding new pages were dropped. Undecodable seed pages are
+  now an error instead of being dropped silently.
+- DGN V8 reader: a final CFB sector cut short by the end of the file no longer drops
+  the stream when the bytes it needs are present.
+- DGN writer: integer tags beyond the signed 32-bit range are written as doubles
+  instead of failing.
+- DGN writer: conjugate 3D quaternions so rotated text, ellipses and tilted geometry
+  keep their world orientation. Regression tests now compare text rotation too.
+- DGN reader/writer: share deterministic level names, preserving membership and
+  IDs for duplicate or unnamed seed levels and avoiding literal/alias collisions.
+- DGN writer: retain unnamed tag sets and write standalone type-37 tags without
+  inventing an owner or silently renaming their set.
 
 ### Not yet implemented
 

@@ -17,6 +17,7 @@ mod budget;
 #[cfg(test)]
 mod fuzz_tests;
 mod le;
+mod level_names;
 mod map;
 mod text;
 mod zlib;

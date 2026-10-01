@@ -85,6 +85,10 @@ no TKGM/CityMax codes or generation rules in this crate.
   official public OGC schemas into the ignored public corpus, records URLs and
   hashes, and builds a local catalog (including OGC's xAL copy). Later validation
   runs `xmllint --nonet`; the Rust reader never invokes it or downloads schemas.
+  The dedicated `citygml-schema` CI job installs `xmllint`, fetches the official
+  schemas and sets `CADKIT_REQUIRE_GML_XSD=1`. With that environment variable,
+  a missing cache fails the test instead of returning early. Local tests remain
+  optional when the cache and requirement are both absent.
 
 Every configured limit is applied in addition to a hard XML nesting ceiling of
 256. Writer preflight walks the native/neutral tree without cloning it. Output

@@ -60,6 +60,16 @@ Private client drawings in `corpus/private/` are used only for local, structural
 - DGN V8 record encoders follow cadkit's existing attributed native decoders and
   own public/private corpus analysis. The public GDAL V8 sample and its checked-in
   reference CSV are test data; no ODA SDK or V8 driver implementation was used.
+- DGN rotation and duplicate-level export regressions use invented geometry and
+  synthetic level records. Quaternion storage follows the existing attributed
+  `Rotation::matrix` convention; neutral level naming is shared by the reader and
+  writer. No additional external implementation was consulted for these fixes.
+- DGN text alignment, standalone tags and raster retention follow the same
+  existing native decoders and own structural corpus analysis. Raster control
+  records and auxiliary payloads are retained, not reconstructed from guessed
+  fields. New regression fixtures contain invented records only. Bulged-polyline
+  decomposition uses the analytic `tan(sweep / 4)` convention already documented
+  by cadkit-core; no additional external implementation was consulted.
 - `cadkit-core`'s existing serde_json workspace dependency is now used for a
   bounded streaming writer preflight; no new serialization format is introduced.
 - The default polygon planarity tolerance (0.01 coordinate units) matches the
