@@ -61,6 +61,7 @@ def write_package_json(dest, node):
         "version": workspace_version(),
         "description": "Read DWG, DGN and DXF drawings in the browser or Node via WebAssembly.",
         "license": "MIT OR Apache-2.0",
+        "author": "TNYCL (https://tnycl.com)",
         "repository": {"type": "git", "url": "https://github.com/TNYCL/cadkit"},
         "homepage": "https://github.com/TNYCL/cadkit",
         "keywords": ["cad", "dwg", "dgn", "dxf", "wasm"],

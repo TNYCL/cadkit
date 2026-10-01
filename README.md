@@ -146,6 +146,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 
 ## License
 
+Copyright © 2026 TNYCL ([tnycl.com](https://tnycl.com)).
+
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
 [MIT license](LICENSE-MIT) at your option. Unless you state otherwise, any contribution
 intentionally submitted for inclusion in cadkit is dual licensed as above, without additional

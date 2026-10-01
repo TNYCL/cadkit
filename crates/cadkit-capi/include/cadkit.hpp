@@ -1,4 +1,5 @@
 // cadkit C++17 wrapper: header-only RAII layer over cadkit.h.
+// Copyright (c) 2026 TNYCL (https://tnycl.com).
 // License: MIT OR Apache-2.0.
 //
 //   cadkit::Document doc = cadkit::Document::read_file("plan.dxf");

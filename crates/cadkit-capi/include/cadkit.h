@@ -2,6 +2,7 @@
  * cadkit C API
  *
  * Read DWG, DGN and DXF drawings into one format-neutral model, from C or C++.
+ * Copyright (c) 2026 TNYCL (https://tnycl.com).
  * License: MIT OR Apache-2.0.
  *
  * Conventions
