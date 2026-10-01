@@ -20,7 +20,6 @@ edition = "2024"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/TNYCL/cadkit"
-homepage = "https://github.com/TNYCL/cadkit"
 authors = ["TNYCL"]
 keywords = ["cad", "dwg", "dgn", "dxf", "citygml"]
 categories = ["parser-implementations", "graphics", "encoding", "science::geo"]

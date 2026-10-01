@@ -23,7 +23,8 @@ The CLI version must equal the `wasm-bindgen` version in `Cargo.lock`. `build.py
 Size: the workspace release profile is shared, so `build.py` applies size settings through
 `CARGO_PROFILE_RELEASE_*` environment variables (`opt-level=z`, fat LTO, 1 codegen unit,
 `panic=abort`). If `wasm-opt` (binaryen) is on `PATH`, it additionally runs `wasm-opt -Oz`.
-Current `.wasm`: about 1.8 MB (DWG and DGN readers now included) without `wasm-opt`.
+Current `.wasm`: about 3.4 MB (all readers plus the DGN V8 and CityGML writers) without
+`wasm-opt`; the npm tarball is about 1.6 MB.
 
 ## JS API
 

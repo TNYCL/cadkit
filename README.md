@@ -6,11 +6,8 @@ library, a command-line tool, Python and JavaScript (WebAssembly) bindings, and 
 API. It is dual-licensed under MIT or Apache-2.0 and is developed clean-room: every source of
 format knowledge is recorded in [docs/PROVENANCE.md](docs/PROVENANCE.md).
 
-> Status: early development. Readers do not cover every entity type yet; see the support
-> matrix below.
->
-> 0.1.0 is not released yet: until it is, the package commands below do not work and you
-> need to [build from source](#from-source).
+> Status: early development (0.x): APIs may still change between minor versions. Readers do
+> not cover every entity type yet; see the support matrix below.
 
 ## Format support
 
