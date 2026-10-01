@@ -72,17 +72,7 @@ fn map_file(file: &V8File, options: &ReadOptions, enc: &'static encoding_rs::Enc
     let mut layers = Vec::new();
     let mut names: HashSet<String> = HashSet::new();
     for l in &levels {
-        let base = l
-            .name
-            .clone()
-            .filter(|n| !n.is_empty())
-            .unwrap_or_else(|| format!("Level {}", l.id));
-        let name = if names.contains(&base) {
-            format!("{base} ({})", l.id)
-        } else {
-            base
-        };
-        names.insert(name.clone());
+        let name = crate::level_names::assign(l.name.as_deref(), l.id, &mut names);
         m.levels.insert(l.id, name.clone());
         let mut props = Props::new();
         props.insert("dgn.level_flags".into(), Value::Int(i64::from(l.flags)));

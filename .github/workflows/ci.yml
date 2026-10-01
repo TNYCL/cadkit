@@ -67,6 +67,30 @@ jobs:
       - run: cargo test --locked
       - run: cargo test --locked --doc
 
+  citygml-schema:
+    name: CityGML official XSD validation
+    runs-on: ubuntu-latest
+    env:
+      CADKIT_REQUIRE_GML_XSD: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install independent XML validator
+        run: sudo apt-get update && sudo apt-get install -y libxml2-utils
+      - name: Restore official schema cache
+        uses: actions/cache@v4
+        with:
+          path: corpus/public/citygml-schemas
+          key: citygml-schemas-${{ hashFiles('scripts/validate-citygml.py') }}
+      - name: Fetch official schemas and build the local catalog
+        run: python scripts/validate-citygml.py --fetch
+      - name: Validate native and generated CityGML against official schemas
+        run: python scripts/buildlock.py cargo test --locked -p cadkit-gml
+
   msrv:
     name: MSRV 1.85
     runs-on: ubuntu-latest
@@ -196,9 +220,9 @@ jobs:
       - run: cargo install cargo-fuzz --locked
       - name: Run every target for 60 seconds
         run: |
-          for target in read_any dgn dwg dxf dxf_roundtrip svg; do
+          for target in read_any dgn dgn_write gml dwg dxf dxf_roundtrip svg; do
             echo "::group::fuzz $target"
-            cargo +nightly fuzz run "$target" -- -max_total_time=60 -rss_limit_mb=2048
+            python scripts/buildlock.py cargo +nightly fuzz run "$target" -- -max_total_time=60 -rss_limit_mb=2048
             echo "::endgroup::"
           done
       - name: Upload crashes

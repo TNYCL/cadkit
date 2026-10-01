@@ -226,7 +226,9 @@ pub(super) fn rotation(
         let s = (1.0 + m22 - m00 - m11).sqrt() * 2.0;
         ((m10 - m01) / s, (m02 + m20) / s, (m12 + m21) / s, s / 4.0)
     };
-    for (i, v) in [w, qx, qy, qz].into_iter().enumerate() {
+    // DGN's stored quaternion is the conjugate of the local-to-world convention
+    // used above; see native::element::Rotation::matrix and its GDAL attribution.
+    for (i, v) in [w, -qx, -qy, -qz].into_iter().enumerate() {
         f64_at(b, o + i * 8, v)?;
     }
     Ok(())

@@ -444,6 +444,21 @@ or drops Z. Nonempty seeds require `clear_seed_model=true` explicitly.
 `repack_v8` reconstructs the CFB container without changing stream contents.
 Neither API edits the input buffer or file.
 
+The reader and writer use the same deterministic level-name assignment in table
+order. Duplicate names receive a level-ID suffix, and literal names that already
+look like such a suffix are disambiguated again. Empty/missing names use `Level N`.
+The writer maps these neutral names back to the existing seed level IDs instead of
+overwriting duplicate raw names or creating extra levels. Synthetic tests cover
+duplicate, unnamed and suffix-colliding table entries and verify both membership
+and the level-table count after readback.
+
+3D rotations are encoded with the conjugate of the conventional local-to-world
+quaternion, matching `native::element::Rotation::matrix` and the attributed GDAL
+convention. The former unconjugated encoding reversed a synthetic +30-degree text
+rotation and the Y component of an ellipse's major axis. Regression tests compare
+all matrix-to-quaternion branches, text angles, ellipse axes and tilted normals;
+2D angle encoding is unchanged.
+
 The writer uses the MIT `cfb` 0.14 crate for CFB sector allocation and directory
 construction. Existing streams and directory metadata are copied unless replaced
 or explicitly removed. Fresh entry times derive from the seed root, making
@@ -473,16 +488,40 @@ been independently established. Page version is taken from the seed; no universa
 complete binary format specification.
 
 Supported new entities: line, straight line string, closed shape, circle,
-ellipse, arc, baseline-left text, complex chain/shape and ordinary cell groups.
+ellipse, arc, left/center/right text at baseline/middle/top, complex chain/shape
+and ordinary cell groups. Zero-width bulged polylines are decomposed into exact
+line/arc components, with signed XY sweeps for clockwise 2D arcs; no tessellation
+is involved. Parent attributes remain attached to the resulting complex group.
 Faces and meshes become shapes/cells. Polygons with holes become a cell with
 hole-marked shape components. Polygon rings must lie within
 `WriteOptions::planarity_tolerance` (default 0.01 source units, 1 cm in metres) of the
 exterior ring's plane; 1e-6 rejected every polygon with a hole in 0.1 mm-rounded
-CityGML sources. Shared-cell instances, raster attachments, splines,
-hatches, dimensions, arbitrary text alignment and polyline bulges/widths require
+CityGML sources. Shared-cell instances, new/edited raster attachments, splines,
+hatches, dimensions, fitted/oblique text and nonzero polyline widths require
 explicit conversion and currently return `Unsupported`.
 
+Text justification codes 0..14 are retained when they agree with the neutral
+alignment. The writer inverts the reader's anchor shift using `dgn.text_length`
+(measured baseline advance in drawing units) and character height. Center/right
+text requires that measurement. Callers must refresh it after changing text,
+font, height or width factor; cadkit does not measure fonts. Left-aligned text
+without it uses the existing character-count estimate. Bottom alignment relative
+to descenders is distinct from the DGN baseline and remains unsupported.
+
+`preserve_seed_rasters` (default true) retains unchanged attachments from the same
+seed. All image entities must have unique original IDs and unchanged geometry,
+paths, display properties and native props. Frame records (94), raster control
+records (90..93), and their auxiliary payloads retain their bytes and IDs; other
+graphics and attached tags are regenerated. Unrelated control records are cleared
+as in ordinary seed export. Incomplete auxiliary pages, mixed/new/deleted raster
+sets, or edited attachment settings are rejected. An output is still dependent
+on its external raster file; no raster bytes are embedded or fabricated. This is
+retention of existing attachments, not a new native raster encoder.
+
 Level names, tag sets and attached text/integer/double values are writable.
+Unnamed tag sets remain unnamed rather than being silently renamed to `CADKIT`.
+Standalone type-37 tags are written without an invented owner; their values and
+positions are retained without creating a dangling dependency.
 Strings default to UTF-16; `codepage="windows-1254"` selects explicit legacy
 Turkish text encoding and codepage linkage. Names use UTF-16. Unrepresentable
 characters fail. IDs and tag owner dependencies are assigned together. DGN tag

@@ -3,6 +3,12 @@
 Local validation record: 2026-10-01. This change is confined to cadkit. No Cady
 integration or application-specific TKGM/CityMax generation rules are included.
 
+Latest coverage follow-up: all 112 supplied DGN files now rewrite/read back with
+the compared geometry, attributes and layers preserved. All 56 CityGML-to-DGN
+projections also pass again. This includes unchanged seed-raster retention, not
+creation or modification of arbitrary raster attachments. See the coverage
+follow-up below and [direct library integration](CADKIT_INTEGRATION.md).
+
 ## Implemented contracts
 
 | Surface | Implemented behavior |
@@ -99,6 +105,81 @@ files need `--codepage windows-1254`: the default decoding garbles 557 tag value
 100 files. XSD validation was not run on this machine because `xmllint` is not
 installed.
 
+## Export regression follow-up (2026-10-01)
+
+The follow-up work applies the earlier Windows/CFB/planarity/wide-integer fixes to
+the current working tree and fixes two additional DGN correctness defects:
+
+- Conjugate stored 3D quaternions. Synthetic text at +30 degrees now reads back at
+  +30 degrees; rotated ellipse axes and tilted normals also retain their direction.
+  Regression coverage exercises every matrix-to-quaternion branch and explicitly
+  compares text angles, which the older text test omitted.
+- Share deterministic neutral level names between reader and writer. Duplicate
+  raw names, unnamed levels and literal names resembling generated aliases retain
+  distinct names and their existing seed IDs. Level membership and table counts
+  are checked with fully synthetic records.
+
+Before these corrections, the added/strengthened checks produced five test
+failures. Afterward, 202 tests pass on both the default Windows toolchain and Rust
+1.85 for core, DGN, GML, facade, CLI and C API. Clippy (`--all-targets -D warnings`)
+and workspace rustfmt checks pass. No new Rust dependency was added.
+
+An in-memory C ABI retest, with explicit Windows-1254 fallback for legacy Turkish
+element text, reads 112/112 supplied DGN files. The 49 supported direct rewrites
+now preserve compared geometry, attached values, entity counts, entity-layer
+membership and layer names/IDs in all 49 files. The remaining 57 raster-bearing
+and 6 unsupported-text-alignment inputs still return `Unsupported`; no objects
+were filtered to improve those counts.
+
+All 56 supplied CityGML files also pass strict native rewrite, semantic XML
+comparison, stable serialization and independent official XSD validation of both
+input and output. Conversion of all 56 to DGN with a compatible 3D seed preserves
+the compared primitive geometry and all 93,228 attached attribute values. This
+neutral-model projection does not preserve CityGML object identity or hierarchy
+in DGN; matching geometry and tags is not full CityGML equivalence.
+
+The dedicated `citygml-schema` CI job installs `xmllint`, fetches official schemas
+and requires their use with `CADKIT_REQUIRE_GML_XSD=1`. The missing-cache failure
+was reproduced locally. Fresh synthetic point, line and polygon-with-hole output
+also passed an independent local libxml2/lxml XSD check. The DGN writer and GML
+targets now participate in the existing CI fuzz smoke loop. These workflow edits
+have not been pushed or executed on hosted CI as part of this work.
+
+## Export coverage follow-up (2026-10-01)
+
+The writer now supports all 15 documented text justification codes, using the
+measured baseline advance for center/right anchors. Zero-width bulged polylines
+become exact line/arc complex groups, including clockwise 2D arcs. Existing seed
+rasters can be retained unchanged with their original frame/control IDs and
+auxiliary payloads. New or edited attachments remain unsupported.
+
+Removing the raster rejection exposed two additional issues: ten standalone
+type-37 tags in eight files were unsupported, and four attributes in one file
+had their unnamed set replaced with `CADKIT`. Standalone tags now have no invented
+owner, and unnamed sets remain distinct from every named set.
+
+The final in-memory retest uses explicit Windows-1254 for legacy strings:
+
+| Check | Result |
+|---|---|
+| DGN read, write and readback | 112/112 |
+| Compared primitive geometry and attached attribute values/set names | 112/112 |
+| Entity counts, entity-layer membership and layer names/IDs | 112/112 |
+| Independent strict CFB opening | 112/112 |
+| Raster frame bytes, control record bytes and graphic auxiliary payloads | Equal in all 57 raster-bearing files, containing 458 frames |
+| CityGML to DGN geometry/attribute comparison | 56/56, all 93,228 attribute values preserved |
+
+208 tests pass on both the default Windows toolchain and Rust 1.85. Clippy for the
+six affected packages, all targets with warnings denied, and workspace rustfmt
+pass. Native CityGML code was unchanged in this follow-up; its previous 56-file
+strict/XSD checks were not re-run here. DGN-to-CityGML was not re-tested in this
+follow-up and its limitations still apply.
+
+`cadkit-dgn`'s `raster_structure` example can verify structural preservation in
+memory with `CADKIT_RASTER_CORPUS` and `CADKIT_RASTER_VERIFY=1`. It prints only
+aggregate structural results and never writes source or derived drawing files.
+No Cady source files, branches or commits were created or changed by this work.
+
 ## External acceptance and limitations
 
 No external test environment is currently available. MicroStation opening,
@@ -111,7 +192,9 @@ supports the documented entity subset, not every neutral CAD entity. Unknown see
 streams are retained and can contain opaque references. Unsupported geometry,
 unrepresentable colors/text and invalid options return errors instead of silently
 discarding those entities. Arbitrary CAD tables and application metadata are not
-fully mapped to DGN. V7 writing, raster attachments and vendor SDKs are excluded.
+fully mapped to DGN. V7 writing and new/edited raster attachments are unsupported;
+vendor SDKs are excluded. Retaining an unchanged attachment does not embed its
+external image or prove that the referenced image is available to a recipient.
 
 CityGML native preservation supports the documented CityGML 2.0 profile. It does
 not imply arbitrary GML support or automatic building semantics from linework.
