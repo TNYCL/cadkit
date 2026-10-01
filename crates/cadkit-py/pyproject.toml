@@ -1,14 +1,20 @@
 [build-system]
-requires = ["maturin>=1.5,<2.0"]
+# 1.9.3: PEP 639 license expression and license-files in wheels and sdists.
+requires = ["maturin>=1.9.3,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "cadkit"
-description = "Read DWG, DGN and DXF drawings into one format-neutral model (pure Rust, no vendor SDK)."
+# The distribution is `pycadkit` (the name `cadkit` is registered on PyPI by someone else);
+# the import name stays `cadkit`.
+name = "pycadkit"
+description = "Read DWG, DGN, DXF and CityGML into one format-neutral model; write DXF, DGN V8 and CityGML (pure Rust, no vendor SDK)."
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT OR Apache-2.0"
-keywords = ["cad", "dwg", "dgn", "dxf", "parser"]
+# Copies of the root files, kept identical by `python scripts/release.py sync-licenses`.
+license-files = ["LICENSE-MIT", "LICENSE-APACHE", "NOTICE"]
+authors = [{ name = "TNYCL" }]
+keywords = ["cad", "dwg", "dgn", "dxf", "citygml"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -21,11 +27,19 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Programming Language :: Python :: Implementation :: CPython",
     "Topic :: Scientific/Engineering :: GIS",
     "Typing :: Typed",
 ]
 dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/TNYCL/cadkit"
+Documentation = "https://github.com/TNYCL/cadkit/blob/main/docs/python.md"
+Changelog = "https://github.com/TNYCL/cadkit/blob/main/CHANGELOG.md"
+Issues = "https://github.com/TNYCL/cadkit/issues"
+Author = "https://tnycl.com"
 
 [project.optional-dependencies]
 test = ["pytest>=7"]

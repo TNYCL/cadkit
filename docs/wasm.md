@@ -59,8 +59,18 @@ the desktop ones: input 512 MiB, decompressed 1 GiB, 5,000,000 objects, depth 64
 the `max*` options. If a call still traps (`WebAssembly.RuntimeError`) the module instance is
 unusable and must be re-instantiated; the viewer does this automatically.
 
-`build.py` also writes `package.json` into `pkg/` (name `cadkit`, ES module) and `pkg-node/`
-(name `cadkit-node`, CommonJS), so `npm pack` works in either folder.
+`build.py` writes a private development `package.json` into `pkg/` and `pkg-node/` and then
+assembles the npm package `cadkit-wasm` in `crates/cadkit-wasm/npm/` (git-ignored):
+
+| Import | Folder | Build |
+|---|---|---|
+| `cadkit-wasm` | `web/` | `--target web`, ES module; call `await init()` first |
+| `cadkit-wasm/node` | `node/` | `--target nodejs`, CommonJS, ready on load |
+| `cadkit-wasm/cadkit_wasm_bg.wasm` | `web/` | the module bytes, for `init({ module_or_path })` in Node |
+
+The package README is `crates/cadkit-wasm/README.md`. `npm pack` in `npm/` produces the
+tarball that the release workflow publishes; `tests/package_smoke.mjs` installs it and
+exercises both entry points.
 
 ## Tests
 

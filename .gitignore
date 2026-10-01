@@ -20,4 +20,5 @@ node_modules/
 .DS_Store
 /crates/cadkit-wasm/.tools/
 /crates/cadkit-wasm/pkg-node/
+/crates/cadkit-wasm/npm/
 /out/

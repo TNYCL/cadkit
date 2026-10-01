@@ -1,218 +1,423 @@
 name: Release
 
-# Manual or tag-triggered. Nothing here runs until a tag `v*` is pushed or the workflow is
-# dispatched by hand. Required secrets: CARGO_REGISTRY_TOKEN, PYPI_API_TOKEN, NPM_TOKEN.
+# A pushed tag vX.Y.Z builds and tests every artifact, waits for approval on the `release`
+# environment, then publishes to crates.io, PyPI (pycadkit) and npm (cadkit-wasm) and creates
+# the GitHub release with the CLI and C API archives. Run by hand (workflow_dispatch), it
+# builds and tests everything and publishes nothing. Setup and checklist: docs/RELEASING.md.
+#
+# Every action is pinned to a commit SHA; the comment names the release it points at.
+# Release builds deliberately use no caches.
 
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
-    inputs:
-      publish:
-        description: "Actually publish (false = build and verify only)"
-        type: boolean
-        default: false
-
-env:
-  CARGO_TERM_COLOR: always
-  PUBLISH: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.publish }}
 
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
-  verify:
-    name: verify
+  check:
+    name: check
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      publish: ${{ steps.meta.outputs.publish }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: stable
+      - name: Version, tag, CHANGELOG section and license copies
+        id: meta
+        run: |
+          version=$(python3 scripts/release.py version)
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            python3 scripts/release.py check --tag "$GITHUB_REF_NAME"
+            # Publish only commits that are on main.
+            git merge-base --is-ancestor "$GITHUB_SHA" origin/main \
+              || { echo "::error::$GITHUB_REF_NAME does not point at a commit on main"; exit 1; }
+            publish=true
+          else
+            python3 scripts/release.py check
+            publish=false
+          fi
+          case "$version" in *-*) prerelease=true ;; *) prerelease=false ;; esac
+          {
+            echo "version=$version"
+            echo "publish=$publish"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+          echo "cadkit $version: publish=$publish prerelease=$prerelease" >> "$GITHUB_STEP_SUMMARY"
       - run: cargo test --locked
-      - name: Publishing requires a version tag equal to the workspace version
-        if: env.PUBLISH == 'true'
-        run: |
-          if [ "${GITHUB_REF_TYPE}" != "tag" ]; then
-            echo "publishing is only allowed from a v* tag (ref is ${GITHUB_REF}); dispatch the workflow on a tag"
-            exit 1
-          fi
-          version=$(cargo metadata --no-deps --format-version 1 | python3 -c "import sys,json; print(next(p['version'] for p in json.load(sys.stdin)['packages'] if p['name']=='cadkit'))")
-          test "v$version" = "${GITHUB_REF_NAME}" || { echo "tag ${GITHUB_REF_NAME} != cadkit $version"; exit 1; }
 
-  crates-io:
-    name: crates.io
-    needs: verify
+  crates:
+    name: crates.io packages
+    needs: check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Publish in dependency order
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          # core -> format crates -> facade -> cli / capi. The sleep lets the index catch up.
-          if [ "$PUBLISH" != "true" ]; then
-            # Dependent crates cannot be verified before their dependencies are on the index.
-            cargo publish -p cadkit-core --locked --dry-run
-            exit 0
-          fi
-          for crate in cadkit-core cadkit-dxf cadkit-dgn cadkit-dwg cadkit cadkit-cli cadkit-capi; do
-            echo "::group::publish $crate"
-            cargo publish -p "$crate" --locked
-            echo "::endgroup::"
-            sleep 45
-          done
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: stable
+      - name: Package and build every publishable crate from its packaged sources
+        run: python3 scripts/release.py publish-crates --dry-run
 
-  pypi-wheels:
-    name: wheels (${{ matrix.os }})
-    needs: verify
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: PyO3/maturin-action@v1
-        with:
-          command: build
-          args: --release --locked --out dist
-          working-directory: crates/cadkit-py
-          manylinux: auto
-      - uses: actions/upload-artifact@v4
-        with:
-          name: wheels-${{ matrix.os }}
-          path: crates/cadkit-py/dist/*.whl
-
-  pypi-sdist:
-    name: sdist
-    needs: verify
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: PyO3/maturin-action@v1
-        with:
-          command: sdist
-          args: --out dist
-          working-directory: crates/cadkit-py
-      - uses: actions/upload-artifact@v4
-        with:
-          name: sdist
-          path: crates/cadkit-py/dist/*.tar.gz
-
-  pypi-publish:
-    name: PyPI publish
-    needs: [pypi-wheels, pypi-sdist]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: wheels-*
-          path: dist
-          merge-multiple: true
-      - uses: actions/download-artifact@v4
-        with:
-          name: sdist
-          path: dist
-      - name: Publish
-        if: env.PUBLISH == 'true'
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
-          packages-dir: dist
-
-  npm:
-    name: npm (wasm)
-    needs: verify
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          registry-url: https://registry.npmjs.org
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Build
-        run: |
-          version=$(awk '/^name = "wasm-bindgen"$/{getline; gsub(/[^0-9.]/, "", $0); print; exit}' Cargo.lock)
-          cargo install wasm-bindgen-cli --version "$version" --locked
-          python crates/cadkit-wasm/build.py
-      - name: Pack (package.json is generated by build.py)
-        working-directory: crates/cadkit-wasm/pkg
-        run: |
-          test -f package.json
-          npm pack
-      - uses: actions/upload-artifact@v4
-        with:
-          name: npm-package
-          path: crates/cadkit-wasm/pkg/*.tgz
-      - name: Publish
-        if: env.PUBLISH == 'true'
-        working-directory: crates/cadkit-wasm/pkg
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public
-
-  cli-binaries:
-    name: CLI (${{ matrix.target }})
-    needs: verify
+  wheels:
+    name: wheel (${{ matrix.platform }})
+    needs: check
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, ext: "" }
-          - { os: windows-latest, target: x86_64-pc-windows-msvc, ext: ".exe" }
-          - { os: macos-latest, target: aarch64-apple-darwin, ext: "" }
-          # Intel macOS is cross-compiled on the Apple Silicon runner (macos-13 is retired).
-          - { os: macos-latest, target: x86_64-apple-darwin, ext: "" }
+          - { platform: linux-x86_64, os: ubuntu-latest, target: x86_64, test: true }
+          - { platform: linux-aarch64, os: ubuntu-24.04-arm, target: aarch64, test: true }
+          - { platform: macos-arm64, os: macos-latest, target: aarch64, test: true }
+          # Cross-compiled on the Apple Silicon runner, so it is not imported here.
+          - { platform: macos-x86_64, os: macos-latest, target: x86_64, test: false }
+          - { platform: windows-x64, os: windows-latest, target: x64, test: true }
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        with:
+          command: build
+          target: ${{ matrix.target }}
+          args: --release --locked --out dist
+          working-directory: crates/cadkit-py
+          manylinux: auto
+      - name: Install the wheel and run pytest
+        if: matrix.test
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip pytest
+          python -m pip install --no-index --find-links crates/cadkit-py/dist pycadkit
+          python -m pytest crates/cadkit-py/tests -q
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wheel-${{ matrix.platform }}
+          path: crates/cadkit-py/dist/*.whl
+          if-no-files-found: error
+
+  sdist:
+    name: sdist
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        with:
+          command: sdist
+          args: --out dist
+          working-directory: crates/cadkit-py
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: stable
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Build from the sdist alone and import it
+        run: |
+          python -m pip install crates/cadkit-py/dist/*.tar.gz
+          python -c "import cadkit; print('pycadkit', cadkit.__version__)"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sdist
+          path: crates/cadkit-py/dist/*.tar.gz
+          if-no-files-found: error
+
+  npm:
+    name: npm package
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+      - name: Install the prebuilt wasm-bindgen CLI that matches Cargo.lock
+        run: |
+          version=$(awk '/^name = "wasm-bindgen"$/{getline; gsub(/[^0-9.]/, "", $0); print; exit}' Cargo.lock)
+          mkdir -p crates/cadkit-wasm/.tools
+          curl -sSfL "https://github.com/wasm-bindgen/wasm-bindgen/releases/download/$version/wasm-bindgen-$version-x86_64-unknown-linux-musl.tar.gz" \
+            | tar xz -C crates/cadkit-wasm/.tools
+      - name: Build web, Node and npm package folders
+        run: python3 crates/cadkit-wasm/build.py
+      - run: node --test crates/cadkit-wasm/tests/node_test.mjs
+      - name: Pack
+        working-directory: crates/cadkit-wasm/npm
+        run: npm pack
+      - name: Install the tarball and test both entry points
+        run: |
+          smoke="$RUNNER_TEMP/npm-smoke"
+          mkdir -p "$smoke"
+          cp crates/cadkit-wasm/tests/package_smoke.mjs "$smoke/"
+          cd "$smoke"
+          npm init -y > /dev/null
+          npm install "$GITHUB_WORKSPACE"/crates/cadkit-wasm/npm/cadkit-wasm-*.tgz
+          node package_smoke.mjs
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-package
+          path: crates/cadkit-wasm/npm/cadkit-wasm-*.tgz
+          if-no-files-found: error
+
+  cli:
+    name: CLI (${{ matrix.target }})
+    needs: check
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # musl: static binaries that run on any Linux distribution.
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl, run: true }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl, run: true }
+          - { os: macos-latest, target: aarch64-apple-darwin, run: true }
+          - { os: macos-latest, target: x86_64-apple-darwin, run: false }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, run: true }
+    env:
+      CARGO_PROFILE_RELEASE_STRIP: symbols
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: stable
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
+      - name: Install musl tools
+        if: contains(matrix.target, 'musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
       - run: cargo build -p cadkit-cli --release --locked --target ${{ matrix.target }}
+      - name: Run the binary
+        if: matrix.run
+        shell: bash
+        run: |
+          printf '0\nSECTION\n2\nENTITIES\n0\nLINE\n8\n0\n10\n0\n20\n0\n11\n10\n21\n5\n0\nENDSEC\n0\nEOF\n' > smoke.dxf
+          bin="target/${{ matrix.target }}/release/cadkit"
+          "$bin" --version
+          "$bin" info smoke.dxf
       - name: Package
         shell: bash
         run: |
-          name="cadkit-${{ matrix.target }}"
-          mkdir -p "$name"
-          cp "target/${{ matrix.target }}/release/cadkit${{ matrix.ext }}" "$name/"
-          cp LICENSE-MIT LICENSE-APACHE README.md "$name/"
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            7z a "$name.zip" "$name"
-          else
-            tar czf "$name.tar.gz" "$name"
-          fi
-      - uses: actions/upload-artifact@v4
+          target=${{ matrix.target }}
+          name="cadkit-$target"
+          ext=""
+          case "$target" in *windows*) ext=".exe" ;; esac
+          mkdir "$name"
+          cp "target/$target/release/cadkit$ext" LICENSE-MIT LICENSE-APACHE NOTICE "$name/"
+          cp crates/cadkit-cli/README.md "$name/README.md"
+          if [ -n "$ext" ]; then 7z a "$name.zip" "$name" > /dev/null; else tar czf "$name.tar.gz" "$name"; fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: cli-${{ matrix.target }}
           path: |
             cadkit-*.zip
             cadkit-*.tar.gz
+          if-no-files-found: error
+
+  capi:
+    name: C API (${{ matrix.target }})
+    needs: check
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linked against glibc 2.28 with cargo-zigbuild so the libraries load on older systems.
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, zig: true }
+          - { os: ubuntu-latest, target: aarch64-unknown-linux-gnu, zig: true }
+          - { os: macos-latest, target: aarch64-apple-darwin, zig: false }
+          - { os: macos-latest, target: x86_64-apple-darwin, zig: false }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, zig: false }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: matrix.zig
+        with:
+          python-version: "3.12"
+      - name: Build with cargo-zigbuild (glibc 2.28)
+        if: matrix.zig
+        run: |
+          python -m pip install cargo-zigbuild
+          cargo zigbuild -p cadkit-capi --release --locked --target ${{ matrix.target }}.2.28
+      - name: Build
+        if: '!matrix.zig'
+        run: cargo build -p cadkit-capi --release --locked --target ${{ matrix.target }}
+      - name: Package headers, libraries and licenses
+        shell: bash
+        run: |
+          target=${{ matrix.target }}
+          name="cadkit-capi-$target"
+          out="target/$target/release"
+          mkdir -p "$name/lib"
+          cp -r crates/cadkit-capi/include "$name/"
+          cp LICENSE-MIT LICENSE-APACHE NOTICE "$name/"
+          cp docs/c-api.md "$name/README.md"
+          case "$target" in
+            *windows*) cp "$out/cadkit_capi.dll" "$out/cadkit_capi.dll.lib" "$out/cadkit_capi.lib" "$name/lib/" ;;
+            *apple*) cp "$out/libcadkit_capi.dylib" "$out/libcadkit_capi.a" "$name/lib/" ;;
+            *) cp "$out/libcadkit_capi.so" "$out/libcadkit_capi.a" "$name/lib/" ;;
+          esac
+          case "$target" in
+            *windows*) 7z a "$name.zip" "$name" > /dev/null ;;
+            *) tar czf "$name.tar.gz" "$name" ;;
+          esac
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: capi-${{ matrix.target }}
+          path: |
+            cadkit-capi-*.zip
+            cadkit-capi-*.tar.gz
+          if-no-files-found: error
+
+  # The three publish jobs share the `release` environment: one approval releases all of them,
+  # and only after every build above has passed.
+  publish-crates:
+    name: publish crates.io
+    needs: [check, crates, wheels, sdist, npm, cli, capi]
+    if: needs.check.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      # A token is needed once, for the very first release; afterwards trusted publishing.
+      HAS_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: stable
+      - name: Trusted publishing token
+        id: auth
+        if: env.HAS_TOKEN != 'true'
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+      - name: Publish in dependency order (crates already on the index are skipped)
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token || secrets.CARGO_REGISTRY_TOKEN }}
+        run: python3 scripts/release.py publish-crates
+
+  publish-pypi:
+    name: publish PyPI
+    needs: [check, crates, wheels, sdist, npm, cli, capi]
+    if: needs.check.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: wheel-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: sdist
+          path: dist
+      # Trusted publishing; no token. Attestations are generated by the action.
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: dist
+          skip-existing: true
+
+  publish-npm:
+    name: publish npm
+    needs: [check, crates, wheels, sdist, npm, cli, capi]
+    if: needs.check.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+      # Trusted publishing needs npm 11.5.1 or later.
+      - run: npm install -g npm@^11.5.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: npm-package
+      - name: Publish (trusted publishing; NPM_TOKEN only for the very first release)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ needs.check.outputs.version }}
+          PRERELEASE: ${{ needs.check.outputs.prerelease }}
+        run: |
+          if npm view "cadkit-wasm@$VERSION" version > /dev/null 2>&1; then
+            echo "cadkit-wasm@$VERSION is already on npm"
+            exit 0
+          fi
+          tag=latest
+          if [ "$PRERELEASE" = true ]; then tag=next; fi
+          npm publish ./cadkit-wasm-"$VERSION".tgz --access public --provenance --tag "$tag"
 
   github-release:
     name: GitHub release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [crates-io, pypi-publish, npm, cli-binaries]
+    needs: [check, publish-crates, publish-pypi, publish-npm]
+    if: needs.check.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          pattern: cli-*
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
           path: dist
           merge-multiple: true
-      - uses: softprops/action-gh-release@v2
+      - name: Checksums and release notes
+        run: |
+          (cd dist && sha256sum -- * > SHA256SUMS && cat SHA256SUMS)
+          python3 scripts/release.py notes "${{ needs.check.outputs.version }}" > notes.md
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
+          subject-path: dist/*
+      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          body_path: notes.md
+          prerelease: ${{ needs.check.outputs.prerelease == 'true' }}
           files: dist/*
-          generate_release_notes: true
+          fail_on_unmatched_files: true
