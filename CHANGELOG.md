@@ -16,6 +16,19 @@ All notable changes are recorded here. The format follows
 - Format-neutral polygons with interior rings, SVG even-odd fill and DXF hatch
   boundaries; Rust, CLI, Python, WASM, C and C++ export APIs.
 - `validate-gml` and `repack-dgn` commands, GML/DGN writer fuzz targets.
+- Separate polygon planarity tolerance (`planarity_tolerance`, CLI
+  `--planarity-tolerance`, default 0.01 coordinate units) for CityGML validation and
+  DGN output; intersection checks keep 1e-6.
+
+### Fixed
+
+- DGN writer on Windows: seed streams were matched by a `\`-separated path, so seed
+  graphics were kept and colliding new pages were dropped. Undecodable seed pages are
+  now an error instead of being dropped silently.
+- DGN V8 reader: a final CFB sector cut short by the end of the file no longer drops
+  the stream when the bytes it needs are present.
+- DGN writer: integer tags beyond the signed 32-bit range are written as doubles
+  instead of failing.
 
 - Workspace of `cadkit-core`, `cadkit-dxf`, `cadkit-dgn`, `cadkit-dwg`, the `cadkit` facade
   and the bindings `cadkit-cli`, `cadkit-py`, `cadkit-wasm` and `cadkit-capi`.

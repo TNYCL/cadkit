@@ -52,6 +52,7 @@ pub(crate) fn inspect(
             let checked = cadkit_core::polygon::validate(
                 &p.exterior,
                 &p.interiors,
+                options.planarity_tolerance,
                 options.tolerance,
                 &mut work,
             );

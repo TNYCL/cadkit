@@ -36,6 +36,12 @@ struct Cli {
     #[arg(long, global = true, value_name = "N")]
     max_objects: Option<u64>,
 
+    /// Largest distance of a polygon ring point from its exterior ring's plane, in coordinate
+    /// units, for CityGML validation and writing and for DGN output (default 0.01: 1 cm in
+    /// metres). Must exceed the rounding step of the source coordinates.
+    #[arg(long, global = true, value_name = "UNITS", value_parser = parse_tolerance)]
+    planarity_tolerance: Option<f64>,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -130,6 +136,15 @@ fn parse_width(s: &str) -> Result<f64, String> {
     }
 }
 
+fn parse_tolerance(s: &str) -> Result<f64, String> {
+    match s.parse::<f64>() {
+        Ok(v) if v.is_finite() && v > 0.0 => Ok(v),
+        _ => Err(format!(
+            "invalid tolerance `{s}` (expected a positive number of coordinate units)"
+        )),
+    }
+}
+
 /// How a command failed; decides the exit code.
 #[derive(Debug)]
 enum CliError {
@@ -203,11 +218,7 @@ fn run(cli: &Cli) -> Result<(), CliError> {
                         .map_err(|e| failure(input, &e))?;
                     cadkit::gml::write(
                         &native,
-                        &cadkit::gml::ValidationOptions {
-                            limits: options.limits,
-                            geometry: !preserve_invalid_geometry,
-                            ..Default::default()
-                        },
+                        &gml_validation(cli, &options, !preserve_invalid_geometry),
                     )
                     .map_err(|e| failure(output, &e))?
                 } else {
@@ -240,12 +251,15 @@ fn run(cli: &Cli) -> Result<(), CliError> {
                     .as_ref()
                     .ok_or_else(|| CliError::Usage("DGN V8 output requires --seed".into()))?;
                 let bytes = load_bytes(seed, options.limits.max_input_bytes)?;
-                let options = cadkit::dgn::WriteOptions {
+                let mut options = cadkit::dgn::WriteOptions {
                     limits: options.limits,
                     codepage: cli.codepage.clone(),
                     clear_seed_model: *clear_seed_model,
                     ..Default::default()
                 };
+                if let Some(t) = cli.planarity_tolerance {
+                    options.planarity_tolerance = t;
+                }
                 let bytes =
                     cadkit::to_dgn(&doc, &bytes, &options).map_err(|e| failure(output, &e))?;
                 std::fs::write(output, bytes).map_err(|e| failure(output, &e))?;
@@ -285,11 +299,7 @@ fn run(cli: &Cli) -> Result<(), CliError> {
             let options = read_options(cli);
             let bytes = load_bytes(file, options.limits.max_input_bytes)?;
             let doc = cadkit::gml::read_native(&bytes, &options).map_err(|e| failure(file, &e))?;
-            let validation = cadkit::gml::ValidationOptions {
-                limits: options.limits,
-                geometry: false,
-                ..Default::default()
-            };
+            let validation = gml_validation(cli, &options, false);
             let structure =
                 cadkit::gml::validate(&doc, &validation).map_err(|e| failure(file, &e))?;
             let issues =
@@ -346,6 +356,22 @@ fn load_bytes(path: &Path, max: u64) -> Result<Vec<u8>, CliError> {
         return Err(CliError::Failure("input byte limit exceeded".into()));
     }
     Ok(bytes)
+}
+
+fn gml_validation(
+    cli: &Cli,
+    options: &ReadOptions,
+    geometry: bool,
+) -> cadkit::gml::ValidationOptions {
+    let mut validation = cadkit::gml::ValidationOptions {
+        limits: options.limits,
+        geometry,
+        ..Default::default()
+    };
+    if let Some(t) = cli.planarity_tolerance {
+        validation.planarity_tolerance = t;
+    }
+    validation
 }
 
 fn read_options(cli: &Cli) -> ReadOptions {

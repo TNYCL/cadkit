@@ -35,11 +35,13 @@ See [CityGML format notes](gml/FORMAT_NOTES.md) and
   official XSD validation. Full native trees matched, excluding source byte
   offsets. Counts remained 5,580 IDs, 816 references, 2,336 polygons, 596 interior
   rings, 15,092 positions and 815 generic attributes.
-- That source has **363 polygon geometry diagnostics**, specifically interior
-  rings outside their exterior ring's plane. The diagnostics are unchanged by
-  native preservation. Strict writing rejects these defects. An explicit
-  `geometry=false` / `--preserve-invalid-geometry` option preserves them; it
-  does not certify or repair them.
+- Under the former shared 1e-6 tolerance, that source showed **363 polygon
+  geometry diagnostics**: interior rings outside their exterior ring's plane. The
+  Windows validation below shows this pattern is four-decimal coordinate rounding,
+  not a defect, and the default planarity tolerance is now 0.01 coordinate units.
+  That source has not been re-checked under the new default. Strict writing still
+  rejects real defects; `geometry=false` / `--preserve-invalid-geometry` preserves
+  them without certifying or repairing them.
 - Synthetic generic geometry, native Building/shared surfaces and a closed cube
   passed independent CityGML XSD tests. Schema and geometry tests are separate.
 - Python runtime tests: **21 passed**. Actual WASM/Node runtime tests: **7 passed,
@@ -53,6 +55,49 @@ See [CityGML format notes](gml/FORMAT_NOTES.md) and
   separate Clippy 1.85 attempt reported existing lifetime, precedence, Boolean
   expression and formatting lints in older core/DWG/DXF/DGN code; it is not a
   passing check. Rust 1.85 compilation and tests passed independently.
+
+## Windows validation with a private sample set (2026-10-01)
+
+Windows 11, release CLI, default stable toolchain. The private set has 56 records,
+each with one CityGML file, one plan DGN and one 3D DGN: 168 files, 372 MB. Only
+structural results are recorded here. No run crashed or panicked.
+
+Four defects were found and fixed:
+
+1. **DGN writer on Windows.** Replacement keys came from the `cfb` crate's path string,
+   which uses `\` on Windows. Every nested seed stream was copied unchanged, and new
+   pages that collided with seed pages were dropped. 45 of 50 seemingly successful
+   self-seed outputs were the seed with a new file header. 5 of 7 writer unit tests
+   failed on Windows. Keys are now `/`-joined CFB names.
+2. **Short final CFB sector.** Two 3D DGN files end inside their last sector. The
+   reader skipped that graphic page, losing 751 and 784 elements. The page is now
+   read, and the writer refuses seed pages it cannot decode.
+3. **Planarity tolerance.** All 56 CityGML files failed strict validation with 45,012
+   diagnostics caused by 0.1 mm coordinate rounding (median 0.04 mm, maximum 3 mm).
+   Planarity now has its own tolerance, `planarity_tolerance` / `--planarity-tolerance`,
+   with a default of 0.01. Intersection checks keep 1e-6.
+4. **Integer tags above 32 bits.** 419 generic integer values in 37 files exceeded
+   the DGN integer tag range. Such tags are now written as doubles, exact up to 2^53.
+
+Results after the fixes:
+
+| Path | Result |
+|---|---|
+| Read DGN / CityGML | 112/112 and 56/56 |
+| DGN repack | 112/112, entity histograms identical |
+| CityGML validate, strict rewrite | 56/56 clean; structure counters unchanged |
+| CityGML → DGN, into each record's plan and 3D DGN as seed | 112/112. Group, shape and hole counts and all attribute values match. 511,753 rings match in order with a maximum coordinate deviation of 4.7e-10. Readback has no warnings. |
+| 3D DGN → DGN (own file as seed) | 49/56 with identical histograms; 6 non-baseline-left texts and 1 raster attachment are `Unsupported` |
+| Plan DGN → DGN / CityGML | 0/56: every plan has raster attachments (`Unsupported`) |
+| 3D DGN → CityGML | 26/56. Failures: 13 text, 11 self-intersecting rings, 5 degenerate exteriors and 1 raster. Every output passes `validate-gml`. |
+| DGN / CityGML → DXF, SVG | 168/168 |
+
+The DGN files' summary property set declares code page 1200. That is the UTF-16
+encoding of the property set's own strings, not the encoding of 8-bit element text,
+so the reader falls back to windows-1252. Their 8-bit tag text is Turkish, so these
+files need `--codepage windows-1254`: the default decoding garbles 557 tag values in
+100 files. XSD validation was not run on this machine because `xmllint` is not
+installed.
 
 ## External acceptance and limitations
 

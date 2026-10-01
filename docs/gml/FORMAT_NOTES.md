@@ -62,6 +62,16 @@ no TKGM/CityMax codes or generation rules in this crate.
   ring closure and integer/double generic values.
 - Polygon checks cover degeneracy, coplanarity, crossings, hole containment,
   hole overlap and opposing interior/exterior winding.
+- Coplanarity uses `ValidationOptions::planarity_tolerance`, the largest distance of
+  any ring point from the exterior ring's plane (default 0.01 coordinate units, 1 cm
+  in a metric projected CRS; val3dity's default distance-to-plane tolerance is also
+  1 cm). Crossing checks keep the separate, tight `tolerance` (1e-6), so a larger
+  planarity tolerance does not turn nearby edges into intersections. Evidence: 56
+  private CityGML files write coordinates with four decimals. Their holes sit off the
+  exterior plane by a median 0.04 mm, at most 3 mm. With the former shared 1e-6
+  tolerance this rounding was reported as 45,012 "not coplanar" diagnostics, and strict
+  writing rejected every file; with 0.01 none remain. A geographic (degree) CRS needs
+  an explicit value, since planarity in mixed degree/metre coordinates is not meaningful.
 - Solid checks follow shared polygon references and OrientableSurface reversal,
   require paired opposing edges and nonzero signed volume with exterior/interior
   orientation. Edge matching uses exact coordinate equality (signed zero is
@@ -102,6 +112,7 @@ structural preservation and strict geometry acceptance are separate assertions.
 python3 scripts/validate-citygml.py --fetch
 python3 scripts/buildlock.py cargo test -p cadkit-gml
 cadkit validate-gml input.gml
+cadkit validate-gml input.gml --planarity-tolerance 0.001
 cadkit convert input.gml output.gml
 cadkit convert input.gml preserved.gml --preserve-invalid-geometry
 cadkit convert geometry.dxf output.gml --crs 'YOUR_EXPLICIT_CRS' --lod 1

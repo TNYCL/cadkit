@@ -9,12 +9,15 @@ use crate::{
     native::v8::{self, ModelHeader, RawElement},
 };
 use cadkit_core::{
-    Document, Entity, EntityKind, Error, GroupKind, Limits, Point3, ReadOptions, Result, Value,
-    Vec3,
+    Attribute, Document, Entity, EntityKind, Error, GroupKind, Limits, Point3, ReadOptions, Result,
+    Value, Vec3,
 };
 use encode::*;
 use flate2::{Compression, write::ZlibEncoder};
-use std::{collections::BTreeMap, io::Write};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    io::Write,
+};
 use tables::Tables;
 
 /// V8 yazma sözleşmesi; bir çağrı tek model üretir.
@@ -29,6 +32,10 @@ pub struct WriteOptions {
     pub timestamp_ms: f64,
     /// Dolu seed'in grafik ve kontrol kayıtlarının çıkarılmasına açık izin.
     pub clear_seed_model: bool,
+    /// Poligon halkalarındaki noktaların dış halka düzlemine izin verilen en büyük
+    /// uzaklığı, kaynak belge biriminde. Varsayılan 0,01 (metre biriminde 1 cm); kaynak
+    /// koordinatların yuvarlama adımından büyük olmalıdır.
+    pub planarity_tolerance: f64,
 }
 impl Default for WriteOptions {
     fn default() -> Self {
@@ -37,6 +44,7 @@ impl Default for WriteOptions {
             codepage: None,
             timestamp_ms: 0.0,
             clear_seed_model: false,
+            planarity_tolerance: 0.01,
         }
     }
 }
@@ -88,6 +96,12 @@ pub fn write_v8(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<V
     }
     if !options.timestamp_ms.is_finite() {
         return Err(Error::invalid(0, "DGN timestamp must be finite"));
+    }
+    if !options.planarity_tolerance.is_finite() || options.planarity_tolerance <= 0.0 {
+        return Err(Error::invalid(
+            0,
+            "DGN planarity tolerance must be finite and positive",
+        ));
     }
     if doc.models.len() != 1 {
         return Err(Error::Unsupported(
@@ -193,6 +207,7 @@ pub fn write_v8(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<V
         )?,
         model: header,
         options,
+        wide_tags: wide_integer_tags(&source.entities),
         layers: &doc.layers,
         records: vec![],
         tags: vec![],
@@ -218,6 +233,20 @@ pub fn write_v8(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<V
         .max()
         .unwrap_or(max_id)
         .max(max_id);
+    let decoded: BTreeSet<&str> = model
+        .graphic_pages
+        .iter()
+        .chain(&model.control_pages)
+        .chain(&native.named_pages)
+        .map(|p| p.path.as_str())
+        .chain(
+            model
+                .graphic_aux
+                .iter()
+                .chain(&model.control_aux)
+                .map(|p| p.path.as_str()),
+        )
+        .collect();
     let mut replacements = BTreeMap::new();
     for stream in &native.streams {
         if stream
@@ -234,6 +263,18 @@ pub fn write_v8(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<V
                 .starts_with(&format!("Dgn-Md/{}/Dgn^CA/", model.storage))
             || stream.path.starts_with("Dgn^Nm/")
         {
+            // A page the reader could not decode was neither checked for content nor
+            // carried into the named tables; dropping it would lose seed data silently.
+            let page = stream.path.rsplit('/').next().is_some_and(|n| {
+                n.strip_prefix('$')
+                    .is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))
+            });
+            if page && !decoded.contains(stream.path.as_str()) {
+                return Err(Error::invalid(
+                    0,
+                    format!("seed page {} could not be decoded", stream.path),
+                ));
+            }
             replacements.insert(stream.path.clone(), None);
         }
     }
@@ -357,10 +398,52 @@ fn put_pages(
     Ok(())
 }
 
+/// (tag set, tag) of an attribute, with the tag set name [`Tables::tag`] defaults to.
+fn tag_key(a: &Attribute) -> (String, String) {
+    (
+        a.set.as_deref().unwrap_or("CADKIT").to_owned(),
+        a.tag.clone(),
+    )
+}
+
+/// Tags holding an integer outside the signed 32-bit range of DGN integer tags. A tag
+/// definition has one value type, so every value of such a tag is written as a double.
+fn wide_integer_tags(entities: &[Entity]) -> BTreeSet<(String, String)> {
+    let mut wide = BTreeSet::new();
+    let mut todo: Vec<&Entity> = entities.iter().collect();
+    while let Some(e) = todo.pop() {
+        for a in &e.attributes {
+            if let Value::Int(n) = a.value {
+                if i32::try_from(n).is_err() {
+                    wide.insert(tag_key(a));
+                }
+            }
+        }
+        if let EntityKind::Group { children, .. } = &e.kind {
+            todo.extend(children);
+        }
+    }
+    wide
+}
+
+/// An integer as a double tag value, refused where the double would not hold it exactly.
+fn exact_f64(n: i64) -> Result<f64> {
+    const EXACT: u64 = 1 << f64::MANTISSA_DIGITS;
+    if n.unsigned_abs() > EXACT {
+        return Err(Error::invalid(
+            0,
+            "DGN integer tag exceeds the exact double range",
+        ));
+    }
+    Ok(n as f64)
+}
+
 struct State<'a> {
     tables: Tables,
     model: &'a ModelHeader,
     options: &'a WriteOptions,
+    /// Tags written as doubles; see [`wide_integer_tags`].
+    wide_tags: BTreeSet<(String, String)>,
     layers: &'a [cadkit_core::Layer],
     records: Vec<Vec<u8>>,
     tags: Vec<Vec<u8>>,
@@ -510,7 +593,13 @@ impl State<'_> {
                 exterior,
                 interiors,
             } => {
-                cadkit_core::polygon::validate(exterior, interiors, 1e-6, &mut 20_000_000)?;
+                cadkit_core::polygon::validate(
+                    exterior,
+                    interiors,
+                    self.options.planarity_tolerance,
+                    1e-6,
+                    &mut 20_000_000,
+                )?;
                 if interiors.is_empty() {
                     self.points(e, id, level, flags, exterior, true)?
                 } else {
@@ -1002,6 +1091,17 @@ impl State<'_> {
     }
     fn attributes(&mut self, e: &Entity, target: u64, level: u32) -> Result<()> {
         for a in &e.attributes {
+            let widened;
+            let a = match a.value {
+                Value::Int(n) if self.wide_tags.contains(&tag_key(a)) => {
+                    widened = Attribute {
+                        value: Value::Float(exact_f64(n)?),
+                        ..a.clone()
+                    };
+                    &widened
+                }
+                _ => a,
+            };
             let (set, index, kind) = self.tables.tag(a)?;
             let id = self.tables.id()?;
             let value = match &a.value {
