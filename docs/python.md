@@ -91,3 +91,18 @@ Missing or unreadable files raise the usual `OSError` subclasses (`FileNotFoundE
 ```
 
 Corpus tests skip when `corpus/public` is absent.
+
+## DGN V8 and native CityGML
+
+`Document.from_json(text)` constructs a neutral document. `doc.to_dgn(seed_bytes,
+options_json=None)` returns bytes; options follow Rust `dgn::WriteOptions`.
+`doc.to_citygml(srs_name, lod=1)` returns generic CityGML geometry as UTF-8 bytes.
+
+For semantic preservation use `read_citygml(bytes, options_json=None)` instead of
+the neutral reader. Its `CityGmlDocument` has `to_gml(options_json=None)`,
+`to_json()`, `from_json(text)`, `validate(options_json=None)` and
+`to_document(lod=None)`. Native read options use Rust `ReadOptions`; native write
+and validation options use `gml::ValidationOptions`. Defaults validate geometry;
+`{"geometry": false}` explicitly permits preserving existing geometry defects.
+No schema or CRS is downloaded. See [GML limits](gml/FORMAT_NOTES.md) and
+[DGN limits](dgn/FORMAT_NOTES.md) before choosing an export path.

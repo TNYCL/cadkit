@@ -106,6 +106,40 @@ pub struct CadDocument {
 
 #[wasm_bindgen]
 impl CadDocument {
+    /// Yeni nötr belgeyi JSON metninden oluşturur.
+    #[wasm_bindgen(js_name=fromJsonString)]
+    pub fn from_json_string(text: &str) -> Result<CadDocument, JsValue> {
+        let doc = cadkit::export::document_from_json(text, &wasm_limits(cadkit::Limits::default()))
+            .map_err(|e| from_cadkit(&e))?;
+        Ok(CadDocument { doc })
+    }
+
+    /// Seed baytlarıyla DGN V8 üretir; seçenekler Rust WriteOptions JSON sözleşmesidir.
+    #[wasm_bindgen(js_name=toDgn)]
+    pub fn to_dgn(&self, seed: &[u8], options_json: Option<String>) -> Result<Vec<u8>, JsValue> {
+        let mut options: cadkit::dgn::WriteOptions = options_json
+            .as_deref()
+            .map(serde_json::from_str)
+            .transpose()
+            .map_err(|e| js_error("bad_argument", &e.to_string()))?
+            .unwrap_or_default();
+        options.limits = wasm_limits(options.limits);
+        cadkit::to_dgn(&self.doc, seed, &options).map_err(|e| from_cadkit(&e))
+    }
+
+    /// Açık CRS ile genel CityGML geometrisi üretir; eksen dönüşümü yapılmaz.
+    #[wasm_bindgen(js_name=toCityGml)]
+    pub fn to_citygml(&self, srs_name: String, lod: u8) -> Result<Vec<u8>, JsValue> {
+        cadkit::to_citygml(
+            &self.doc,
+            &cadkit::gml::ExportOptions {
+                srs_name,
+                lod,
+                limits: wasm_limits(cadkit::Limits::default()),
+            },
+        )
+        .map_err(|e| from_cadkit(&e))
+    }
     /// Summary: format, version, application, units, models with entity counts, layer and
     /// warning counts.
     pub fn info(&self) -> Result<JsValue, JsValue> {
@@ -245,4 +279,100 @@ impl CadDocument {
         };
         cadkit::to_dxf(&self.doc, v).map_err(|e| from_cadkit(&e))
     }
+}
+
+/// Özgün CityGML nesne ağını koruyan belge.
+#[wasm_bindgen]
+pub struct CityGmlDocument {
+    doc: cadkit::gml::CityGmlDocument,
+}
+
+/// CityGML baytlarını kayıpsız modele okur; seçenekler ReadOptions JSON sözleşmesidir.
+#[wasm_bindgen(js_name=readCityGml)]
+pub fn read_citygml(
+    bytes: &[u8],
+    options_json: Option<String>,
+) -> Result<CityGmlDocument, JsValue> {
+    let mut options: ReadOptions = options_json
+        .as_deref()
+        .map(serde_json::from_str)
+        .transpose()
+        .map_err(|e| js_error("bad_argument", &e.to_string()))?
+        .unwrap_or_default();
+    options.limits = wasm_limits(options.limits);
+    Ok(CityGmlDocument {
+        doc: cadkit::gml::read_native(bytes, &options).map_err(|e| from_cadkit(&e))?,
+    })
+}
+
+#[wasm_bindgen]
+impl CityGmlDocument {
+    /// Tipli XML modelini JSON'dan oluşturur.
+    #[wasm_bindgen(js_name=fromJsonString)]
+    pub fn from_json_string(text: &str) -> Result<CityGmlDocument, JsValue> {
+        let doc = cadkit::gml::read_native_json(
+            text,
+            &ReadOptions {
+                limits: wasm_limits(cadkit::Limits::default()),
+                ..Default::default()
+            },
+        )
+        .map_err(|e| from_cadkit(&e))?;
+        Ok(CityGmlDocument { doc })
+    }
+    /// Düzenlenebilir, kayıpsız model JSON'u.
+    #[wasm_bindgen(js_name=toJsonString)]
+    pub fn to_json_string(&self) -> Result<String, JsValue> {
+        serde_json::to_string(&self.doc).map_err(|e| js_error("invalid", &e.to_string()))
+    }
+    /// UTF-8 CityGML üretir; seçenekler ValidationOptions JSON sözleşmesidir.
+    #[wasm_bindgen(js_name=toGml)]
+    pub fn to_gml(&self, options_json: Option<String>) -> Result<Vec<u8>, JsValue> {
+        let mut options: cadkit::gml::ValidationOptions = options_json
+            .as_deref()
+            .map(serde_json::from_str)
+            .transpose()
+            .map_err(|e| js_error("bad_argument", &e.to_string()))?
+            .unwrap_or_default();
+        options.limits = wasm_limits(options.limits);
+        cadkit::gml::write(&self.doc, &options).map_err(|e| from_cadkit(&e))
+    }
+    /// Nötr geometri görünümü; belirtilirse yalnız seçilen LoD alınır.
+    #[wasm_bindgen(js_name=toDocument)]
+    pub fn to_document(&self, lod: Option<u8>) -> Result<CadDocument, JsValue> {
+        Ok(CadDocument {
+            doc: cadkit::gml::to_document(
+                &self.doc,
+                &cadkit::gml::ImportOptions { lod },
+                &ReadOptions {
+                    limits: wasm_limits(cadkit::Limits::default()),
+                    ..Default::default()
+                },
+            )
+            .map_err(|e| from_cadkit(&e))?,
+        })
+    }
+    /// Yapısal ve geometrik kontrol sayaçları.
+    pub fn validate(&self, options_json: Option<String>) -> Result<JsValue, JsValue> {
+        let mut options: cadkit::gml::ValidationOptions = options_json
+            .as_deref()
+            .map(serde_json::from_str)
+            .transpose()
+            .map_err(|e| js_error("bad_argument", &e.to_string()))?
+            .unwrap_or_default();
+        options.limits = wasm_limits(options.limits);
+        let report = cadkit::gml::validate(&self.doc, &options).map_err(|e| from_cadkit(&e))?;
+        let text =
+            serde_json::to_string(&report).map_err(|e| js_error("invalid", &e.to_string()))?;
+        parse_json(&text)
+    }
+}
+
+// WASM adres alanında masaüstü varsayılanlarıyla büyük ayırma yapılması önlenir.
+fn wasm_limits(mut limits: cadkit::Limits) -> cadkit::Limits {
+    limits.max_input_bytes = limits.max_input_bytes.min(512 << 20);
+    limits.max_decompressed_bytes = limits.max_decompressed_bytes.min(1 << 30);
+    limits.max_objects = limits.max_objects.min(5_000_000);
+    limits.max_depth = limits.max_depth.min(64);
+    limits
 }

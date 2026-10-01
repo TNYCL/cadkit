@@ -425,3 +425,85 @@ private sample contains none (it has no text elements).
     its XAttribute record (identical for all 8 frames). The real footprint needs the
     raster's pixel size from the image file; the reader cannot derive it. No public sample
     contains a raster frame.
+
+## Seed-based V8 writer
+
+`write_v8(Document, seed, WriteOptions)` constructs new model graphics in a
+single-model seed. Source dimension and known master units must match the seed.
+A plan may occupy a 3D model; the writer never silently changes the seed dimension
+or drops Z. Nonempty seeds require `clear_seed_model=true` explicitly.
+`repack_v8` reconstructs the CFB container without changing stream contents.
+Neither API edits the input buffer or file.
+
+The writer uses the MIT `cfb` 0.14 crate for CFB sector allocation and directory
+construction. Existing streams and directory metadata are copied unless replaced
+or explicitly removed. Fresh entry times derive from the seed root, making
+repeated output deterministic. Model graphic/control/auxiliary pages are replaced;
+named tables are retained and extended. Unknown seed streams are preserved, not
+interpreted or certified as free of references to cleared graphics.
+
+| Written structure | Layout evidence |
+|---|---|
+| File header | Existing reader and own corpus analysis; zlib payload after `0x14`, expected 1,576 bytes; `0x128` high-water element ID updated |
+| Model header | Existing decoded header bytes, including original stream prefix; model extent fields at `0x90` updated |
+| Element pages | Existing page decoder, zero delimiter per record, bounded batches, zlib encoding |
+| Element identity | 64-bit ID at `0x10`, allocated above both observed records and header high-water mark |
+| Display/geometry | Existing V8 decoder layouts; finite UOR conversion, 64-bit range bounds |
+| Levels, tag sets, tags | Existing decoded tables/linkages, seed templates when available, dependency target IDs |
+
+File-header time and revision fields are preserved: their semantics have not
+been independently established. Page version is taken from the seed; no universal
+"last page flag" rule is assumed. A small set of matching local files is not a
+complete binary format specification.
+
+Supported new entities: line, straight line string, closed shape, circle,
+ellipse, arc, baseline-left text, complex chain/shape and ordinary cell groups.
+Faces and meshes become shapes/cells. Polygons with holes become a cell with
+hole-marked shape components. Shared-cell instances, raster attachments, splines,
+hatches, dimensions, arbitrary text alignment and polyline bulges/widths require
+explicit conversion and currently return `Unsupported`.
+
+Level names, tag sets and attached text/integer/double values are writable.
+Strings default to UTF-16; `codepage="windows-1254"` selects explicit legacy
+Turkish text encoding and codepage linkage. Names use UTF-16. Unrepresentable
+characters fail. IDs and tag owner dependencies are assigned together. DGN tag
+integers are restricted to the on-disk signed 32-bit range.
+
+ACI/RGB colors are matched exactly against the seed's palette. An unavailable
+color fails unless the caller explicitly provides `dgn.color_index`. ByLayer
+color uses a supplied neutral layer color or seed palette index zero when no
+explicit color exists. This materializes the color, not a live inheritance rule.
+ByBlock requires prior resolution. Non-default native weight/style/font indexes
+must refer to the seed's tables. Existing seed level settings are retained;
+writing arbitrary neutral level flags, custom fonts/linetypes, CAD props and
+layout/application semantics is not implemented. This is new geometry export,
+not general lossless Document-to-DGN roundtripping.
+
+### Evidence and acceptance boundary
+
+Synthetic tests cover 2D/3D models, Unicode and CP1254 tags/text, tag dependencies,
+palette mapping, holes, wrapped arc angles, limits and truncated seeds. Public
+GDAL `test_dgnv8.dgn` is tested for repack preservation, new geometry, deterministic
+output and independent `cfb::CompoundFile::open_strict`. Existing public CSV
+reader-oracle tests remain separate. Private seeds are checked in memory when
+`CADKIT_PRIVATE_DGN` is supplied; they are not copied into fixtures or outputs.
+
+These tests establish local container/reader agreement. They do not establish
+MicroStation or CityMax acceptance, unknown-field correctness for all V8 files,
+or byte-identical regeneration of vendor-written elements.
+
+The reproducible public/synthetic acceptance kit is generated with:
+
+```sh
+python3 scripts/buildlock.py cargo run -p cadkit --example interchange -- \
+  corpus/public/gdal/test_dgnv8.dgn target/interchange-validation
+cadkit repack-dgn public-input.dgn repacked.dgn
+cadkit convert geometry.dxf output.dgn --seed blank.dgn
+```
+
+Before claiming external acceptance, open the repacked file, check new and moved
+geometry/levels, check attached tags, then save and reopen in the target software.
+No external test environment is currently available. No compatibility
+certification is claimed. The `dgn_write` fuzz target also exercises reading,
+seed-based writing and repacking under reduced resource limits; short
+coverage-instrumented AddressSanitizer runs complement the deterministic tests.

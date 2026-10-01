@@ -170,3 +170,23 @@ enum values and struct layouts change only with a major version (structs gain fi
 end only after a major bump, which is why options are filled with the `_init` functions).
 Files that use features a reader does not handle return `CADKIT_UNSUPPORTED`; the support
 matrix is in the [README](../README.md).
+
+## DGN V8 and native CityGML
+
+`CADKIT_FORMAT_CITY_GML = 5` extends the format enum without changing existing
+values or struct layouts. New entry points are declared in `cadkit.h`:
+
+- `cadkit_document_from_json` creates a neutral document.
+- `cadkit_document_to_dgn` accepts seed bytes and optional Rust `WriteOptions`
+  JSON, returning a pointer and byte length. Release with `cadkit_bytes_free`;
+  never pass the binary buffer to `cadkit_string_free`.
+- `cadkit_document_to_citygml` accepts an explicit CRS and LoD, returning a UTF-8
+  string to release with `cadkit_string_free`.
+- `cadkit_citygml_read_json` / `cadkit_citygml_write_json` expose the native
+  CityGML tree without losing semantic relationships through neutral geometry.
+  Write options follow Rust `gml::ValidationOptions` JSON.
+
+Null/error paths reset outputs. Owned binary buffers are tracked to make repeated
+free calls harmless. As with existing document handles, caller-controlled input
+pointers must remain valid for the call and live documents cannot be freed
+concurrently. C++ adds RAII `Document::from_json`, `to_dgn` and `to_citygml`.

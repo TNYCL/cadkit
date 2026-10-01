@@ -489,6 +489,14 @@ pub fn numbers(e: &Entity, keep_measure: bool) -> (Vec<f64>, Vec<f64>, Vec<Strin
                 n.extend(f.iter().map(|i| f64::from(*i)));
             }
         }
+        EntityKind::Polygon {
+            exterior,
+            interiors,
+        } => {
+            for p in exterior.iter().chain(interiors.iter().flatten()) {
+                assert!(p.x.is_finite() && p.y.is_finite() && p.z.is_finite());
+            }
+        }
         EntityKind::Group { .. } | EntityKind::Unknown { .. } => {}
     }
     (n, ang, s)

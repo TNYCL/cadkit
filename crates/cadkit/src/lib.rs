@@ -18,6 +18,7 @@ pub use cadkit_dgn as dgn;
 pub use cadkit_dwg as dwg;
 pub use cadkit_dxf as dxf;
 pub use cadkit_dxf::DxfVersion;
+pub use cadkit_gml as gml;
 
 /// Detects the format of `bytes` from its header.
 pub fn detect(bytes: &[u8]) -> Option<Format> {
@@ -32,6 +33,8 @@ pub fn detect(bytes: &[u8]) -> Option<Format> {
         })
     } else if cadkit_dxf::sniff(bytes) {
         Some(Format::Dxf)
+    } else if cadkit_gml::sniff(bytes) {
+        Some(Format::CityGml)
     } else {
         None
     }
@@ -55,6 +58,7 @@ pub fn read_with(bytes: &[u8], options: &ReadOptions) -> Result<Document> {
         Some(Format::Dwg) => cadkit_dwg::read(bytes, options),
         Some(Format::DgnV7 | Format::DgnV8) => cadkit_dgn::read(bytes, options),
         Some(Format::Dxf) => cadkit_dxf::read(bytes, options),
+        Some(Format::CityGml) => cadkit_gml::read(bytes, options),
         _ => Err(Error::UnknownFormat),
     }
 }
@@ -103,4 +107,14 @@ pub fn to_svg(doc: &Document, options: &SvgOptions) -> String {
 /// Writes a document as ASCII DXF.
 pub fn to_dxf(doc: &Document, version: DxfVersion) -> Result<String> {
     cadkit_dxf::write(doc, version)
+}
+
+/// Tek nötr modeli, birimleri ve model boyutu eşleşen seed ile DGN V8'e yazar.
+pub fn to_dgn(doc: &Document, seed: &[u8], options: &dgn::WriteOptions) -> Result<Vec<u8>> {
+    dgn::write_v8(doc, seed, options)
+}
+
+/// Nötr geometriyi açık CRS/LoD seçimiyle genel CityGML nesnelerine yazar.
+pub fn to_citygml(doc: &Document, options: &gml::ExportOptions) -> Result<Vec<u8>> {
+    gml::write_document(doc, options)
 }

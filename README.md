@@ -1,7 +1,7 @@
 # cadkit
 
-cadkit reads DWG, DGN (V7 and V8) and DXF drawings into one format-neutral model, written in
-pure Rust with no vendor SDK and no C dependencies. The same core is available as a Rust
+cadkit reads DWG, DGN (V7 and V8), DXF and CityGML 2.0 into one format-neutral model,
+with native CityGML preservation, in pure Rust with no vendor SDK or C dependencies. The same core is available as a Rust
 library, a command-line tool, Python and JavaScript (WebAssembly) bindings, and a C and C++
 API. It is dual-licensed under MIT or Apache-2.0 and is developed clean-room: every source of
 format knowledge is recorded in [docs/PROVENANCE.md](docs/PROVENANCE.md).
@@ -16,10 +16,15 @@ format knowledge is recorded in [docs/PROVENANCE.md](docs/PROVENANCE.md).
 | DXF (ASCII and binary) | R12 to 2018 | ASCII DXF, R12 to 2018 | Implemented; entity coverage is still growing |
 | DWG | AC1014 to AC1032, including 2007 | no | Implemented; R13 (AC1012) is untested; entity coverage is still growing |
 | DGN V7 | yes | no | Implemented, including tags |
-| DGN V8 | yes | no | Implemented, including tags |
+| DGN V8 | yes | seed-based V8 subset | Local tests pass; external application acceptance pending |
+| CityGML 2.0 | native XML and geometry | native XML and explicit generic geometry | Independent XSD tests; no TKGM business rules |
 
-Output formats of the model: JSON (all bindings), SVG (all bindings), DXF (all bindings).
-There is no DWG or DGN writer yet. Readers degrade instead of failing: records they cannot
+Output formats of the model: JSON, SVG, DXF, seed-based DGN V8 and CityGML 2.0
+(Rust, CLI, Python, WASM and C; C++ wraps the C ABI).
+DGN V8 and CityGML writers are available with [explicit limits](docs/gml/FORMAT_NOTES.md).
+Local test evidence and remaining external acceptance are recorded in
+[docs/INTERCHANGE_STATUS.md](docs/INTERCHANGE_STATUS.md).
+There is no DWG writer yet. Readers degrade instead of failing: records they cannot
 model become `Unknown` entities and warnings on the document. Readers may still return
 `Unsupported` for individual files that use features cadkit does not handle; see
 [CHANGELOG.md](CHANGELOG.md) for the current state.
@@ -65,6 +70,9 @@ cadkit info plan.dxf
 cadkit layers plan.dxf
 cadkit convert plan.dxf plan.svg --width 1200
 cadkit convert plan.dxf plan.json --pretty
+cadkit convert plan.dxf plan.dgn --seed blank.dgn
+cadkit convert surfaces.dxf model.gml --crs "YOUR_EXPLICIT_CRS" --lod 1
+cadkit validate-gml model.gml
 ```
 
 Python:
@@ -108,7 +116,7 @@ if (cadkit_read_file("plan.dxf", NULL, &doc) == CADKIT_OK) {
 ## Design
 
 Crates: `cadkit-core` (model, limits, errors, SVG), one reader crate per format
-(`cadkit-dxf`, `cadkit-dgn`, `cadkit-dwg`), the `cadkit` facade, and the bindings
+(`cadkit-dxf`, `cadkit-dgn`, `cadkit-dwg`, `cadkit-gml`), the `cadkit` facade, and the bindings
 (`cadkit-cli`, `cadkit-py`, `cadkit-wasm`, `cadkit-capi`). See
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 

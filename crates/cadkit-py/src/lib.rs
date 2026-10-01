@@ -88,6 +88,57 @@ struct Document {
 
 #[pymethods]
 impl Document {
+    /// Yeni nötr modeli JSON sözleşmesinden oluşturur.
+    #[staticmethod]
+    fn from_json(text: &str) -> PyResult<Self> {
+        let doc = cadkit::export::document_from_json(text, &cadkit::Limits::default())
+            .map_err(map_err)?;
+        Ok(Self {
+            inner: Arc::new(doc),
+        })
+    }
+
+    /// Seed baytlarıyla V8 çıktısı üretir; seçenekler Rust WriteOptions JSON sözleşmesidir.
+    #[pyo3(signature=(seed, options_json=None))]
+    fn to_dgn<'py>(
+        &self,
+        py: Python<'py>,
+        seed: &[u8],
+        options_json: Option<&str>,
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        let options: cadkit::dgn::WriteOptions = options_json
+            .map(serde_json::from_str)
+            .transpose()
+            .map_err(|e| PyValueError::new_err(e.to_string()))?
+            .unwrap_or_default();
+        let bytes = py
+            .detach(|| cadkit::to_dgn(&self.inner, seed, &options))
+            .map_err(map_err)?;
+        Ok(PyBytes::new(py, &bytes))
+    }
+
+    /// Koordinatları değiştirmeden genel CityGML geometrisi üretir.
+    #[pyo3(signature=(srs_name, lod=1))]
+    fn to_citygml<'py>(
+        &self,
+        py: Python<'py>,
+        srs_name: String,
+        lod: u8,
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        let bytes = py
+            .detach(|| {
+                cadkit::to_citygml(
+                    &self.inner,
+                    &cadkit::gml::ExportOptions {
+                        srs_name,
+                        lod,
+                        limits: cadkit::Limits::default(),
+                    },
+                )
+            })
+            .map_err(map_err)?;
+        Ok(PyBytes::new(py, &bytes))
+    }
     /// File format family: `"dwg"`, `"dxf"`, `"dgn_v7"`, `"dgn_v8"` or `"unknown"`.
     #[getter]
     fn format(&self, py: Python<'_>) -> PyResult<String> {
@@ -237,6 +288,100 @@ impl Document {
     }
 }
 
+/// Özgün CityGML nesne ağını ve XML uzantılarını koruyan belge.
+#[pyclass(frozen, module = "cadkit")]
+struct CityGmlDocument {
+    inner: Arc<cadkit::gml::CityGmlDocument>,
+}
+
+#[pymethods]
+impl CityGmlDocument {
+    /// Yeni CityGML modelini JSON sözleşmesinden oluşturur ve yapısını denetler.
+    #[staticmethod]
+    fn from_json(text: &str) -> PyResult<Self> {
+        let doc = cadkit::gml::read_native_json(text, &cadkit::ReadOptions::default())
+            .map_err(map_err)?;
+        Ok(Self {
+            inner: Arc::new(doc),
+        })
+    }
+    /// Özgün modeli düzenlenebilir JSON metnine dönüştürür.
+    fn to_json(&self) -> PyResult<String> {
+        serde_json::to_string(&*self.inner).map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+    /// Yapısal/geometrik kontrolleri çalıştırıp sayaçları döndürür.
+    #[pyo3(signature=(options_json=None))]
+    fn validate<'py>(
+        &self,
+        py: Python<'py>,
+        options_json: Option<&str>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let options = options_json
+            .map(serde_json::from_str)
+            .transpose()
+            .map_err(|e| PyValueError::new_err(e.to_string()))?
+            .unwrap_or_default();
+        let report = py
+            .detach(|| cadkit::gml::validate(&self.inner, &options))
+            .map_err(map_err)?;
+        to_py(py, &report)
+    }
+    /// UTF-8 CityGML baytlarını üretir; seçenekler ValidationOptions JSON sözleşmesidir.
+    #[pyo3(signature=(options_json=None))]
+    fn to_gml<'py>(
+        &self,
+        py: Python<'py>,
+        options_json: Option<&str>,
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        let options = options_json
+            .map(serde_json::from_str)
+            .transpose()
+            .map_err(|e| PyValueError::new_err(e.to_string()))?
+            .unwrap_or_default();
+        let bytes = py
+            .detach(|| cadkit::gml::write(&self.inner, &options))
+            .map_err(map_err)?;
+        Ok(PyBytes::new(py, &bytes))
+    }
+    /// Seçilen LoD geometrisini nötr modele aktarır.
+    #[pyo3(signature=(lod=None))]
+    fn to_document(&self, py: Python<'_>, lod: Option<u8>) -> PyResult<Document> {
+        let doc = py
+            .detach(|| {
+                cadkit::gml::to_document(
+                    &self.inner,
+                    &cadkit::gml::ImportOptions { lod },
+                    &ReadOptions::default(),
+                )
+            })
+            .map_err(map_err)?;
+        Ok(Document {
+            inner: Arc::new(doc),
+        })
+    }
+}
+
+/// CityGML baytlarını nötr modele indirgemeden okur; seçenekler ReadOptions JSON sözleşmesidir.
+#[pyfunction]
+#[pyo3(signature=(data, options_json=None))]
+fn read_citygml(
+    py: Python<'_>,
+    data: &[u8],
+    options_json: Option<&str>,
+) -> PyResult<CityGmlDocument> {
+    let options = options_json
+        .map(serde_json::from_str)
+        .transpose()
+        .map_err(|e| PyValueError::new_err(e.to_string()))?
+        .unwrap_or_default();
+    let doc = py
+        .detach(|| cadkit::gml::read_native(data, &options))
+        .map_err(map_err)?;
+    Ok(CityGmlDocument {
+        inner: Arc::new(doc),
+    })
+}
+
 /// Resolves a `read()` argument: `Ok(bytes)` for buffers, `Err(path)` for path-likes.
 fn source_input(py: Python<'_>, source: &Bound<'_, PyAny>) -> PyResult<Result<Vec<u8>, String>> {
     if let Ok(b) = source.cast::<PyBytes>() {
@@ -308,6 +453,8 @@ fn _cadkit(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Document>()?;
     m.add_function(wrap_pyfunction!(read, m)?)?;
     m.add_function(wrap_pyfunction!(detect, m)?)?;
+    m.add_function(wrap_pyfunction!(read_citygml, m)?)?;
+    m.add_class::<CityGmlDocument>()?;
     m.add("CadkitError", py.get_type::<CadkitError>())?;
     m.add("UnknownFormatError", py.get_type::<UnknownFormatError>())?;
     m.add("UnsupportedError", py.get_type::<UnsupportedError>())?;

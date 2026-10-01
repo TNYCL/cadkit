@@ -33,6 +33,7 @@ fn enum_values_are_stable() {
         (cadkit_format::Dxf as i32, 2),
         (cadkit_format::DgnV7 as i32, 3),
         (cadkit_format::DgnV8 as i32, 4),
+        (cadkit_format::CityGml as i32, 5),
     ];
     for (actual, expected) in format {
         assert_eq!(actual, expected);

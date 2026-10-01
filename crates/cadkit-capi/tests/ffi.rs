@@ -291,3 +291,79 @@ fn corpus_files_never_panic() {
         }
     }
 }
+
+#[test]
+fn citygml_native_json_and_binary_dgn_ownership() {
+    let xml = b"<CityModel xmlns='http://www.opengis.net/citygml/2.0'/>";
+    let mut json = ptr::null_mut();
+    let mut output = ptr::null_mut();
+    // SAFETY: Sabit bayt aralığı ve bütün çıktı adresleri geçerlidir.
+    unsafe {
+        assert_eq!(
+            cadkit_citygml_read_json(xml.as_ptr(), xml.len(), ptr::null(), &mut json),
+            cadkit_status::Ok,
+            "{}",
+            msg()
+        );
+        assert_eq!(
+            cadkit_citygml_write_json(json, ptr::null(), &mut output),
+            cadkit_status::Ok,
+            "{}",
+            msg()
+        );
+        assert!(take(output).contains("CityModel"));
+        cadkit_string_free(json);
+    }
+    let doc = read(MINIMAL_DXF.as_bytes()).unwrap();
+    let mut gml = ptr::null_mut();
+    // SAFETY: Canlı belge ve sonlandırılmış CRS dizesi kullanılır.
+    unsafe {
+        assert_eq!(
+            cadkit_document_to_citygml(doc, c"urn:ogc:def:crs:EPSG::4979".as_ptr(), 1, &mut gml),
+            cadkit_status::Ok,
+            "{}",
+            msg()
+        );
+        assert!(take(gml).contains("GenericCityObject"));
+    }
+    let seed_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../corpus/public/gdal/test_dgnv8.dgn");
+    if let Ok(seed) = std::fs::read(seed_path) {
+        let mut source = cadkit::read(MINIMAL_DXF.as_bytes()).unwrap();
+        source.models[0].is_3d = cadkit::read(&seed).unwrap().models[0].is_3d;
+        let json = CString::new(serde_json::to_string(&source).unwrap()).unwrap();
+        let mut writer_doc = ptr::null_mut();
+        let mut data = ptr::null_mut();
+        let mut len = 0;
+        // SAFETY: JSON, canlı belge, seed ve çıktı adresleri geçerlidir.
+        unsafe {
+            assert_eq!(
+                cadkit_document_from_json(json.as_ptr(), &mut writer_doc),
+                cadkit_status::Ok
+            );
+            assert_eq!(
+                cadkit_document_to_dgn(
+                    writer_doc,
+                    seed.as_ptr(),
+                    seed.len(),
+                    c"{\"clear_seed_model\":true}".as_ptr(),
+                    &mut data,
+                    &mut len
+                ),
+                cadkit_status::Ok,
+                "{}",
+                msg()
+            );
+            assert!(len > 512);
+            let readback = read(std::slice::from_raw_parts(data, len)).unwrap();
+            cadkit_document_free(readback);
+            cadkit_document_free(writer_doc);
+            cadkit_bytes_free(data);
+            cadkit_bytes_free(data);
+        }
+    }
+    // SAFETY: Son kullanımın ardından belge bırakılır.
+    unsafe {
+        cadkit_document_free(doc);
+    }
+}

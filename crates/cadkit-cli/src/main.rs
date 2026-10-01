@@ -1,4 +1,4 @@
-//! `cadkit` command-line tool: inspect and convert DWG, DGN and DXF drawings.
+//! DWG, DGN, DXF ve CityGML 2.0 belgelerini inceleyen ve dönüştüren komut satırı aracı.
 //!
 //! Exit codes: 0 success, 1 the drawing could not be read / written, 2 usage error.
 #![allow(clippy::print_stdout)]
@@ -12,7 +12,7 @@ use std::process::ExitCode;
 use cadkit::{Color, Document, DxfVersion, Entity, EntityKind, ReadOptions, SvgOptions};
 use clap::{Parser, Subcommand};
 
-/// Inspect and convert DWG, DGN and DXF drawings.
+/// DWG, DGN, DXF ve CityGML 2.0 belgelerini inceler ve dönüştürür.
 #[derive(Parser, Debug)]
 #[command(name = "cadkit", version, about, long_about = None)]
 struct Cli {
@@ -44,7 +44,7 @@ struct Cli {
 enum Command {
     /// Summarize a drawing: format, units, models, layers, entity histogram.
     Info {
-        /// Drawing file (DWG, DGN or DXF).
+        /// DWG, DGN, DXF veya CityGML 2.0 dosyası.
         file: PathBuf,
         /// Also list the warnings recorded while reading.
         #[arg(long)]
@@ -55,12 +55,12 @@ enum Command {
     },
     /// List the layers with their state and entity counts.
     Layers {
-        /// Drawing file (DWG, DGN or DXF).
+        /// DWG, DGN, DXF veya CityGML 2.0 dosyası.
         file: PathBuf,
     },
-    /// Convert a drawing to .json, .svg or .dxf (chosen by the output extension).
+    /// Çizimi .json, .svg, .dxf, .dgn veya .gml biçimine dönüştürür.
     Convert {
-        /// Drawing file (DWG, DGN or DXF).
+        /// DWG, DGN, DXF veya CityGML 2.0 dosyası.
         input: PathBuf,
         /// Output file; its extension selects the format.
         output: PathBuf,
@@ -76,10 +76,29 @@ enum Command {
         /// Pretty-print JSON output.
         #[arg(long)]
         pretty: bool,
+        /// DGN V8 çıktısı için seed dosyası.
+        #[arg(long)]
+        seed: Option<PathBuf>,
+        /// Dolu seed'in model içeriğini temizlemeye açık izin.
+        #[arg(long)]
+        clear_seed_model: bool,
+        /// Yeni CityGML çıktısındaki koordinatların mevcut CRS tanımı.
+        #[arg(long)]
+        crs: Option<String>,
+        /// CityGML için ayrıntı düzeyi (0..4).
+        #[arg(long, default_value_t = 1)]
+        lod: u8,
+        /// Yalnız GML → GML aktarımında kaynak geometri hatalarını korumaya açık izin.
+        #[arg(long)]
+        preserve_invalid_geometry: bool,
     },
+    /// CityGML yapı ve geometri sorunlarını JSON olarak raporlar; sorun varsa çıkış kodu 1.
+    ValidateGml { file: PathBuf },
+    /// DGN V8 akışlarını içeriklerini değiştirmeden yeni CFB konteynerine paketler.
+    RepackDgn { input: PathBuf, output: PathBuf },
     /// Print one line per entity, or the full document as JSON.
     Dump {
-        /// Drawing file (DWG, DGN or DXF).
+        /// DWG, DGN, DXF veya CityGML 2.0 dosyası.
         file: PathBuf,
         /// Print the whole document as pretty JSON instead.
         #[arg(long)]
@@ -169,9 +188,69 @@ fn run(cli: &Cli) -> Result<(), CliError> {
             dxf_version,
             width,
             pretty,
+            seed,
+            clear_seed_model,
+            crs,
+            lod,
+            preserve_invalid_geometry,
         } => {
             let target = OutputKind::from_path(output)?;
+            let options = read_options(cli);
+            if matches!(target, OutputKind::Gml) {
+                let bytes = load_bytes(input, options.limits.max_input_bytes)?;
+                let output_bytes = if cadkit::gml::sniff(&bytes) {
+                    let native = cadkit::gml::read_native(&bytes, &options)
+                        .map_err(|e| failure(input, &e))?;
+                    cadkit::gml::write(
+                        &native,
+                        &cadkit::gml::ValidationOptions {
+                            limits: options.limits,
+                            geometry: !preserve_invalid_geometry,
+                            ..Default::default()
+                        },
+                    )
+                    .map_err(|e| failure(output, &e))?
+                } else {
+                    if *preserve_invalid_geometry {
+                        return Err(CliError::Usage(
+                            "--preserve-invalid-geometry requires CityGML input".into(),
+                        ));
+                    }
+                    let doc =
+                        cadkit::read_with(&bytes, &options).map_err(|e| failure(input, &e))?;
+                    let srs_name = crs.clone().ok_or_else(|| {
+                        CliError::Usage("new CityGML output requires --crs".into())
+                    })?;
+                    cadkit::to_citygml(
+                        &doc,
+                        &cadkit::gml::ExportOptions {
+                            srs_name,
+                            lod: *lod,
+                            limits: options.limits,
+                        },
+                    )
+                    .map_err(|e| failure(output, &e))?
+                };
+                std::fs::write(output, output_bytes).map_err(|e| failure(output, &e))?;
+                return Ok(());
+            }
             let doc = load(cli, input)?;
+            if matches!(target, OutputKind::Dgn) {
+                let seed = seed
+                    .as_ref()
+                    .ok_or_else(|| CliError::Usage("DGN V8 output requires --seed".into()))?;
+                let bytes = load_bytes(seed, options.limits.max_input_bytes)?;
+                let options = cadkit::dgn::WriteOptions {
+                    limits: options.limits,
+                    codepage: cli.codepage.clone(),
+                    clear_seed_model: *clear_seed_model,
+                    ..Default::default()
+                };
+                let bytes =
+                    cadkit::to_dgn(&doc, &bytes, &options).map_err(|e| failure(output, &e))?;
+                std::fs::write(output, bytes).map_err(|e| failure(output, &e))?;
+                return Ok(());
+            }
             let text = match target {
                 OutputKind::Json => {
                     cadkit::to_json(&doc, *pretty).map_err(|e| failure(output, &e))?
@@ -194,8 +273,43 @@ fn run(cli: &Cli) -> Result<(), CliError> {
                 }
                 OutputKind::Dxf => cadkit::to_dxf(&doc, dxf_version.unwrap_or_default())
                     .map_err(|e| failure(output, &e))?,
+                OutputKind::Dgn | OutputKind::Gml => {
+                    return Err(CliError::Failure(
+                        "unexpected binary output dispatch".into(),
+                    ));
+                }
             };
             std::fs::write(output, text).map_err(|e| failure(output, &e))?;
+        }
+        Command::ValidateGml { file } => {
+            let options = read_options(cli);
+            let bytes = load_bytes(file, options.limits.max_input_bytes)?;
+            let doc = cadkit::gml::read_native(&bytes, &options).map_err(|e| failure(file, &e))?;
+            let validation = cadkit::gml::ValidationOptions {
+                limits: options.limits,
+                geometry: false,
+                ..Default::default()
+            };
+            let structure =
+                cadkit::gml::validate(&doc, &validation).map_err(|e| failure(file, &e))?;
+            let issues =
+                cadkit::gml::geometry_issues(&doc, &validation).map_err(|e| failure(file, &e))?;
+            let text = serde_json::to_string_pretty(
+                &serde_json::json!({"structure":structure,"geometry_issues":issues}),
+            )
+            .map_err(|e| failure(file, &e))?;
+            print_out(&format!("{}\n", json_for_terminal(&text)));
+            if !issues.is_empty() {
+                return Err(CliError::Failure(
+                    "CityGML geometry validation failed".into(),
+                ));
+            }
+        }
+        Command::RepackDgn { input, output } => {
+            let options = read_options(cli);
+            let bytes = load_bytes(input, options.limits.max_input_bytes)?;
+            let bytes = cadkit::dgn::repack_v8(&bytes, &options).map_err(|e| failure(input, &e))?;
+            std::fs::write(output, bytes).map_err(|e| failure(output, &e))?;
         }
         Command::Dump { file, json } => {
             let doc = load(cli, file)?;
@@ -215,6 +329,26 @@ fn failure(path: &Path, e: &dyn std::fmt::Display) -> CliError {
 }
 
 fn load(cli: &Cli, path: &Path) -> Result<Document, CliError> {
+    cadkit::open_with(path, &read_options(cli)).map_err(|e| failure(path, &e))
+}
+
+fn load_bytes(path: &Path, max: u64) -> Result<Vec<u8>, CliError> {
+    use std::io::Read;
+    let file = std::fs::File::open(path).map_err(|e| failure(path, &e))?;
+    if file.metadata().map_err(|e| failure(path, &e))?.len() > max {
+        return Err(CliError::Failure("input byte limit exceeded".into()));
+    }
+    let mut bytes = vec![];
+    file.take(max.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|e| failure(path, &e))?;
+    if bytes.len() as u64 > max {
+        return Err(CliError::Failure("input byte limit exceeded".into()));
+    }
+    Ok(bytes)
+}
+
+fn read_options(cli: &Cli) -> ReadOptions {
     let mut options = ReadOptions {
         keep_raw: cli.keep_raw,
         fallback_codepage: cli.codepage.clone(),
@@ -229,7 +363,7 @@ fn load(cli: &Cli, path: &Path) -> Result<Document, CliError> {
     if let Some(v) = cli.max_objects {
         options.limits.max_objects = v;
     }
-    cadkit::open_with(path, &options).map_err(|e| failure(path, &e))
+    options
 }
 
 /// Writes to stdout, ignoring a closed pipe instead of panicking like `println!` would.
@@ -277,6 +411,8 @@ enum OutputKind {
     Json,
     Svg,
     Dxf,
+    Dgn,
+    Gml,
 }
 
 impl OutputKind {
@@ -289,8 +425,10 @@ impl OutputKind {
             Some("json") => Ok(Self::Json),
             Some("svg") => Ok(Self::Svg),
             Some("dxf") => Ok(Self::Dxf),
+            Some("dgn") => Ok(Self::Dgn),
+            Some("gml") | Some("citygml") => Ok(Self::Gml),
             _ => Err(CliError::Usage(format!(
-                "cannot choose an output format for `{}`: use a .json, .svg or .dxf extension",
+                "cannot choose an output format for `{}`: use .json, .svg, .dxf, .dgn or .gml",
                 path.display()
             ))),
         }
@@ -616,6 +754,14 @@ fn summary(kind: &EntityKind) -> String {
             )
         }
         EntityKind::Unknown { type_name } => clean(type_name),
+        EntityKind::Polygon {
+            exterior,
+            interiors,
+        } => format!(
+            "{} exterior positions, {} holes",
+            exterior.len(),
+            interiors.len()
+        ),
     }
 }
 

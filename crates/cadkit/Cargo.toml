@@ -16,6 +16,7 @@ cadkit-core.workspace = true
 cadkit-dgn.workspace = true
 cadkit-dwg.workspace = true
 cadkit-dxf.workspace = true
+cadkit-gml.workspace = true
 serde_json.workspace = true
 
 [lints]

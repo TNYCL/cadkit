@@ -140,6 +140,12 @@ fn entity_cost(kind: &EntityKind) -> u64 {
             })
             .fold(0u64, u64::saturating_add),
         EntityKind::Dimension { points, .. } | EntityKind::Face { points, .. } => n(points.len()),
+        EntityKind::Polygon {
+            exterior,
+            interiors,
+        } => interiors.iter().fold(n(exterior.len()), |sum, ring| {
+            sum.saturating_add(n(ring.len()))
+        }),
         EntityKind::Leader { vertices, .. } => n(vertices.len()),
         EntityKind::Mesh { vertices, faces } => {
             n(vertices.len())
@@ -495,6 +501,7 @@ impl EntityKind {
             Self::Hatch { .. } => "hatch",
             Self::Dimension { .. } => "dimension",
             Self::Face { .. } => "face",
+            Self::Polygon { .. } => "polygon",
             Self::Leader { .. } => "leader",
             Self::Image { .. } => "image",
             Self::Viewport { .. } => "viewport",
@@ -910,6 +917,14 @@ fn entity_extents(e: &Entity, tf: &Transform, bb: &mut Option<BBox>) {
         }
         EntityKind::Face { points, .. } => {
             for p in points {
+                extend_bbox(bb, tf.apply_point(*p));
+            }
+        }
+        EntityKind::Polygon {
+            exterior,
+            interiors,
+        } => {
+            for p in exterior.iter().chain(interiors.iter().flatten()) {
                 extend_bbox(bb, tf.apply_point(*p));
             }
         }

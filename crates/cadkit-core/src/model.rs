@@ -80,6 +80,8 @@ pub enum Format {
     DgnV7,
     /// MicroStation DGN V8 (OLE compound file).
     DgnV8,
+    /// CityGML 2.0; GML 3.1.1 tabanlı XML uygulama şeması.
+    CityGml,
 }
 
 /// Drawing units.
@@ -465,6 +467,14 @@ pub enum EntityKind {
         points: Vec<Point3>,
         /// The face is filled (SOLID/TRACE) rather than a wire face.
         filled: bool,
+    },
+    /// Çizim birimlerinde, WCS koordinatlı düzlemsel ve delikli yüzey.
+    /// Halkalar ilk noktayı son noktada tekrar ederek kapatılır.
+    Polygon {
+        /// Yüzeyin dış sınırı; en az dört konum içerir.
+        exterior: Vec<Point3>,
+        /// Dış sınırın içindeki boşlukların kapalı halkaları.
+        interiors: Vec<Vec<Point3>>,
     },
     /// A leader line.
     Leader {

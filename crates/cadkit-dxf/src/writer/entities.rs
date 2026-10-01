@@ -663,6 +663,27 @@ impl Writer<'_> {
                 );
             }
             EntityKind::Face { points, filled } => self.face(out, e, &a, points, *filled),
+            EntityKind::Polygon {
+                exterior,
+                interiors,
+            } => {
+                let normal = cadkit_core::polygon::normal(exterior).unwrap_or(Vec3::Z);
+                let loops: Vec<_> = std::iter::once(exterior)
+                    .chain(interiors.iter())
+                    .enumerate()
+                    .map(|(i, ring)| cadkit_core::HatchLoop {
+                        external: i == 0,
+                        edges: vec![HatchEdge::Polyline {
+                            vertices: ring.iter().copied().map(Vertex::at).collect(),
+                            closed: true,
+                        }],
+                    })
+                    .collect();
+                self.hatch(
+                    out, e, &a, &loops, true, None, 1.0, 0.0, normal, group, depth,
+                );
+                return;
+            }
             EntityKind::Leader {
                 vertices,
                 arrowhead,

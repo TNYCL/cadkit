@@ -110,7 +110,7 @@ fn convert_usage_errors() {
     let bad_out = dir.join("out.xyz");
     let out = cadkit(&["convert", input, bad_out.to_str().expect("utf8 path")]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(text(&out.stderr).contains(".json, .svg or .dxf"));
+    assert!(text(&out.stderr).contains(".json, .svg, .dxf, .dgn or .gml"));
     let svg = dir.join("out.svg");
     let svg = svg.to_str().expect("utf8 path");
     assert_eq!(
@@ -255,4 +255,32 @@ fn limit_flags_are_accepted_and_enforced() {
         input,
     ]);
     assert!(matches!(out.status.code(), Some(0 | 1)));
+}
+
+#[test]
+fn citygml_export_roundtrip_and_validation() {
+    let dir = temp_dir("citygml");
+    let input = write_dxf(&dir);
+    let output = dir.join("new.gml");
+    let copy = dir.join("copy.gml");
+    let input = input.to_str().expect("path");
+    let output = output.to_str().expect("path");
+    let copy = copy.to_str().expect("path");
+    assert_eq!(cadkit(&["convert", input, output]).status.code(), Some(2));
+    let result = cadkit(&[
+        "convert",
+        input,
+        output,
+        "--crs",
+        "urn:ogc:def:crs:EPSG::4979",
+    ]);
+    assert_eq!(result.status.code(), Some(0), "{}", text(&result.stderr));
+    let result = cadkit(&["validate-gml", output]);
+    assert_eq!(result.status.code(), Some(0), "{}", text(&result.stderr));
+    assert!(text(&result.stdout).contains("geometry_issues"));
+    assert_eq!(cadkit(&["convert", output, copy]).status.code(), Some(0));
+    assert_eq!(
+        std::fs::read(output).expect("gml"),
+        std::fs::read(copy).expect("copy")
+    );
 }

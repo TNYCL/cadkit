@@ -92,3 +92,20 @@ selector and text toggle; information panel with format, version, units, counts 
 warnings; SVG, DXF and JSON export; light/dark theme from `prefers-color-scheme`; responsive
 layout with a collapsible panel on phones. The canvas is a white sheet:
 the renderer paints on a white background (`background: "#ffffff"`).
+
+## DGN V8 and CityGML
+
+`CadDocument.fromJsonString(text)` constructs a neutral model. `toDgn(seed,
+optionsJson?)` returns `Uint8Array`; `toCityGml(srsName, lod)` returns UTF-8 bytes.
+DGN options use Rust `dgn::WriteOptions` JSON, including `clear_seed_model`.
+
+`readCityGml(bytes, optionsJson?)` returns a native `CityGmlDocument` with
+`toGml(optionsJson?)`, `toJsonString()`, static `fromJsonString(text)`,
+`toDocument(lod?)` and `validate(optionsJson?)`. Call `free()` on both document
+classes when done. Native read options use Rust `ReadOptions`; native write and
+validation options use `gml::ValidationOptions`.
+
+New native APIs cap input at 512 MiB, decompressed data at 1 GiB, objects at five
+million and depth at 64 even if larger JSON limits are supplied. Runtime schema
+fetching and implicit CRS transformation are not performed. The Node test suite
+includes native GML preservation, new generic output and public-seed DGN writing.

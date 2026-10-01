@@ -624,6 +624,28 @@ impl Renderer<'_> {
                     self.emit_path(&layer, &pb.d, &extra);
                 }
             }
+            EntityKind::Polygon {
+                exterior,
+                interiors,
+            } => {
+                for ring in std::iter::once(exterior).chain(interiors.iter()) {
+                    let points: Vec<_> = ring
+                        .iter()
+                        .map(|p| tf.apply_point(*p))
+                        .map(|p| (p.x, p.y))
+                        .collect();
+                    pb.polyline(&points, true);
+                }
+                self.emit_path(
+                    &layer,
+                    &pb.d,
+                    &format!(
+                        " fill=\"{}\" fill-rule=\"evenodd\"{}",
+                        hex(color),
+                        Self::stroke(color)
+                    ),
+                );
+            }
             EntityKind::Leader { vertices, .. } => {
                 let v: Vec<(f64, f64)> = vertices
                     .iter()

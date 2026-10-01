@@ -18,6 +18,7 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 [dependencies]
 cadkit.workspace = true
 serde_json.workspace = true
+serde.workspace = true
 
 # FFI crate: binding macros/ABI need `unsafe`, so workspace lints are restated without the unsafe ban.
 [lints.rust]

@@ -130,3 +130,65 @@ if (existsSync(corpus)) {
     });
   }
 }
+
+
+test("CityGML native and new geometry exports", () => {
+  const bytes = new TextEncoder().encode("<CityModel xmlns='http://www.opengis.net/citygml/2.0'/>");
+  const native = wasm.readCityGml(bytes);
+  try {
+    assert.equal(native.validate().elements, 1);
+    assert.equal(wasm.detect(native.toGml()), "city_gml");
+    const copy = wasm.CityGmlDocument.fromJsonString(native.toJsonString());
+    try {
+      assert.deepEqual(copy.toGml(), native.toGml());
+    } finally {
+      copy.free();
+    }
+  } finally {
+    native.free();
+  }
+  const original = wasm.read(new TextEncoder().encode(DXF));
+  const object = original.toJSON();
+  original.free();
+  object.models[0].entities = object.models[0].entities.filter(e => e.kind.type === "line");
+  assert.equal(object.models[0].entities.length, 1);
+  const doc = wasm.CadDocument.fromJsonString(JSON.stringify(object));
+  try {
+    const gml = doc.toCityGml("urn:ogc:def:crs:EPSG::4979", 1);
+    assert.match(new TextDecoder().decode(gml), /GenericCityObject/);
+    const checked = wasm.readCityGml(gml);
+    try {
+      assert.equal(checked.validate().ids, 1);
+    } finally {
+      checked.free();
+    }
+  } finally {
+    doc.free();
+  }
+});
+
+test("DGN export from neutral JSON", (t) => {
+  const seedPath = path.join(here, "../../../corpus/public/gdal/test_dgnv8.dgn");
+  if (!existsSync(seedPath)) return t.skip("public seed missing");
+  const seed = readFileSync(seedPath);
+  const seedDoc = wasm.read(seed);
+  const original = wasm.read(new TextEncoder().encode(DXF));
+  const source = original.toJSON();
+  original.free();
+  source.units = seedDoc.toJSON().units;
+  source.models[0].is_3d = seedDoc.toJSON().models[0].is_3d;
+  seedDoc.free();
+  source.models[0].entities = source.models[0].entities.filter(e => e.kind.type === "line");
+  const doc = wasm.CadDocument.fromJsonString(JSON.stringify(source));
+  try {
+    const output = doc.toDgn(seed, JSON.stringify({ clear_seed_model: true }));
+    const readback = wasm.read(output);
+    try {
+      assert.equal(readback.toJSON().models[0].entities.length, 1);
+    } finally {
+      readback.free();
+    }
+  } finally {
+    doc.free();
+  }
+});

@@ -8,6 +8,15 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- Seed-based DGN V8 geometry/tag export, stream-preserving CFB repacking and
+  reproducible public/synthetic acceptance samples. External application acceptance
+  is pending; see `docs/dgn/FORMAT_NOTES.md` for the supported subset.
+- CityGML 2.0 native read/write, explicit generic geometry export, bounded XML and
+  reference handling, geometry diagnostics and independent official-schema tests.
+- Format-neutral polygons with interior rings, SVG even-odd fill and DXF hatch
+  boundaries; Rust, CLI, Python, WASM, C and C++ export APIs.
+- `validate-gml` and `repack-dgn` commands, GML/DGN writer fuzz targets.
+
 - Workspace of `cadkit-core`, `cadkit-dxf`, `cadkit-dgn`, `cadkit-dwg`, the `cadkit` facade
   and the bindings `cadkit-cli`, `cadkit-py`, `cadkit-wasm` and `cadkit-capi`.
 - Format-neutral document model with JSON, SVG and DXF output.
@@ -24,6 +33,7 @@ All notable changes are recorded here. The format follows
 
 ### Not yet implemented
 
-- No DWG or DGN writer; DXF is the only writable format.
+- No DWG or DGN V7 writer. Full DGN V8 coverage and external acceptance remain open.
+- No automatic TKGM/CityMax building inference or receiving-system acceptance.
 - DWG R13 (AC1012) is untested; entity coverage of all readers is still growing.
 - Nothing is published to crates.io, PyPI or npm.

@@ -164,6 +164,30 @@ public:
         return detail::take(out);
     }
 
+    /// JSON sözleşmesinden yeni nötr belge oluşturur.
+    static Document from_json(const std::string& json) {
+        cadkit_document* out = nullptr;
+        detail::check(cadkit_document_from_json(json.c_str(), &out));
+        return Document(out);
+    }
+
+    /// Seed ve isteğe bağlı WriteOptions JSON'u ile V8 baytları üretir.
+    std::vector<std::uint8_t> to_dgn(const std::vector<std::uint8_t>& seed, const std::string& options_json = "{}") const {
+        std::uint8_t* out = nullptr;
+        std::size_t len = 0;
+        detail::check(cadkit_document_to_dgn(require(), seed.data(), seed.size(), options_json.c_str(), &out, &len));
+        auto deleter = [](std::uint8_t* p) { cadkit_bytes_free(p); };
+        std::unique_ptr<std::uint8_t, decltype(deleter)> owned(out, deleter);
+        return len == 0 ? std::vector<std::uint8_t>{} : std::vector<std::uint8_t>(out, out + len);
+    }
+
+    /// Açık CRS tanımıyla genel CityGML geometrisi üretir.
+    std::string to_citygml(const std::string& srs_name, std::uint8_t lod = 1) const {
+        char* out = nullptr;
+        detail::check(cadkit_document_to_citygml(require(), srs_name.c_str(), lod, &out));
+        return detail::take(out);
+    }
+
     /// Writes ASCII DXF.
     std::string to_dxf(cadkit_dxf_version version = CADKIT_DXF_R2018) const {
         char* out = nullptr;

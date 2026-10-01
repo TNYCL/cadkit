@@ -3,6 +3,7 @@
 from cadkit._cadkit import (
     CadkitError,
     Document,
+    CityGmlDocument,
     InvalidDataError,
     LimitExceededError,
     UnknownFormatError,
@@ -10,11 +11,13 @@ from cadkit._cadkit import (
     __version__,
     detect,
     read,
+    read_citygml,
 )
 
 __all__ = [
     "CadkitError",
     "Document",
+    "CityGmlDocument",
     "InvalidDataError",
     "LimitExceededError",
     "UnknownFormatError",
@@ -22,4 +25,5 @@ __all__ = [
     "__version__",
     "detect",
     "read",
+    "read_citygml",
 ]

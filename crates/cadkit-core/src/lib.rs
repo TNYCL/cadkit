@@ -7,11 +7,13 @@
 pub mod aci;
 pub mod bytes;
 pub mod error;
+pub mod export;
 pub mod geom;
 pub mod geom_ops;
 pub mod model;
 pub mod ops;
 pub mod options;
+pub mod polygon;
 pub mod svg;
 pub mod text;
 pub mod units;

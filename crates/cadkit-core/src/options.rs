@@ -2,7 +2,8 @@
 
 /// Hard resource limits that protect against malicious or corrupt input.
 /// Every reader must check sizes taken from the file against these before allocating or looping.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct Limits {
     /// Largest accepted input file.
     pub max_input_bytes: u64,
@@ -36,7 +37,8 @@ impl Default for Limits {
 }
 
 /// Options accepted by every reader.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct ReadOptions {
     /// Resource limits.
     pub limits: Limits,

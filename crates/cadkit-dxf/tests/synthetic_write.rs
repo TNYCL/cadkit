@@ -989,3 +989,38 @@ fn numbers_keep_full_precision() {
         );
     }
 }
+
+#[test]
+fn polygon_interiors_are_hatch_boundaries_or_r12_outlines() {
+    let ring = |a, b| {
+        vec![
+            p(a, a, 3.),
+            p(b, a, 3.),
+            p(b, b, 3.),
+            p(a, b, 3.),
+            p(a, a, 3.),
+        ]
+    };
+    let mut doc = Document::default();
+    doc.models.push(Model {
+        is_3d: true,
+        entities: vec![Entity::new(EntityKind::Polygon {
+            exterior: ring(0., 10.),
+            interiors: vec![ring(2., 3.)],
+        })],
+        ..Default::default()
+    });
+    for version in [DxfVersion::R12, DxfVersion::R2018] {
+        let output = cadkit_dxf::write(&doc, version).unwrap();
+        let read = cadkit_dxf::read(output.as_bytes(), &ReadOptions::default()).unwrap();
+        if version == DxfVersion::R12 {
+            assert_eq!(read.models[0].entities.len(), 2);
+        } else if let EntityKind::Hatch { loops, .. } = &read.models[0].entities[0].kind {
+            assert_eq!(loops.len(), 2);
+            assert!(loops[0].external);
+            assert!(!loops[1].external);
+        } else {
+            panic!("expected HATCH");
+        }
+    }
+}

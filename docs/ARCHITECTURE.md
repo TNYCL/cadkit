@@ -20,7 +20,19 @@ pub fn sniff(bytes: &[u8]) -> bool;                                   // header 
 pub fn read(bytes: &[u8], options: &ReadOptions) -> Result<Document>; // full read
 ```
 
-`cadkit-dxf` also exposes `write(&Document, DxfVersion) -> Result<String>`.
+`cadkit-dxf` exposes `write(&Document, DxfVersion) -> Result<String>`.
+`cadkit-dgn` exposes `write_v8(&Document, seed, &WriteOptions)` and `repack_v8`.
+`cadkit-gml` exposes bounded native XML read/write and a neutral geometry bridge;
+the facade offers `to_dgn` and `to_citygml`. Seed/CRS/options are explicit inputs.
+
+CityGML semantics live in `cadkit-gml::CityGmlDocument`. `EntityKind::Polygon`
+is the format-neutral exception: an exterior and interior rings are necessary to
+carry holes honestly through CAD operations and SVG/DXF export. Building/room/LoD
+semantics are not added to core. Native CityGML, rather than a reverse-engineered
+neutral projection, is the authoritative input for preservation roundtrips.
+
+See [GML contracts](gml/FORMAT_NOTES.md) and [DGN writer limits](dgn/FORMAT_NOTES.md).
+Company/TKGM rules and Cady integration are outside this implementation.
 
 Format crates are layered internally:
 

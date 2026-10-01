@@ -63,7 +63,8 @@ typedef enum cadkit_format {
     CADKIT_FORMAT_DWG = 1,
     CADKIT_FORMAT_DXF = 2,
     CADKIT_FORMAT_DGN_V7 = 3,
-    CADKIT_FORMAT_DGN_V8 = 4
+    CADKIT_FORMAT_DGN_V8 = 4,
+    CADKIT_FORMAT_CITY_GML = 5
 } cadkit_format;
 
 /* DXF output version. Values are stable. */
@@ -149,6 +150,19 @@ CADKIT_API cadkit_status cadkit_document_to_svg(const cadkit_document *doc,
                                                 const cadkit_svg_options *options, char **out);
 CADKIT_API cadkit_status cadkit_document_to_dxf(const cadkit_document *doc, cadkit_dxf_version version,
                                                 char **out);
+
+/* Yeni geometri ve CityGML modelleri; dönen dizeler cadkit_string_free ile bırakılır. */
+CADKIT_API cadkit_status cadkit_document_from_json(const char *json, cadkit_document **out);
+/* İkili çıktıyı yalnız cadkit_bytes_free ile bırakın; out_len bayt uzunluğudur. */
+CADKIT_API cadkit_status cadkit_document_to_dgn(const cadkit_document *doc, const uint8_t *seed,
+    size_t seed_len, const char *options_json, uint8_t **out, size_t *out_len);
+CADKIT_API void cadkit_bytes_free(uint8_t *data);
+CADKIT_API cadkit_status cadkit_document_to_citygml(const cadkit_document *doc,
+    const char *srs_name, uint8_t lod, char **out);
+CADKIT_API cadkit_status cadkit_citygml_read_json(const uint8_t *data, size_t len,
+    const cadkit_options *options, char **out);
+CADKIT_API cadkit_status cadkit_citygml_write_json(const char *json,
+    const char *validation_options_json, char **out);
 
 /* Releases a string returned by this library. NULL is a no-op. */
 CADKIT_API void cadkit_string_free(char *s);

@@ -7,6 +7,7 @@ default-members = [
     "crates/cadkit-dgn",
     "crates/cadkit-dwg",
     "crates/cadkit-dxf",
+    "crates/cadkit-gml",
     "crates/cadkit",
     "crates/cadkit-cli",
     "crates/cadkit-capi",
@@ -29,12 +30,15 @@ cadkit-core = { path = "crates/cadkit-core", version = "0.1.0" }
 cadkit-dgn = { path = "crates/cadkit-dgn", version = "0.1.0" }
 cadkit-dwg = { path = "crates/cadkit-dwg", version = "0.1.0" }
 cadkit-dxf = { path = "crates/cadkit-dxf", version = "0.1.0" }
+cadkit-gml = { path = "crates/cadkit-gml", version = "0.1.0" }
 cadkit = { path = "crates/cadkit", version = "0.1.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 encoding_rs = "0.8"
+quick-xml = "0.41"
+cfb = "0.14"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
