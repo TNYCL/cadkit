@@ -57,7 +57,8 @@ Registry accounts belong to the maintainer; enable two-factor authentication on 
 1. On a branch: `python scripts/release.py bump X.Y.Z`. It sets the workspace version and the
    internal dependency versions, refreshes `Cargo.lock` and turns `## [Unreleased]` in
    `CHANGELOG.md` into `## [X.Y.Z] - <date>` below a new empty `Unreleased` section.
-   Edit the changelog section; it becomes the GitHub release notes.
+   Edit the changelog section; it becomes the GitHub release notes. For the first release
+   (0.1.0), also delete the "not released yet" note at the top of `README.md`.
 2. `python scripts/release.py check --tag vX.Y.Z` must pass. Open a pull request, let CI pass,
    optionally run the dry run on the branch, and merge.
 3. Tag the merge commit on `main` and push the tag:
