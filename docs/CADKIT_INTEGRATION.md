@@ -44,6 +44,44 @@ No Cady source files were changed in this cadkit correction work. The eventual
 adapter needs to marshal application objects, select the appropriate library
 path, surface export errors, and save the returned bytes.
 
+## Conversion diagnostics and TKGM preflight
+
+`gml::write_document_with_report` accepts `UnsupportedGeometry::Reject` (the
+existing default) or the explicit `MetadataOnly` option. The latter retains the
+original neutral entity JSON in `cadkit.entity`, leaves unsupported GML geometry
+absent and returns model/child-index diagnostics. Nested groups keep supported
+child geometry and report the missing parts. External raster pixels and block
+definitions are not embedded. This generic conversion is not a TKGM delivery.
+Closed polylines remain closed curves; callers must create explicit `Polygon`
+entities for surfaces. Circles use exact three-point GML Circle segments.
+
+The same report path is available through Python `to_citygml_with_report`, WASM
+`toCityGmlWithReport`, C `cadkit_document_to_citygml_with_report`, the matching C++
+method and CLI `convert --gml-metadata-only`. Python returns `(bytes, report)`;
+C/C++ and WASM return JSON with `xml` and `report` fields. Metadata-only mode is
+opt-in in every interface. Display the report to the application user.
+
+For the requested city-model tender, the [production guide](https://cbs.tkgm.gov.tr/3d/html/giris.html)
+uses CityGML **2.0**; its latest listed revision is **v2.50** (6 May 2025).
+The separate Digital Building registration guide is TKGMCityGML 3.0.3.
+Buildings are `Building`,
+storeys are `CityObjectGroup` and independent sections are `GenericCityObject`
+with the required class, typed attributes and links. Supplying only generic
+geometry does not populate that model. See [TKGM profile notes](gml/TKGM.md).
+
+`gml::tkgm::preflight(doc, Profile::CityModelTender, limits)` checks a documented
+architectural subset on the native model. The distinct
+`Profile::DigitalBuildingRegistration` applies registration-specific rules.
+Python exposes `CityGmlDocument.preflight_tkgm`, WASM `preflightTkgm`, and C
+`cadkit_citygml_preflight_tkgm` accepts native JSON. Each requires the profile
+string `city-model-tender` or `digital-building-registration`; there is no default.
+CLI uses `validate-gml --tkgm-profile city-model-tender`.
+The report always states `acceptance_verified: false` and names unchecked rules.
+Tender-year-dependent MAKS rules and sustainability extensions are explicitly
+unchecked in the common tender subset; select the contract's rules at acceptance.
+The app should run this before export in addition to native geometry and official
+XSD checks; the receiving TKGM system remains the final acceptance authority.
+
 ## Acceptance
 
 Local write/read comparisons, independent CFB opening and official XSD checks

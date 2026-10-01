@@ -189,6 +189,13 @@ public:
         return detail::take(out);
     }
 
+    /// Returns JSON with XML and conversion diagnostics; unsupported geometry is strict by default.
+    std::string to_citygml_with_report(const std::string& srs_name, std::uint8_t lod = 1, bool metadata_only = false) const {
+        char* out = nullptr;
+        detail::check(cadkit_document_to_citygml_with_report(require(), srs_name.c_str(), lod, metadata_only ? 1 : 0, &out));
+        return detail::take(out);
+    }
+
     /// Writes ASCII DXF.
     std::string to_dxf(cadkit_dxf_version version = CADKIT_DXF_R2018) const {
         char* out = nullptr;

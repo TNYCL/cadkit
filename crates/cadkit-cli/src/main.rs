@@ -97,9 +97,19 @@ enum Command {
         /// Yalnız GML → GML aktarımında kaynak geometri hatalarını korumaya açık izin.
         #[arg(long)]
         preserve_invalid_geometry: bool,
+        /// For CAD-to-GML, retain unsupported entities only as JSON metadata and print a report.
+        /// This does not produce a TKGM building/unit profile or rendered annotation geometry.
+        #[arg(long)]
+        gml_metadata_only: bool,
     },
     /// CityGML yapı ve geometri sorunlarını JSON olarak raporlar; sorun varsa çıkış kodu 1.
-    ValidateGml { file: PathBuf },
+    ValidateGml {
+        file: PathBuf,
+        /// Run a local TKGM subset: city-model-tender or digital-building-registration.
+        /// Profile selection is explicit; neither result is official acceptance.
+        #[arg(long)]
+        tkgm_profile: Option<cadkit::gml::tkgm::Profile>,
+    },
     /// DGN V8 akışlarını içeriklerini değiştirmeden yeni CFB konteynerine paketler.
     RepackDgn { input: PathBuf, output: PathBuf },
     /// Print one line per entity, or the full document as JSON.
@@ -208,12 +218,18 @@ fn run(cli: &Cli) -> Result<(), CliError> {
             crs,
             lod,
             preserve_invalid_geometry,
+            gml_metadata_only,
         } => {
             let target = OutputKind::from_path(output)?;
             let options = read_options(cli);
             if matches!(target, OutputKind::Gml) {
                 let bytes = load_bytes(input, options.limits.max_input_bytes)?;
                 let output_bytes = if cadkit::gml::sniff(&bytes) {
+                    if *gml_metadata_only {
+                        return Err(CliError::Usage(
+                            "--gml-metadata-only requires CAD input".into(),
+                        ));
+                    }
                     let native = cadkit::gml::read_native(&bytes, &options)
                         .map_err(|e| failure(input, &e))?;
                     cadkit::gml::write(
@@ -232,18 +248,36 @@ fn run(cli: &Cli) -> Result<(), CliError> {
                     let srs_name = crs.clone().ok_or_else(|| {
                         CliError::Usage("new CityGML output requires --crs".into())
                     })?;
-                    cadkit::to_citygml(
+                    let (native, report) = cadkit::gml::from_document_with_report(
                         &doc,
                         &cadkit::gml::ExportOptions {
                             srs_name,
                             lod: *lod,
                             limits: options.limits,
                         },
+                        if *gml_metadata_only {
+                            cadkit::gml::UnsupportedGeometry::MetadataOnly
+                        } else {
+                            cadkit::gml::UnsupportedGeometry::Reject
+                        },
                     )
-                    .map_err(|e| failure(output, &e))?
+                    .map_err(|e| failure(output, &e))?;
+                    let bytes = cadkit::gml::write(&native, &gml_validation(cli, &options, true))
+                        .map_err(|e| failure(output, &e))?;
+                    if *gml_metadata_only {
+                        let json =
+                            serde_json::to_string(&report).map_err(|e| failure(output, &e))?;
+                        eprintln!("{json}");
+                    }
+                    bytes
                 };
                 std::fs::write(output, output_bytes).map_err(|e| failure(output, &e))?;
                 return Ok(());
+            }
+            if *gml_metadata_only {
+                return Err(CliError::Usage(
+                    "--gml-metadata-only requires GML output".into(),
+                ));
             }
             let doc = load(cli, input)?;
             if matches!(target, OutputKind::Dgn) {
@@ -295,7 +329,7 @@ fn run(cli: &Cli) -> Result<(), CliError> {
             };
             std::fs::write(output, text).map_err(|e| failure(output, &e))?;
         }
-        Command::ValidateGml { file } => {
+        Command::ValidateGml { file, tkgm_profile } => {
             let options = read_options(cli);
             let bytes = load_bytes(file, options.limits.max_input_bytes)?;
             let doc = cadkit::gml::read_native(&bytes, &options).map_err(|e| failure(file, &e))?;
@@ -304,14 +338,26 @@ fn run(cli: &Cli) -> Result<(), CliError> {
                 cadkit::gml::validate(&doc, &validation).map_err(|e| failure(file, &e))?;
             let issues =
                 cadkit::gml::geometry_issues(&doc, &validation).map_err(|e| failure(file, &e))?;
+            let profile = if let Some(profile) = tkgm_profile {
+                Some(
+                    cadkit::gml::tkgm::preflight(&doc, *profile, &options.limits)
+                        .map_err(|e| failure(file, &e))?,
+                )
+            } else {
+                None
+            };
             let text = serde_json::to_string_pretty(
-                &serde_json::json!({"structure":structure,"geometry_issues":issues}),
+                &serde_json::json!({"structure":structure,"geometry_issues":issues,"tkgm_preflight":profile}),
             )
             .map_err(|e| failure(file, &e))?;
             print_out(&format!("{}\n", json_for_terminal(&text)));
-            if !issues.is_empty() {
+            if !issues.is_empty()
+                || profile
+                    .as_ref()
+                    .is_some_and(|r| !r.issues.is_empty() || r.truncated)
+            {
                 return Err(CliError::Failure(
-                    "CityGML geometry validation failed".into(),
+                    "CityGML geometry or requested profile preflight failed".into(),
                 ));
             }
         }

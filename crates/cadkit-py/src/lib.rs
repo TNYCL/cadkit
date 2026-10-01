@@ -139,6 +139,35 @@ impl Document {
             .map_err(map_err)?;
         Ok(PyBytes::new(py, &bytes))
     }
+    /// Returns XML bytes and diagnostics; metadata-only fallback is explicit.
+    #[pyo3(signature=(srs_name, lod=1, metadata_only=false))]
+    fn to_citygml_with_report<'py>(
+        &self,
+        py: Python<'py>,
+        srs_name: String,
+        lod: u8,
+        metadata_only: bool,
+    ) -> PyResult<(Bound<'py, PyBytes>, Bound<'py, PyAny>)> {
+        let (bytes, report) = py
+            .detach(|| {
+                cadkit::gml::write_document_with_report(
+                    &self.inner,
+                    &cadkit::gml::ExportOptions {
+                        srs_name,
+                        lod,
+                        limits: cadkit::Limits::default(),
+                    },
+                    if metadata_only {
+                        cadkit::gml::UnsupportedGeometry::MetadataOnly
+                    } else {
+                        cadkit::gml::UnsupportedGeometry::Reject
+                    },
+                )
+            })
+            .map_err(map_err)?;
+        Ok((PyBytes::new(py, &bytes), to_py(py, &report)?))
+    }
+
     /// File format family: `"dwg"`, `"dxf"`, `"dgn_v7"`, `"dgn_v8"` or `"unknown"`.
     #[getter]
     fn format(&self, py: Python<'_>) -> PyResult<String> {
@@ -296,6 +325,19 @@ struct CityGmlDocument {
 
 #[pymethods]
 impl CityGmlDocument {
+    /// Local TKGM checks for city-model-tender or digital-building-registration.
+    /// Requires an explicit profile; never establishes official acceptance.
+    fn preflight_tkgm<'py>(&self, py: Python<'py>, profile: &str) -> PyResult<Bound<'py, PyAny>> {
+        let profile = profile
+            .parse::<cadkit::gml::tkgm::Profile>()
+            .map_err(map_err)?;
+        let report = py
+            .detach(|| {
+                cadkit::gml::tkgm::preflight(&self.inner, profile, &cadkit::Limits::default())
+            })
+            .map_err(map_err)?;
+        to_py(py, &report)
+    }
     /// Yeni CityGML modelini JSON sözleşmesinden oluşturur ve yapısını denetler.
     #[staticmethod]
     fn from_json(text: &str) -> PyResult<Self> {

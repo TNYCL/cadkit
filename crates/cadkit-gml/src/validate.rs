@@ -271,6 +271,14 @@ pub fn validate(doc: &CityGmlDocument, options: &ValidationOptions) -> Result<Va
             report.polygons += 1;
             report.interiors += p.interiors.len() as u64;
         }
+        if e.name.is(GML, "Circle") {
+            // Native XML can retain coordinate encodings outside the neutral subset.
+            if let Err(error) = crate::curves::read_segment(e, *dim, &options.limits) {
+                if !matches!(error, Error::Unsupported(_)) {
+                    return Err(error);
+                }
+            }
+        }
         if e.name.namespace == GENERICS
             && matches!(
                 e.name.local(),

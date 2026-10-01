@@ -4,6 +4,7 @@ use super::*;
 use cadkit_core::{Attribute, Color, Model};
 use std::io::{Cursor, Read};
 
+mod application;
 mod raster;
 mod regressions;
 mod text;

@@ -6,6 +6,20 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Reported generic CityGML export with explicit metadata-only handling for
+  unsupported geometry, available in Rust, CLI, Python, WASM and C/C++.
+- Exact GML Circle export/import, synthetic new/edit/reopen checks, and bounded
+  local TKGM preflight with required city-model tender / Digital Building
+  registration profile selection and explicit unchecked rules. Neither establishes
+  official acceptance; contract-specific tender-year conditions remain unchecked.
+
+### Changed
+
+- Closed CAD polylines remain curves in generic GML export instead of being
+  implicitly reclassified as polygons; explicit surfaces remain strictly checked.
+
 ## [0.1.0] - 2026-10-01
 
 First release. Packages: `cadkit` and its format crates on crates.io, `pycadkit` on PyPI

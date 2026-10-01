@@ -27,6 +27,29 @@ fn temp_dir(name: &str) -> PathBuf {
 
 const DXF: &str = "0\nSECTION\n2\nENTITIES\n0\nLINE\n8\nWALLS\n10\n0.0\n20\n0.0\n30\n0.0\n11\n10.0\n21\n5.0\n31\n0.0\n0\nENDSEC\n0\nEOF\n";
 
+#[test]
+fn metadata_only_gml_requires_opt_in_and_reports_annotations() {
+    let dir = temp_dir("gml-metadata");
+    let input = dir.join("synthetic.dxf");
+    let output = dir.join("result.gml");
+    let text_dxf = "0\nSECTION\n2\nENTITIES\n0\nTEXT\n8\n0\n10\n0\n20\n0\n40\n1\n1\nSynthetic\n0\nENDSEC\n0\nEOF\n";
+    std::fs::write(&input, text_dxf).expect("write synthetic text");
+    let input = input.to_str().expect("input path");
+    let output = output.to_str().expect("output path");
+    let args = ["convert", input, output, "--crs", "urn:cadkit:synthetic"];
+    assert!(!cadkit(&args).status.success());
+    assert!(!Path::new(output).exists());
+    let mut fallback = args.to_vec();
+    fallback.push("--gml-metadata-only");
+    let result = cadkit(&fallback);
+    assert!(result.status.success(), "{}", text(&result.stderr));
+    let report: serde_json::Value = serde_json::from_slice(&result.stderr).expect("report JSON");
+    assert_eq!(report["metadata_only_entities"], 1);
+    let xml = std::fs::read_to_string(output).expect("output XML");
+    assert!(xml.contains("cadkit.geometry_status"));
+    assert!(cadkit(&["validate-gml", output]).status.success());
+}
+
 fn write_dxf(dir: &Path) -> PathBuf {
     let path = dir.join("synthetic.dxf");
     std::fs::write(&path, DXF).expect("write dxf");
@@ -278,6 +301,21 @@ fn citygml_export_roundtrip_and_validation() {
     let result = cadkit(&["validate-gml", output]);
     assert_eq!(result.status.code(), Some(0), "{}", text(&result.stderr));
     assert!(text(&result.stdout).contains("geometry_issues"));
+    let result = cadkit(&[
+        "validate-gml",
+        output,
+        "--tkgm-profile",
+        "city-model-tender",
+    ]);
+    assert_eq!(result.status.code(), Some(1));
+    assert!(text(&result.stdout).contains("city_model_tender_architectural"));
+    assert!(text(&result.stdout).contains("tkgm.missing_building"));
+    assert_eq!(
+        cadkit(&["validate-gml", output, "--tkgm-profile", "unknown"])
+            .status
+            .code(),
+        Some(2)
+    );
     assert_eq!(cadkit(&["convert", output, copy]).status.code(), Some(0));
     assert_eq!(
         std::fs::read(output).expect("gml"),

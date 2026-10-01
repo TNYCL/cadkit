@@ -1,13 +1,36 @@
 # DGN V8 and CityGML implementation status
 
 Local validation record: 2026-10-01. This change is confined to cadkit. No Cady
-integration or application-specific TKGM/CityMax generation rules are included.
+integration or automatic TKGM building-model generation is included. An optional
+local TKGM preflight now requires an explicit architectural city-model tender or
+Digital Building registration profile. Both check documented subsets and neither
+establishes official acceptance. Tender-year conditions remain unchecked.
 
 Latest coverage follow-up: all 112 supplied DGN files now rewrite/read back with
 the compared geometry, attributes and layers preserved. All 56 CityGML-to-DGN
 projections also pass again. This includes unchanged seed-raster retention, not
 creation or modification of arbitrary raster attachments. See the coverage
 follow-up below and [direct library integration](CADKIT_INTEGRATION.md).
+
+The subsequent generic GML follow-up adds closed-curve handling, exact circles,
+and explicit conversion diagnostics. All 112 DGN files produced XSD-valid generic
+GML with metadata-only handling; 70 files contain 576 metadata-only entities
+(458 images, 108 texts, 10 unknown/tag records). Supported geometry and source
+entity metadata compared equal in every file. Strict mode completes 42/112 and
+rejects unsupported annotations in the remaining files. Those two results are
+different contracts. See the ignored aggregate report in
+`out/export-readiness/REPORT.md` and [TKGM profile notes](gml/TKGM.md).
+
+Final local checks: **225 Rust tests** on both the default toolchain and Rust
+1.85, **33 Python tests**, and **54 WASM/Node tests** passed, with zero failures.
+Clippy (`--all-targets -D warnings`), rustfmt, wasm32 compilation and release
+builds passed. The synthetic GML tests required offline validation against the
+official XSD cache. The current optional tender preflight read all 56 native GML
+files: no definite local-rule errors, 34 without findings, and 22 with 24
+`review` findings for storeys with zero independent sections and no groupMember.
+Those storeys have 90 common-area Room backreferences in aggregate. No ownership
+links were invented or source files changed. This review condition and unchecked
+contract-specific/online rules prevent a claim of universal TKGM acceptance.
 
 ## Implemented contracts
 
@@ -28,7 +51,10 @@ remain in the native model rather than being reconstructed from edited CAD data.
 See [CityGML format notes](gml/FORMAT_NOTES.md) and
 [DGN writer notes](dgn/FORMAT_NOTES.md#seed-based-v8-writer) for exact coverage.
 
-## Evidence
+## Earlier implementation evidence
+
+These records describe earlier stages. The final counts and full-corpus checks
+above supersede earlier sample-only results where applicable.
 
 - Rust 1.85 tests passed for core, facade, DGN, GML, DXF, CLI and C API. Corpus
   tests whose optional input was absent return without testing that corpus; the
