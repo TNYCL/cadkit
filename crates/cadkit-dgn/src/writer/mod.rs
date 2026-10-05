@@ -203,15 +203,24 @@ pub fn write_v8(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<V
     }
     let max_id = max_id.max(le::u64_at(&seed_header.data, 0x128).unwrap_or(0));
     let rasters = raster::Preserved::prepare(doc, seed, model, &read, options)?;
+    let mut tables = Tables::new(
+        native
+            .named_pages
+            .iter()
+            .flat_map(|p| p.elements.iter().cloned()),
+        max_id,
+        &read,
+    )?;
+    tables.observe_model_fonts(
+        model
+            .graphic_pages
+            .iter()
+            .chain(&model.control_pages)
+            .flat_map(|p| &p.elements),
+        &read,
+    );
     let mut state = State {
-        tables: Tables::new(
-            native
-                .named_pages
-                .iter()
-                .flat_map(|p| p.elements.iter().cloned()),
-            max_id,
-            &read,
-        )?,
+        tables,
         model: header,
         options,
         wide_tags: wide_integer_tags(&source.entities),
@@ -315,9 +324,14 @@ pub fn write_v8(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<V
     let mut low = [i64::MAX; 3];
     let mut high = [i64::MIN; 3];
     for b in &records {
-        for (i, (lo, hi)) in low.iter_mut().zip(high.iter_mut()).enumerate() {
-            *lo = (*lo).min(le::i64_at(b, 0x38 + i * 8).unwrap_or(0));
-            *hi = (*hi).max(le::i64_at(b, 0x50 + i * 8).unwrap_or(0));
+        let [record_low, record_high] = absolute_range(b)?;
+        for ((lo, hi), (record_lo, record_hi)) in low
+            .iter_mut()
+            .zip(high.iter_mut())
+            .zip(record_low.into_iter().zip(record_high))
+        {
+            *lo = (*lo).min(record_lo);
+            *hi = (*hi).max(record_hi);
         }
     }
     if records.is_empty() {
@@ -470,7 +484,8 @@ impl State<'_> {
         entity: &Entity,
         three: bool,
     ) -> Result<Vec<u8>> {
-        let mut b = encode::header(kind, size, id, level, time, entity, three)?;
+        let weight = self.lineweight(entity)?;
+        let mut b = encode::header(kind, size, id, level, time, entity, three, weight)?;
         if !entity.props.contains_key("dgn.color_index") {
             use cadkit_core::Color;
             let color = if entity.color == Color::ByLayer {
@@ -511,6 +526,52 @@ impl State<'_> {
             ));
         }
         Ok(b)
+    }
+
+    fn lineweight(&self, entity: &Entity) -> Result<u32> {
+        fn native(props: &cadkit_core::Props) -> Result<Option<u32>> {
+            match props.get("dgn.weight") {
+                Some(Value::Int(n)) => {
+                    let weight = u32::try_from(*n)
+                        .map_err(|_| Error::invalid(0, "DGN weight must be a nonnegative index"))?;
+                    if weight > 31 {
+                        return Err(Error::Unsupported("DGN lineweight indexes above 31".into()));
+                    }
+                    Ok(Some(weight))
+                }
+                Some(_) => Err(Error::invalid(0, "DGN weight must be an integer index")),
+                None => Ok(None),
+            }
+        }
+        if let Some(weight) = native(&entity.props)? {
+            return Ok(weight);
+        }
+        let weight = if entity.lineweight == cadkit_core::Lineweight::ByLayer {
+            match self
+                .layers
+                .iter()
+                .find(|layer| Some(layer.name.as_str()) == entity.layer.as_deref())
+            {
+                Some(layer) => {
+                    if let Some(weight) = native(&layer.props)? {
+                        return Ok(weight);
+                    }
+                    layer.lineweight
+                }
+                None => cadkit_core::Lineweight::Default,
+            }
+        } else {
+            entity.lineweight
+        };
+        match weight {
+            cadkit_core::Lineweight::Millimeters(_) => Err(Error::Unsupported(
+                "DGN lineweight needs an explicit entity/layer dgn.weight index; millimeter mapping is display-dependent".into(),
+            )),
+            cadkit_core::Lineweight::ByBlock => Err(Error::Unsupported(
+                "resolve ByBlock lineweight before DGN export".into(),
+            )),
+            cadkit_core::Lineweight::Default | cadkit_core::Lineweight::ByLayer => Ok(0),
+        }
     }
 
     fn add(&mut self, b: Vec<u8>, tag: bool) -> Result<()> {
@@ -820,17 +881,7 @@ impl State<'_> {
                 {
                     return Err(Error::invalid(0, "invalid text dimensions or normal"));
                 }
-                let font = match e.props.get("dgn.font_number") {
-                    Some(Value::Int(n)) => {
-                        u32::try_from(*n).map_err(|_| Error::invalid(0, "invalid DGN font"))?
-                    }
-                    _ => match style {
-                        Some(name) => *self.tables.fonts.get(name).ok_or_else(|| {
-                            Error::Unsupported("text font is absent from seed".into())
-                        })?,
-                        None => self.tables.fonts.values().next().copied().unwrap_or(0),
-                    },
-                };
+                let font = self.tables.font(e, style.as_deref())?;
                 let (justification, fx, fy) = text::justification(e, *halign, *valign)?;
                 let length = text::length(e, value, *height * *width_factor, fx)?;
                 let (x, y, n) = cadkit_core::geom_ops::arbitrary_axes(*normal);
@@ -879,7 +930,14 @@ impl State<'_> {
                 rotation(&mut b, 0x90, a, c, n, three)?;
                 point(&mut b, if three { 0xb0 } else { 0x98 }, origin, three)?;
                 put(&mut b, offset, &value)?;
-                range(&mut b, &[origin])?;
+                text::range(
+                    &mut b,
+                    origin,
+                    a,
+                    c,
+                    length * self.model.uor_per_master,
+                    height * self.model.uor_per_master,
+                )?;
                 links.extend(self.codepage_link()?);
                 b
             }
@@ -1074,17 +1132,8 @@ impl State<'_> {
         }
         let mut corners = vec![];
         for child in self.records.get(first..).unwrap_or(&[]) {
-            let p = [
-                le::i64_at(child, 0x38).unwrap_or(0) as f64,
-                le::i64_at(child, 0x40).unwrap_or(0) as f64,
-                le::i64_at(child, 0x48).unwrap_or(0) as f64,
-            ];
-            let q = [
-                le::i64_at(child, 0x50).unwrap_or(0) as f64,
-                le::i64_at(child, 0x58).unwrap_or(0) as f64,
-                le::i64_at(child, 0x60).unwrap_or(0) as f64,
-            ];
-            corners.extend([p, q]);
+            let [low, high] = absolute_range(child)?;
+            corners.extend([low.map(|v| v as f64), high.map(|v| v as f64)]);
         }
         if let Some(parent) = self.records.get_mut(index) {
             range(parent, &corners)?;

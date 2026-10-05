@@ -1,6 +1,6 @@
 //! Inverse of the reader's DGN text anchor mapping.
 
-use cadkit_core::{Entity, Error, HAlign, Result, VAlign, Value};
+use cadkit_core::{Entity, Error, HAlign, Result, VAlign, Value, Vec3};
 
 pub(super) fn justification(e: &Entity, h: HAlign, v: VAlign) -> Result<(u16, f64, f64)> {
     let horizontal = match h {
@@ -53,4 +53,37 @@ pub(super) fn length(e: &Entity, value: &str, char_width: f64, fx: f64) -> Resul
         return Err(Error::invalid(0, "invalid DGN text length"));
     }
     Ok(length)
+}
+
+/// Type-17 range high slots contain a relative span, unlike ordinary graphics.
+/// This encloses the measured advance/height rectangle, not exact font glyphs.
+pub(super) fn range(
+    b: &mut [u8],
+    origin: [f64; 3],
+    x: Vec3,
+    y: Vec3,
+    length_uor: f64,
+    height_uor: f64,
+) -> Result<()> {
+    let [ox, oy, oz] = origin;
+    let dx = x.scaled(length_uor);
+    let dy = y.scaled(height_uor);
+    let corners = [
+        origin,
+        [ox + dx.x, oy + dx.y, oz + dx.z],
+        [ox + dy.x, oy + dy.y, oz + dy.z],
+        [ox + dx.x + dy.x, oy + dx.y + dy.y, oz + dx.z + dy.z],
+    ];
+    super::encode::range(b, &corners)?;
+    for axis in 0..3 {
+        let low = crate::le::i64_at(b, 0x38 + axis * 8)
+            .ok_or_else(|| Error::invalid(0, "short DGN text range"))?;
+        let high = crate::le::i64_at(b, 0x50 + axis * 8)
+            .ok_or_else(|| Error::invalid(0, "short DGN text range"))?;
+        let span = high
+            .checked_sub(low)
+            .ok_or_else(|| Error::invalid(0, "DGN text range span overflow"))?;
+        super::encode::put(b, 0x50 + axis * 8, &span.to_le_bytes())?;
+    }
+    Ok(())
 }

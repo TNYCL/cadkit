@@ -143,7 +143,7 @@ counts them per element (`dgn.xattribute_count`, `dgn.xattribute_kinds`).
 | `0x2C` | u32 | line style | oracle (4) |
 | `0x30` | u32 | line weight | oracle (5) |
 | `0x34` | u32 | color index (>255 = extended color) | oracle (3, 256) |
-| `0x38` | 6 × i64 | range low xyz, high xyz (UOR) | |
+| `0x38` | 6 × i64 | absolute range low xyz, high xyz (UOR); type 17 stores high as a relative span | public text byte inspection |
 
 Type-word flags (high 16 bits): `0x2000` complex header, `0x4000` complex component,
 `0x1000` set on graphic elements, `0x0080`/`0x0040`/`0x0400`/`0x0800` vary by writer
@@ -508,6 +508,12 @@ font, height or width factor; cadkit does not measure fonts. Left-aligned text
 without it uses the existing character-count estimate. Bottom alignment relative
 to descenders is distinct from the DGN baseline and remains unsupported.
 
+Type-17 range lows enclose the absolute rotated measured rectangle; highs store
+its nonnegative relative spans, including zero Z span for planar text. Model and
+cell aggregate ranges convert these spans back to absolute highs before union.
+This fixes misplaced fit/selection bounds without changing the text anchor.
+Measured advance and nominal height do not promise exact target-font glyph bounds.
+
 `preserve_seed_rasters` (default true) retains unchanged attachments from the same
 seed. All image entities must have unique original IDs and unchanged geometry,
 paths, display properties and native props. Frame records (94), raster control
@@ -534,8 +540,13 @@ ACI/RGB colors are matched exactly against the seed's palette. An unavailable
 color fails unless the caller explicitly provides `dgn.color_index`. ByLayer
 color uses a supplied neutral layer color or seed palette index zero when no
 explicit color exists. This materializes the color, not a live inheritance rule.
-ByBlock requires prior resolution. Non-default native weight/style/font indexes
-must refer to the seed's tables. Existing seed level settings are retained;
+ByBlock requires prior resolution. Native lineweight indexes must be in `0..31`;
+an entity's explicit `dgn.weight` takes precedence over the neutral layer's
+`dgn.weight`. A millimetre-only weight has no universal DGN index mapping and
+requires explicit caller conversion. Nonzero font indexes must be in the seed's
+font table or actually referenced by seed Text/TextNode records; font zero is
+the implicit default. A named style must agree with its numeric font index.
+Line-style indexes must refer to the seed's tables. Existing seed level settings are retained;
 writing arbitrary neutral level flags, custom fonts/linetypes, CAD props and
 layout/application semantics is not implemented. This is new geometry export,
 not general lossless Document-to-DGN roundtripping.

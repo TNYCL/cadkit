@@ -6,8 +6,8 @@ use crate::native::{
     element::{ElementData, TagDef, TagSetData, TagValue},
     v8::RawElement,
 };
-use cadkit_core::{Attribute, Error, Result, Value};
-use std::collections::{BTreeMap, HashSet};
+use cadkit_core::{Attribute, Entity, Error, Result, Value};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 pub(super) struct Tables {
     pub records: Vec<Vec<u8>>,
@@ -16,6 +16,7 @@ pub(super) struct Tables {
     pub levels: BTreeMap<String, u32>,
     pub sets: BTreeMap<Option<String>, (u64, TagSetData)>,
     pub last_id: u64,
+    referenced_fonts: BTreeSet<u32>,
     max_level: u32,
     level_template: Option<Vec<u8>>,
     tag_set_template: Option<Vec<u8>>,
@@ -34,6 +35,7 @@ impl Tables {
             levels: BTreeMap::new(),
             sets: BTreeMap::new(),
             last_id,
+            referenced_fonts: BTreeSet::new(),
             max_level: 0,
             level_template: None,
             tag_set_template: None,
@@ -79,6 +81,28 @@ impl Tables {
         }
         Ok(out)
     }
+    pub fn observe_model_fonts<'a>(
+        &mut self,
+        records: impl Iterator<Item = &'a RawElement>,
+        read: &cadkit_core::ReadOptions,
+    ) {
+        for raw in records {
+            let font = match decode_v8::decode(
+                raw,
+                crate::text::encoding_for(read.fallback_codepage.as_deref()),
+                &read.limits,
+            )
+            .data
+            {
+                ElementData::Text(text) => Some(text.font),
+                ElementData::TextNode(text) => Some(text.font),
+                _ => None,
+            };
+            if let Some(font) = font {
+                self.referenced_fonts.insert(font);
+            }
+        }
+    }
     pub fn id(&mut self) -> Result<u64> {
         self.last_id = self
             .last_id
@@ -112,6 +136,53 @@ impl Tables {
         self.records.push(b);
         self.levels.insert(name.into(), level);
         Ok(level)
+    }
+
+    pub fn font(&self, entity: &Entity, style: Option<&str>) -> Result<u32> {
+        let explicit = match entity.props.get("dgn.font_number") {
+            Some(Value::Int(n)) => {
+                Some(u32::try_from(*n).map_err(|_| Error::invalid(0, "invalid DGN font number"))?)
+            }
+            Some(_) => return Err(Error::invalid(0, "DGN font number must be an integer")),
+            None => None,
+        };
+        let known = |number| {
+            number == 0
+                || self.fonts.values().any(|n| *n == number)
+                || self.referenced_fonts.contains(&number)
+        };
+        let named = match style {
+            Some(name) => Some(
+                self.fonts
+                    .get(name)
+                    .copied()
+                    .or_else(|| {
+                        name.strip_prefix("DGN_FONT_")?
+                            .parse()
+                            .ok()
+                            .filter(|n| known(*n))
+                    })
+                    .ok_or_else(|| {
+                        Error::Unsupported("text font style is absent from seed".into())
+                    })?,
+            ),
+            None => None,
+        };
+        if let Some(number) = explicit {
+            // Font zero is the existing implicit fallback. A seed can also reference
+            // an external RSC font in its graphics without a named table definition.
+            // Do not accept unreferenced foreign indexes merely because they are small.
+            if !known(number) {
+                return Err(Error::Unsupported(
+                    "text font number is absent from seed".into(),
+                ));
+            }
+            if named.is_some_and(|n| n != number) {
+                return Err(Error::invalid(0, "DGN font number and style name disagree"));
+            }
+            return Ok(number);
+        }
+        Ok(named.unwrap_or_else(|| self.fonts.values().next().copied().unwrap_or(0)))
     }
     pub fn tag(&mut self, attribute: &Attribute) -> Result<(u64, u16, u16)> {
         let name = &attribute.set;

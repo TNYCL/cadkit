@@ -106,3 +106,46 @@ fn new_then_edited_geometry_unicode_labels_and_identifier_types() {
         assert!((position.y - 4.).abs() < 1e-8);
     }
 }
+
+#[test]
+fn bylayer_lineweight_resolves_explicit_native_layer_index() {
+    let mut entity = line();
+    entity.layer = Some("Synthetic layer".into());
+    let mut source = document(false, vec![entity]);
+    let mut layer = cadkit_core::Layer {
+        name: "Synthetic layer".into(),
+        lineweight: cadkit_core::Lineweight::Millimeters(0.25),
+        ..Default::default()
+    };
+    layer.props.insert("dgn.weight".into(), Value::Int(3));
+    source.layers.push(layer);
+    let blank = seed(false);
+    let weight = |source: &Document| {
+        let bytes = write_v8(source, &blank, &WriteOptions::default()).unwrap();
+        let parsed = crate::read(&bytes, &ReadOptions::default()).unwrap();
+        parsed.models[0].entities[0].props["dgn.weight"].clone()
+    };
+    assert_eq!(weight(&source), Value::Int(3));
+    source.models[0].entities[0]
+        .props
+        .insert("dgn.weight".into(), Value::Int(7));
+    assert_eq!(weight(&source), Value::Int(7));
+    source.models[0].entities[0].props.remove("dgn.weight");
+    source.models[0].entities[0].lineweight = cadkit_core::Lineweight::Default;
+    assert_eq!(weight(&source), Value::Int(0));
+    source.models[0].entities[0].lineweight = cadkit_core::Lineweight::ByBlock;
+    assert!(write_v8(&source, &blank, &WriteOptions::default()).is_err());
+    source.models[0].entities[0].lineweight = cadkit_core::Lineweight::ByLayer;
+    source.layers[0].props.remove("dgn.weight");
+    assert!(write_v8(&source, &blank, &WriteOptions::default()).is_err());
+    for invalid in [
+        Value::Int(-1),
+        Value::Int(32),
+        Value::Int(i64::from(u32::MAX)),
+        Value::Float(3.),
+        Value::Text("3".into()),
+    ] {
+        source.layers[0].props.insert("dgn.weight".into(), invalid);
+        assert!(write_v8(&source, &blank, &WriteOptions::default()).is_err());
+    }
+}

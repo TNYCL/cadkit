@@ -3,7 +3,7 @@
 use super::*;
 
 fn raster_seed() -> Vec<u8> {
-    let mut frame = header(94, 0x400, 100, 0, 0., &line(), false).unwrap();
+    let mut frame = header(94, 0x400, 100, 0, 0., &line(), false, 0).unwrap();
     let matrix = [
         1., 0., 0., 1000., 0., 1., 0., 2000., 0., 0., 1., 0., 0., 0., 0., 1.,
     ];

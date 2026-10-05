@@ -1,7 +1,7 @@
 //! Belgelenmiş V8 öğe alanlarının sınır denetimli kodlayıcısı.
 
 use crate::native::v8::ModelHeader;
-use cadkit_core::{Entity, Error, Lineweight, Point3, Result, Value, Vec3};
+use cadkit_core::{Entity, Error, Point3, Result, Value, Vec3};
 
 pub(super) fn put(b: &mut [u8], offset: usize, value: &[u8]) -> Result<()> {
     let end = offset
@@ -62,6 +62,7 @@ pub(super) fn prefix(kind: u32, size: usize, id: u64, level: u32, time: f64) -> 
     Ok(b)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn header(
     kind: u32,
     size: usize,
@@ -70,6 +71,7 @@ pub(super) fn header(
     time: f64,
     entity: &Entity,
     three: bool,
+    weight: u32,
 ) -> Result<Vec<u8>> {
     let mut b = prefix(kind | 0x1000_0000, size, id, level, time)?;
     let hole = matches!(entity.props.get("dgn.hole"), Some(Value::Bool(true)));
@@ -99,17 +101,6 @@ pub(super) fn header(
             u32::try_from(*n).map_err(|_| Error::invalid(0, "DGN style"))?,
         )?;
     }
-    let weight = match entity.props.get("dgn.weight") {
-        Some(Value::Int(n)) => u32::try_from(*n).map_err(|_| Error::invalid(0, "DGN weight"))?,
-        _ => match entity.lineweight {
-            Lineweight::Millimeters(_) => {
-                return Err(Error::Unsupported(
-                    "DGN lineweight requires dgn.weight index".into(),
-                ));
-            }
-            _ => 0,
-        },
-    };
     u32_at(&mut b, 0x30, weight)?;
     Ok(b)
 }
@@ -158,6 +149,29 @@ pub(super) fn range(b: &mut [u8], points: &[[f64; 3]]) -> Result<()> {
         put(b, 0x38 + 8 * i, &n.to_le_bytes())?;
     }
     Ok(())
+}
+
+/// Absolute bounds for generated records; type-17 stores a relative high span.
+pub(super) fn absolute_range(b: &[u8]) -> Result<[[i64; 3]; 2]> {
+    let text = crate::le::u32_at(b, 0).is_some_and(|kind| kind & 0xffff == 17);
+    let mut low = [0; 3];
+    let mut high = [0; 3];
+    for (axis, (lo, hi)) in low.iter_mut().zip(high.iter_mut()).enumerate() {
+        *lo = crate::le::i64_at(b, 0x38 + axis * 8)
+            .ok_or_else(|| Error::invalid(0, "short DGN record range"))?;
+        let stored_high = crate::le::i64_at(b, 0x50 + axis * 8)
+            .ok_or_else(|| Error::invalid(0, "short DGN record range"))?;
+        *hi = if text {
+            if stored_high < 0 {
+                return Err(Error::invalid(0, "negative DGN text range span"));
+            }
+            lo.checked_add(stored_high)
+                .ok_or_else(|| Error::invalid(0, "DGN text range high overflow"))?
+        } else {
+            stored_high
+        };
+    }
+    Ok([low, high])
 }
 
 pub(super) fn utf16(value: &str) -> Result<Vec<u8>> {

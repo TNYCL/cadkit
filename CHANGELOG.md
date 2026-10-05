@@ -6,6 +6,17 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-05
+
+### Fixed
+
+- DGN V8 measured text range spans and absolute model/cell bounds, including
+  rotated text and nonzero seed origins.
+- Seed font validation rejects foreign indexes and name/index mismatches while
+  retaining external resource fonts actually referenced by seed graphics.
+- ByLayer lineweight resolves explicit native layer indexes; millimetre-only,
+  unresolved ByBlock and out-of-range native weights require explicit conversion.
+
 ## [0.2.0] - 2026-10-02
 
 CityGML export reports, GML circles and an optional local TKGM preflight. Closed CAD

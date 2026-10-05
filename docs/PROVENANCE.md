@@ -72,6 +72,12 @@ Private client drawings in `corpus/private/` are used only for local, structural
   by cadkit-core; no additional external implementation was consulted.
 - `cadkit-core`'s existing serde_json workspace dependency is now used for a
   bounded streaming writer preflight; no new serialization format is introduced.
+- DGN V8 type-17 range writing uses own byte inspection of the existing public
+  GDAL and Safe Software samples: low slots are absolute UOR bounds and high
+  slots are relative spans. Rotated measured rectangles and model/cell aggregate
+  bounds are tested with invented geometry and synthetic records. Seed font
+  identity checks and native lineweight resolution use the existing attributed
+  decoders; no additional external implementation was consulted.
 - The default polygon planarity tolerance (0.01 coordinate units) matches the
   documented default distance-to-plane tolerance of the
   [val3dity](https://github.com/tudelft3d/val3dity) validator. Only that public
