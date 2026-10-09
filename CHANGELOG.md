@@ -6,6 +6,8 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-09
+
 DGN V8 output that MicroStation draws: element ranges, string lengths and displayed tags
 now follow the layout of MicroStation and ODA files.
 
