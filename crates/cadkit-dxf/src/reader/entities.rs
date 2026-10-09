@@ -326,6 +326,7 @@ fn attribute(rec: &Record) -> Attribute {
         set: None,
         position: Some(ocs.to_world(g.point_or_zero(10))),
         invisible: flags & 1 != 0,
+        ..Default::default()
     }
 }
 

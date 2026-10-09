@@ -583,6 +583,9 @@ impl V7<'_> {
             origin: [0.0; 3],
             offset: [0.0; 3],
             size: [0.0; 2],
+            font: 0,
+            justification: 0,
+            quaternion: [0.0; 4],
         }))
     }
 

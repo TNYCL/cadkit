@@ -182,7 +182,20 @@ impl Tables {
             }
             return Ok(number);
         }
-        Ok(named.unwrap_or_else(|| self.fonts.values().next().copied().unwrap_or(0)))
+        // Without a style or number the format default (font 0) applies; the first table
+        // entry by name is an arbitrary seed font (often a CJK TrueType face).
+        Ok(named.unwrap_or(0))
+    }
+
+    /// Font number of a named style for a displayed tag; `None` style uses font 0.
+    pub fn tag_font(&self, props: &cadkit_core::Props, style: Option<&str>) -> Result<u32> {
+        let mut probe = Entity::new(cadkit_core::EntityKind::Point {
+            position: cadkit_core::Point3::default(),
+        });
+        if let Some(number) = props.get("dgn.font_number") {
+            probe.props.insert("dgn.font_number".into(), number.clone());
+        }
+        self.font(&probe, style)
     }
     pub fn tag(&mut self, attribute: &Attribute) -> Result<(u64, u16, u16)> {
         let name = &attribute.set;

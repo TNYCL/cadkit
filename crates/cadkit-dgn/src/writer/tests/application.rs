@@ -31,6 +31,7 @@ fn new_then_edited_geometry_unicode_labels_and_identifier_types() {
             set: Some("Identifiers".into()),
             position: None,
             invisible: true,
+            ..Default::default()
         });
         let mut label = Entity::new(EntityKind::Text {
             position: Point3::xy(3., 4.),

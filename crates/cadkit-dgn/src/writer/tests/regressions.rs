@@ -20,6 +20,7 @@ fn unnamed_sets_and_standalone_tags_retain_their_identity_and_values() {
         set: None,
         position: Some(Point3::xy(2., 3.)),
         invisible: true,
+        ..Default::default()
     });
     let mut named = line();
     named.attributes.push(Attribute {
@@ -28,6 +29,7 @@ fn unnamed_sets_and_standalone_tags_retain_their_identity_and_values() {
         set: Some("CADKIT".into()),
         position: None,
         invisible: true,
+        ..Default::default()
     });
     let output = write_v8(
         &document(false, vec![standalone.clone(), named]),
@@ -71,6 +73,7 @@ fn bulged_polylines_write_exact_arcs_in_both_directions_and_dimensions() {
                 set: None,
                 position: None,
                 invisible: true,
+                ..Default::default()
             });
             let output = write_v8(
                 &document(three, vec![entity]),

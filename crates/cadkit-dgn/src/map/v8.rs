@@ -203,48 +203,6 @@ fn map_file(file: &V8File, options: &ReadOptions, enc: &'static encoding_rs::Enc
             enc,
             options,
         );
-        // Frames that store the same extent corner for the same file: their extents are then
-        // not image footprints (private sample: 8 frames, one file, one corner).
-        m.shared_raster_extent.clear();
-        let mut by_extent: HashMap<(i64, i64, Option<String>), Vec<u64>> = HashMap::new();
-        for it in &graphic {
-            if let (
-                ElementData::RasterFrame {
-                    corner: Some([cx, cy]),
-                    ..
-                },
-                Some(id),
-            ) = (&it.el.data, it.el.header.id)
-            {
-                let file = m
-                    .raster_paths
-                    .get(&id)
-                    .and_then(|(n, f)| f.clone().or_else(|| n.clone()));
-                by_extent
-                    .entry((cx.round() as i64, cy.round() as i64, file))
-                    .or_default()
-                    .push(id);
-            }
-        }
-        let shared: Vec<u64> = by_extent
-            .into_values()
-            .filter(|v| v.len() > 1)
-            .flatten()
-            .collect();
-        if !shared.is_empty() {
-            m.warn(
-                "dgn.raster_extent_shared",
-                format!(
-                    "{} raster frames share one stored extent corner and file; their \
-                     rectangles (as stored, equal to the element ranges) are probably not \
-                     image footprints",
-                    shared.len()
-                ),
-                None,
-                None,
-            );
-            m.shared_raster_extent.extend(shared);
-        }
         m.pending_tags.clear();
         m.attached.clear();
         for (i, it) in graphic.iter().enumerate() {

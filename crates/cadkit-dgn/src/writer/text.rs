@@ -1,8 +1,14 @@
 //! Inverse of the reader's DGN text anchor mapping.
 
-use cadkit_core::{Entity, Error, HAlign, Result, VAlign, Value, Vec3};
+use cadkit_core::{Entity, Error, HAlign, Props, Result, VAlign, Value, Vec3};
 
 pub(super) fn justification(e: &Entity, h: HAlign, v: VAlign) -> Result<(u16, f64, f64)> {
+    justification_code(&e.props, h, v)
+}
+
+/// DGN justification code and anchor fractions for a neutral alignment, keeping a source
+/// margin variant from `props["dgn.justification"]` while it still agrees.
+pub(super) fn justification_code(props: &Props, h: HAlign, v: VAlign) -> Result<(u16, f64, f64)> {
     let horizontal = match h {
         HAlign::Left => 0,
         HAlign::Center => 6,
@@ -25,7 +31,7 @@ pub(super) fn justification(e: &Entity, h: HAlign, v: VAlign) -> Result<(u16, f6
     };
     // Margin variants decode to the same neutral alignment. Retain the source
     // variant only while it still agrees with the edited neutral alignment.
-    let code = match e.props.get("dgn.justification") {
+    let code = match props.get("dgn.justification") {
         Some(Value::Int(raw)) => u16::try_from(*raw).ok().filter(|&code| {
             let (source_h, source_v, _, _) = crate::map::justification(code);
             code <= 14 && source_h == h && source_v == v
@@ -55,8 +61,9 @@ pub(super) fn length(e: &Entity, value: &str, char_width: f64, fx: f64) -> Resul
     Ok(length)
 }
 
-/// Type-17 range high slots contain a relative span, unlike ordinary graphics.
-/// This encloses the measured advance/height rectangle, not exact font glyphs.
+/// Range of a text-like record (type 17 text, type 37 tag): the box enclosing the
+/// measured advance/height rectangle, not exact font glyphs. Stored as low corner and
+/// extent like every other graphic record.
 pub(super) fn range(
     b: &mut [u8],
     origin: [f64; 3],
@@ -74,16 +81,5 @@ pub(super) fn range(
         [ox + dy.x, oy + dy.y, oz + dy.z],
         [ox + dx.x + dy.x, oy + dx.y + dy.y, oz + dx.z + dy.z],
     ];
-    super::encode::range(b, &corners)?;
-    for axis in 0..3 {
-        let low = crate::le::i64_at(b, 0x38 + axis * 8)
-            .ok_or_else(|| Error::invalid(0, "short DGN text range"))?;
-        let high = crate::le::i64_at(b, 0x50 + axis * 8)
-            .ok_or_else(|| Error::invalid(0, "short DGN text range"))?;
-        let span = high
-            .checked_sub(low)
-            .ok_or_else(|| Error::invalid(0, "DGN text range span overflow"))?;
-        super::encode::put(b, 0x50 + axis * 8, &span.to_le_bytes())?;
-    }
-    Ok(())
+    super::encode::range(b, &corners)
 }

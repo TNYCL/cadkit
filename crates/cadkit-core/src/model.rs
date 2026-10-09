@@ -722,7 +722,7 @@ pub enum Lineweight {
 }
 
 /// Non-graphic data attached to an entity (DWG ATTRIB, DGN tag, item-type property).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Attribute {
     /// Tag / property name.
     pub tag: String,
@@ -734,13 +734,41 @@ pub struct Attribute {
     pub position: Option<Point3>,
     /// The attribute is not displayed.
     pub invisible: bool,
+    /// Layer of the attribute's own record when the format stores one (a DGN tag
+    /// element has its own level). `None` uses the owning entity's layer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layer: Option<String>,
+    /// How the value text is drawn at `position`; `None` when unknown or not drawn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display: Option<AttributeDisplay>,
+    /// Format-specific data with no neutral field (e.g. `dgn.color_index`, `dgn.weight`).
+    #[serde(default, skip_serializing_if = "Props::is_empty")]
+    pub props: Props,
+}
+
+/// Text presentation of a displayed attribute value.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct AttributeDisplay {
+    /// Text height, in drawing units.
+    pub height: f64,
+    /// Character width, in drawing units (DGN stores it separately from the height).
+    pub width: f64,
+    /// Text style (DGN font) name; `None` leaves the choice to the writer's default.
+    pub style: Option<String>,
+    /// Horizontal alignment of the text about `Attribute::position`.
+    pub halign: HAlign,
+    /// Vertical alignment of the text about `Attribute::position`.
+    pub valign: VAlign,
+    /// Rotation about the drawing Z axis, in radians.
+    pub rotation: f64,
 }
 
 /// A loosely typed value for attributes and props.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Value {
     /// No value.
+    #[default]
     Null,
     /// Boolean.
     Bool(bool),

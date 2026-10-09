@@ -195,6 +195,12 @@ pub struct TagData {
     pub offset: UorPoint,
     /// Text character width / height multipliers in UOR.
     pub size: [f64; 2],
+    /// V8: font number of the displayed value (`0x12C`).
+    pub font: u32,
+    /// V8: text justification code of the displayed value (`0x130`).
+    pub justification: u16,
+    /// V8: display orientation quaternion `(w, x, y, z)` as stored (`0x100`).
+    pub quaternion: [f64; 4],
 }
 
 /// One tag definition in a tag set.

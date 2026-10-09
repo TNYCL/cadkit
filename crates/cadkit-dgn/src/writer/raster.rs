@@ -1,11 +1,13 @@
-//! Lossless retention of unchanged seed raster attachments.
+//! Lossless retention of seed model control records and unchanged raster attachments.
 //!
-//! Raster control records contain fields which are not yet decoded. Retaining the
-//! whole attachment graph with its original IDs avoids fabricating those fields or
-//! leaving known dependencies pointing at regenerated graphic IDs.
+//! Control records (coordinate system, model settings, raster attachments) contain fields
+//! which are not yet decoded. Retaining them with their original IDs avoids fabricating
+//! those fields or leaving known dependencies pointing at regenerated graphic IDs. Control
+//! records that reference a seed graphic are only kept together with that graphic, which
+//! the writer can do for unchanged rasters alone.
 
 use super::{WriteOptions, compressed, encode::*};
-use crate::native::v8::{AuxPage, V8Model};
+use crate::native::v8::{AuxPage, RawElement, V8Model};
 use cadkit_core::{Document, Entity, EntityKind, Error, ReadOptions, Result};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -17,8 +19,18 @@ pub(super) struct Preserved {
     control_prefix: String,
     control_version: u32,
     max_bytes: u64,
+    /// Every control auxiliary record of the seed is kept unchanged, so its page
+    /// counter stream stays valid.
+    pub keep_control_counter: bool,
     pub bytes: u64,
     pub objects: u64,
+}
+
+/// Whether a record body holds the 64-bit id of a seed graphic anywhere after its header.
+fn references_graphics(raw: &RawElement, graphics: &BTreeSet<u64>) -> bool {
+    let b = &raw.bytes;
+    (0x18..b.len().saturating_sub(7))
+        .any(|o| crate::le::u64_at(b, o).is_some_and(|v| v != 0 && graphics.contains(&v)))
 }
 
 fn images(doc: &Document) -> Result<BTreeMap<u64, &Entity>> {
@@ -50,38 +62,6 @@ impl Preserved {
         options: &WriteOptions,
     ) -> Result<Self> {
         let requested = images(doc)?;
-        if requested.is_empty() {
-            return Ok(Self::default());
-        }
-        if !options.preserve_seed_rasters {
-            return Err(Error::Unsupported(
-                "seed raster preservation is disabled".into(),
-            ));
-        }
-        let source = crate::read(seed, read)?;
-        let original = images(&source)?;
-        if requested.len() != original.len() {
-            return Err(Error::Unsupported(
-                "adding/removing seed rasters requires rewriting their native control graph".into(),
-            ));
-        }
-        for (id, e) in &requested {
-            let before = original
-                .get(id)
-                .ok_or_else(|| Error::Unsupported("raster is absent from the seed".into()))?;
-            if e.kind != before.kind
-                || e.layer != before.layer
-                || e.color != before.color
-                || e.linetype != before.linetype
-                || e.lineweight != before.lineweight
-                || e.visible != before.visible
-                || e.props != before.props
-            {
-                return Err(Error::Unsupported(
-                    "edited seed raster requires a native attachment encoder".into(),
-                ));
-            }
-        }
         let mut out = Self {
             control_prefix: format!("Dgn-Md/{}/Dgn^C", model.storage),
             control_version: model
@@ -92,10 +72,60 @@ impl Preserved {
             max_bytes: options.limits.max_decompressed_bytes,
             ..Self::default()
         };
+        if requested.is_empty() && !options.preserve_seed_controls {
+            return Ok(out);
+        }
+        if !requested.is_empty() {
+            if !options.preserve_seed_rasters {
+                return Err(Error::Unsupported(
+                    "seed raster preservation is disabled".into(),
+                ));
+            }
+            let source = crate::read(seed, read)?;
+            let original = images(&source)?;
+            if requested.len() != original.len() {
+                return Err(Error::Unsupported(
+                    "adding/removing seed rasters requires rewriting their native control graph"
+                        .into(),
+                ));
+            }
+            for (id, e) in &requested {
+                let before = original
+                    .get(id)
+                    .ok_or_else(|| Error::Unsupported("raster is absent from the seed".into()))?;
+                if e.kind != before.kind
+                    || e.layer != before.layer
+                    || e.color != before.color
+                    || e.linetype != before.linetype
+                    || e.lineweight != before.lineweight
+                    || e.visible != before.visible
+                    || e.props != before.props
+                {
+                    return Err(Error::Unsupported(
+                        "edited seed raster requires a native attachment encoder".into(),
+                    ));
+                }
+            }
+        }
+        let graphics: BTreeSet<u64> = model
+            .graphic_pages
+            .iter()
+            .flat_map(|p| &p.elements)
+            .filter_map(RawElement::id)
+            .collect();
         let mut control_ids = BTreeSet::new();
         for page in &model.control_pages {
             for raw in &page.elements {
-                if !(90..=93).contains(&raw.type_code()) {
+                // Other controls are kept only when they can be copied verbatim; a record
+                // with a nonzero page prefix is dropped as before rather than failing.
+                let keep = if (90..=93).contains(&raw.type_code()) {
+                    !requested.is_empty()
+                } else {
+                    options.preserve_seed_controls
+                        && raw.prefix == 0
+                        && !references_graphics(raw, &graphics)
+                };
+                if !keep {
                     continue;
                 }
                 if let Some(id) = raw.id() {
@@ -105,22 +135,24 @@ impl Preserved {
                 out.objects += 1;
                 if raw.prefix != 0 {
                     return Err(Error::Unsupported(
-                        "nonzero raster control record prefix".into(),
+                        "nonzero seed control record prefix".into(),
                     ));
                 }
                 out.controls.push(raw.bytes.clone());
             }
         }
+        let mut dropped_aux = false;
         for page in &model.control_aux {
             if !page.complete {
                 return Err(Error::Unsupported(
-                    "incomplete raster control auxiliary records".into(),
+                    "incomplete seed control auxiliary records".into(),
                 ));
             }
             let mut retained = page.clone();
             retained
                 .records
                 .retain(|a| control_ids.contains(&a.element_id));
+            dropped_aux |= retained.records.len() != page.records.len();
             if retained.records.is_empty() {
                 continue;
             }
@@ -133,6 +165,17 @@ impl Preserved {
             );
             out.objects += retained.records.len() as u64;
             out.auxiliary.push(retained);
+        }
+        out.keep_control_counter = !dropped_aux && !model.control_aux.is_empty();
+        if requested.is_empty() {
+            if out.bytes > options.limits.max_decompressed_bytes
+                || out.objects >= options.limits.max_objects
+            {
+                return Err(Error::LimitExceeded(
+                    "preserved control/auxiliary budget".into(),
+                ));
+            }
+            return Ok(out);
         }
         for raw in model.graphic_pages.iter().flat_map(|p| &p.elements) {
             if raw.type_code() != 94 {

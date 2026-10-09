@@ -5,6 +5,7 @@ use cadkit_core::{Attribute, Color, Model};
 use std::io::{Cursor, Read};
 
 mod application;
+mod microstation;
 mod raster;
 mod regressions;
 mod text;
@@ -56,6 +57,7 @@ fn new_2d_and_3d_geometry_with_attached_unicode_tags() {
             set: Some("Öznitelikler".into()),
             position: None,
             invisible: true,
+            ..Default::default()
         });
         entity.attributes.push(Attribute {
             tag: "Count".into(),
@@ -63,6 +65,7 @@ fn new_2d_and_3d_geometry_with_attached_unicode_tags() {
             set: Some("Öznitelikler".into()),
             position: None,
             invisible: true,
+            ..Default::default()
         });
         let d = document(three, vec![entity]);
         let bytes = write_v8(&d, &seed(three), &WriteOptions::default()).unwrap();
@@ -96,6 +99,7 @@ fn integer_tags_beyond_i32_are_written_as_doubles() {
             set: Some("Ids".into()),
             position: None,
             invisible: true,
+            ..Default::default()
         });
         e
     };
@@ -313,6 +317,7 @@ fn text_and_clockwise_wrapped_arc_use_neutral_conventions() {
                 set: Some("Test".into()),
                 position: None,
                 invisible: true,
+                ..Default::default()
             });
             let source = document(
                 three,

@@ -205,6 +205,7 @@ impl Importer<'_> {
                         set: Some(a.name.local().into()),
                         position: None,
                         invisible: true,
+                        ..Default::default()
                     });
                 }
             }

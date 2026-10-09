@@ -41,6 +41,9 @@ pub struct WriteOptions {
     /// Preserve unchanged raster attachments from the same seed, including their
     /// opaque control and auxiliary records. New or edited attachments are rejected.
     pub preserve_seed_rasters: bool,
+    /// Keep the seed model's control records that reference no seed graphic (coordinate
+    /// system, model settings and similar) with their auxiliary data, byte for byte.
+    pub preserve_seed_controls: bool,
 }
 impl Default for WriteOptions {
     fn default() -> Self {
@@ -51,6 +54,7 @@ impl Default for WriteOptions {
             clear_seed_model: false,
             planarity_tolerance: 0.01,
             preserve_seed_rasters: true,
+            preserve_seed_controls: true,
         }
     }
 }
@@ -309,6 +313,10 @@ pub fn write_v8(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<V
         options.limits.max_decompressed_bytes,
     )?;
     rasters.write_auxiliary(&mut replacements)?;
+    if rasters.keep_control_counter {
+        // Every control auxiliary page is retained as is; so is its page counter.
+        replacements.remove(&format!("Dgn-Md/{}/Dgn^CA/^AH", model.storage));
+    }
     put_pages(
         &mut replacements,
         "Dgn^Nm",
@@ -899,7 +907,7 @@ impl State<'_> {
                     ),
                     self.model,
                 )?;
-                let value = self.text(value)?;
+                let value = self.text(value, false)?;
                 let offset = if three { 0xca } else { 0xaa };
                 let mut b = self.header(
                     17 | flags,
@@ -1113,6 +1121,8 @@ impl State<'_> {
         )?;
         u32_at(&mut b, 0x68, children.len() as u32)?;
         if cell {
+            // MicroStation and ODA cells both carry 1 here (test_dgnv8.dgn).
+            u32_at(&mut b, 0x6c, 1)?;
             let off = if self.model.is_3d { 0xa0 } else { 0x90 };
             let width = if self.model.is_3d { 3 } else { 2 };
             for i in 0..width {
@@ -1130,36 +1140,46 @@ impl State<'_> {
         for child in children {
             self.entity(child, depth + 1, true)?;
         }
-        let mut corners = vec![];
+        let mut low = [i64::MAX; 3];
+        let mut high = [i64::MIN; 3];
         for child in self.records.get(first..).unwrap_or(&[]) {
-            let [low, high] = absolute_range(child)?;
-            corners.extend([low.map(|v| v as f64), high.map(|v| v as f64)]);
+            let [child_low, child_high] = absolute_range(child)?;
+            for axis in 0..3 {
+                if let (Some(lo), Some(hi), Some(cl), Some(ch)) = (
+                    low.get_mut(axis),
+                    high.get_mut(axis),
+                    child_low.get(axis),
+                    child_high.get(axis),
+                ) {
+                    *lo = (*lo).min(*cl);
+                    *hi = (*hi).max(*ch);
+                }
+            }
+        }
+        if children.is_empty() || self.records.len() == first {
+            low = [0; 3];
+            high = [0; 3];
         }
         if let Some(parent) = self.records.get_mut(index) {
-            range(parent, &corners)?;
+            put_range(parent, low, high)?;
             if cell {
-                let low = [
-                    le::i64_at(parent, 0x38).unwrap_or(0) as f64,
-                    le::i64_at(parent, 0x40).unwrap_or(0) as f64,
-                    le::i64_at(parent, 0x48).unwrap_or(0) as f64,
-                ];
-                let high = [
-                    le::i64_at(parent, 0x50).unwrap_or(0) as f64,
-                    le::i64_at(parent, 0x58).unwrap_or(0) as f64,
-                    le::i64_at(parent, 0x60).unwrap_or(0) as f64,
-                ];
-                point(parent, 0x70, low, self.model.is_3d)?;
+                // The cell body repeats the bounds as absolute corners (ODA writes them so;
+                // the header keeps low corner + extent like every graphic record).
+                point(parent, 0x70, low.map(|v| v as f64), self.model.is_3d)?;
                 point(
                     parent,
                     if self.model.is_3d { 0x88 } else { 0x80 },
-                    high,
+                    high.map(|v| v as f64),
                     self.model.is_3d,
                 )?;
             }
         }
         Ok(())
     }
-    fn text(&self, value: &str) -> Result<Vec<u8>> {
+    /// String payload in the selected encoding. Text elements store the characters only
+    /// (their length field counts no terminator); tag values end with a NUL that the
+    /// value length includes, as MicroStation writes them (FORMAT_NOTES, "Strings").
+    fn text(&self, value: &str, terminated: bool) -> Result<Vec<u8>> {
         if value.len() as u64 > u64::from(self.options.limits.max_string_bytes)
             || value.contains('\0')
         {
@@ -1175,12 +1195,18 @@ impl State<'_> {
                 ));
             }
             let mut bytes = bytes.into_owned();
-            bytes.push(0);
+            if terminated {
+                bytes.push(0);
+            }
             Ok(bytes)
-        } else {
+        } else if terminated {
             utf16(value)
+        } else {
+            utf16_unterminated(value)
         }
     }
+    /// Code page linkage of 8-bit text elements, byte for byte as MicroStation writes it
+    /// (`07 10 d4 80 00 02 ..` + code page at `+12`).
     fn codepage_link(&self) -> Result<Vec<u8>> {
         let Some(label) = &self.options.codepage else {
             return Ok(vec![]);
@@ -1195,6 +1221,7 @@ impl State<'_> {
         let mut b = vec![0; 16];
         put(&mut b, 0, &[7, 0x10])?;
         put(&mut b, 2, &0x80d4u16.to_le_bytes())?;
+        put(&mut b, 5, &[2])?;
         u32_at(&mut b, 12, number)?;
         Ok(b)
     }
@@ -1217,7 +1244,7 @@ impl State<'_> {
             let (set, index, kind) = self.tables.tag(a)?;
             let id = self.tables.id()?;
             let value = match &a.value {
-                Value::Text(s) => self.text(s)?,
+                Value::Text(s) => self.text(s, true)?,
                 Value::Int(n) => i32::try_from(*n)
                     .map_err(|_| Error::invalid(0, "DGN integer tag exceeds i32"))?
                     .to_le_bytes()
@@ -1225,20 +1252,31 @@ impl State<'_> {
                 Value::Float(n) if n.is_finite() => n.to_le_bytes().to_vec(),
                 _ => return Err(Error::Unsupported("DGN tag type".into())),
             };
+            // A tag element sits on its own level when the attribute names one.
+            let level = match a.layer.as_deref() {
+                Some(name) => self.tables.level(Some(name), self.options.timestamp_ms)?,
+                None => level,
+            };
+            let symbology = attribute_symbology(e, a);
+            // MicroStation leaves 10 bytes between the value and the linkages.
             let mut b = self.header(
                 37,
-                0x140 + value.len(),
+                0x14a + value.len(),
                 id,
                 level,
                 self.options.timestamp_ms,
-                e,
+                &symbology,
                 self.model.is_3d,
             )?;
             let flags = le::u32_at(&b, 0x28).unwrap_or(0) | if a.invisible { 0x80 } else { 0 };
             u32_at(&mut b, 0x28, flags)?;
-            let p = coordinate(a.position.unwrap_or(Point3::default()), self.model)?;
-            point(&mut b, 0xa0, p, true)?;
-            range(&mut b, &[p])?;
+            // Observed constants: 3 and 3 on hidden tags, 3 and 11 on displayed ones.
+            put(&mut b, 0x98, &3u16.to_le_bytes())?;
+            put(
+                &mut b,
+                0x9a,
+                &(if a.invisible { 3u16 } else { 11u16 }).to_le_bytes(),
+            )?;
             put(&mut b, 0xd0, &index.to_le_bytes())?;
             put(&mut b, 0xd2, &kind.to_le_bytes())?;
             u32_at(
@@ -1248,13 +1286,145 @@ impl State<'_> {
                     .map_err(|_| Error::LimitExceeded("DGN tag value".into()))?,
             )?;
             put(&mut b, 0x140, &value)?;
+            match &a.display {
+                Some(display) => self.tag_display(&mut b, e, a, display)?,
+                None => {
+                    let p = coordinate(a.position.unwrap_or(Point3::default()), self.model)?;
+                    point(&mut b, 0xa0, p, true)?;
+                    // MicroStation leaves the range of a tag it does not draw empty.
+                    put_range(&mut b, [0; 3], [0; 3])?;
+                }
+            }
             let mut links = dependency(0x2717, set)?;
             if let Some(target) = target {
-                links.extend(dependency(0x2710, target)?);
+                links.extend(tag_target_dependency(target)?);
             }
-            links.extend(self.codepage_link()?);
-            self.add(finish(b, &links)?, target.is_some())?;
+            self.add(finish_aligned(b, &links, 2)?, target.is_some())?;
         }
         Ok(())
     }
+
+    /// Presentation of a displayed tag, laid out as MicroStation 8.11 writes it: the
+    /// origin is the owner's first vertex and the offset leads to the text anchor; the
+    /// size, font, justification and quaternion follow the text element conventions.
+    fn tag_display(
+        &self,
+        b: &mut [u8],
+        owner: &Entity,
+        a: &Attribute,
+        display: &cadkit_core::AttributeDisplay,
+    ) -> Result<()> {
+        let anchor = a
+            .position
+            .ok_or_else(|| Error::invalid(0, "displayed DGN tag needs a position"))?;
+        if !(display.height.is_finite()
+            && display.height > 0.0
+            && display.width.is_finite()
+            && display.width > 0.0
+            && display.rotation.is_finite())
+        {
+            return Err(Error::invalid(0, "invalid DGN tag text size or rotation"));
+        }
+        let uor = self.model.uor_per_master;
+        let p = coordinate(anchor, self.model)?;
+        let origin = coordinate(first_vertex(owner).unwrap_or(anchor), self.model)?;
+        point(b, 0xa0, origin, true)?;
+        point(
+            b,
+            0xb8,
+            [p[0] - origin[0], p[1] - origin[1], p[2] - origin[2]],
+            true,
+        )?;
+        if !a.invisible {
+            u32_at(b, 0xd4, 0x0200_0000)?;
+        }
+        f64_at(b, 0xf0, display.width * uor / 0.006)?;
+        f64_at(b, 0xf8, display.height * uor / 0.006)?;
+        // Unrotated tags store (-1, 0, 0, 0); otherwise the text convention (w, 0, 0, z)
+        // with z = sin(-θ/2), see native::element::Rotation::matrix.
+        let q = if display.rotation == 0.0 {
+            [-1.0, 0.0, 0.0, 0.0]
+        } else {
+            let half = display.rotation / 2.0;
+            [half.cos(), 0.0, 0.0, (-half).sin()]
+        };
+        for (i, v) in q.into_iter().enumerate() {
+            f64_at(b, 0x100 + 8 * i, v)?;
+        }
+        u32_at(
+            b,
+            0x12c,
+            self.tables.tag_font(&a.props, display.style.as_deref())?,
+        )?;
+        let (code, fx, fy) = text::justification_code(&a.props, display.halign, display.valign)?;
+        u32_at(b, 0x130, u32::from(code))?;
+        if a.invisible {
+            return put_range(b, [0; 3], [0; 3]);
+        }
+        // Range: the text box around the anchor, `2h` high as MicroStation stores it.
+        let length = match a.props.get("dgn.text_length") {
+            Some(Value::Float(v)) if v.is_finite() && *v > 0.0 => *v,
+            _ => display.width * value_chars(&a.value) as f64,
+        } * uor;
+        let height = display.height * uor;
+        let (sin, cos) = display.rotation.sin_cos();
+        let corners: Vec<[f64; 3]> = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)]
+            .into_iter()
+            .map(|(u, v)| {
+                let dx = (u - fx) * length;
+                let dy = (v * 2.0 - fy * 2.0) * height;
+                [p[0] + dx * cos - dy * sin, p[1] + dx * sin + dy * cos, p[2]]
+            })
+            .collect();
+        range(b, &corners)
+    }
+}
+
+/// First defining point of an entity, where MicroStation anchors a tag attached to it.
+fn first_vertex(e: &Entity) -> Option<Point3> {
+    match &e.kind {
+        EntityKind::Polyline { vertices, .. } => vertices.first().map(|v| v.position),
+        EntityKind::Polygon { exterior, .. } => exterior.first().copied(),
+        EntityKind::Face { points, .. } => points.first().copied(),
+        EntityKind::Line { start, .. } => Some(*start),
+        EntityKind::Point { position } | EntityKind::Text { position, .. } => Some(*position),
+        EntityKind::Circle { center, .. }
+        | EntityKind::Arc { center, .. }
+        | EntityKind::Ellipse { center, .. } => Some(*center),
+        _ => None,
+    }
+}
+
+/// Character count of a displayed tag value, for its estimated text length.
+fn value_chars(v: &Value) -> usize {
+    match v {
+        Value::Text(s) => s.chars().count(),
+        Value::Int(n) => n.to_string().len(),
+        Value::Float(f) => format!("{f}").len(),
+        _ => 0,
+    }
+    .max(1)
+}
+
+/// Symbology of a tag element: the owner's, with the attribute's own DGN values first.
+fn attribute_symbology(owner: &Entity, a: &Attribute) -> Entity {
+    let mut s = Entity::new(EntityKind::Point {
+        position: Point3::default(),
+    });
+    s.layer = a.layer.clone().or_else(|| owner.layer.clone());
+    s.color = owner.color;
+    s.linetype = owner.linetype.clone();
+    s.lineweight = owner.lineweight;
+    s.visible = owner.visible;
+    for key in ["dgn.color_index", "dgn.weight", "dgn.style"] {
+        if let Some(v) = a.props.get(key).or_else(|| owner.props.get(key)) {
+            s.props.insert(key.into(), v.clone());
+        }
+    }
+    for key in ["dgn.graphic_group", "dgn.properties", "dgn.type_flags"] {
+        if let Some(v) = a.props.get(key) {
+            s.props.insert(key.into(), v.clone());
+        }
+    }
+    s
 }

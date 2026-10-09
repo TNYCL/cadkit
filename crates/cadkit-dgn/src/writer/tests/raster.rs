@@ -10,8 +10,9 @@ fn raster_seed() -> Vec<u8> {
     for (i, n) in matrix.into_iter().enumerate() {
         f64_at(&mut frame, 0x78 + i * 8, n).unwrap();
     }
-    f64_at(&mut frame, 0x108, 11000.).unwrap();
-    f64_at(&mut frame, 0x110, 22000.).unwrap();
+    // The frame extent from its origin, equal to the element range extent.
+    f64_at(&mut frame, 0x108, 10000.).unwrap();
+    f64_at(&mut frame, 0x110, 20000.).unwrap();
     range(&mut frame, &[[1000., 2000., 0.], [11000., 22000., 0.]]).unwrap();
     put(&mut frame, 0x180, b"opaque synthetic frame settings").unwrap();
     let frame = finish(frame, &[]).unwrap();

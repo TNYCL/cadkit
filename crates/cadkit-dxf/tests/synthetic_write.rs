@@ -410,6 +410,7 @@ fn model_entities() -> Vec<Entity> {
             set: None,
             position: Some(p(10.0, 20.0, 0.0)),
             invisible: false,
+            ..Default::default()
         },
         Attribute {
             tag: "HIDDEN".into(),
@@ -417,6 +418,7 @@ fn model_entities() -> Vec<Entity> {
             set: None,
             position: Some(p(11.0, 21.0, 0.0)),
             invisible: true,
+            ..Default::default()
         },
     ];
     v.push(insert);

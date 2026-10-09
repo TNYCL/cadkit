@@ -75,6 +75,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             set: Some("Örnek".into()),
             position: None,
             invisible: true,
+            ..Default::default()
         });
         if let EntityKind::Polygon {
             exterior,
