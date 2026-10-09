@@ -213,6 +213,7 @@ fn sub_entities_are_owned_by_their_parent() {
         set: None,
         position: None,
         invisible: false,
+        ..Default::default()
     }];
     let vtx = |x, y, z| Vertex {
         position: p(x, y, z),

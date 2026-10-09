@@ -74,10 +74,20 @@ Private client drawings in `corpus/private/` are used only for local, structural
   bounded streaming writer preflight; no new serialization format is introduced.
 - DGN V8 type-17 range writing uses own byte inspection of the existing public
   GDAL and Safe Software samples: low slots are absolute UOR bounds and high
-  slots are relative spans. Rotated measured rectangles and model/cell aggregate
+  slots are relative spans (0.3.0 found the same extent rule for every graphic
+  type, see below). Rotated measured rectangles and model/cell aggregate
   bounds are tested with invented geometry and synthetic records. Seed font
   identity checks and native lineweight resolution use the existing attributed
   decoders; no additional external implementation was consulted.
+- DGN V8 range, string-length, displayed-tag and control-retention changes (0.3.0) come
+  from own byte inspection: every line, line string and shape of the public GDAL
+  `test_dgnv8.dgn` (ODA-written) stores the low corner and the extent, as do all
+  records of the Water sample and structural counts over the private corpus
+  (MicroStation 8.11 files). The displayed-tag layout, the code page linkage bytes and
+  the 56-byte tag target dependency are aggregate structural observations of the
+  private corpus (offsets, constants and counts only; no names, values or coordinates
+  were copied). Tests use invented geometry and synthetic records; the public sample
+  only calibrates the range reading. No external implementation was consulted.
 - The default polygon planarity tolerance (0.01 coordinate units) matches the
   documented default distance-to-plane tolerance of the
   [val3dity](https://github.com/tudelft3d/val3dity) validator. Only that public

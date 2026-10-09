@@ -120,19 +120,52 @@ fn known_sample(bytes: &[u8]) {
             assert!(p.x >= r[0] - tol && p.x <= r[3] + tol);
             assert!(p.y >= r[1] - tol && p.y <= r[4] + tol);
         }
-        // All 8 frames store one extent corner for one file: flagged, see FORMAT_NOTES.
-        assert_eq!(
-            e.props.get("dgn.raster_extent_shared"),
-            Some(&Value::Bool(true))
-        );
+        // The transform origin is the range low corner and the frame fills the range.
+        assert!((position.x - r[0]).abs() <= tol && (position.y - r[1]).abs() <= tol);
+        let far = position.translated(u_vector.plus(*v_vector));
+        assert!((far.x - r[3]).abs() <= tol && (far.y - r[4]).abs() <= tol);
     }
     assert!(doc.warnings.iter().all(|w| w.code != "dgn.raster_range_placement"
         && w.code != "dgn.raster_outside_range"));
+    // The 8 frames show one raster file at one size, each at its own place.
+    let footprints: Vec<_> = images
+        .iter()
+        .filter_map(|e| match &e.kind {
+            EntityKind::Image {
+                position,
+                u_vector,
+                v_vector,
+                ..
+            } => Some((*position, u_vector.length(), v_vector.length())),
+            _ => None,
+        })
+        .collect();
+    let (_, w0, h0) = footprints[0];
     assert!(
-        doc.warnings
+        footprints
             .iter()
-            .any(|w| w.code == "dgn.raster_extent_shared")
+            .all(|(_, w, h)| (w - w0).abs() < 1e-6 && (h - h0).abs() < 1e-6)
     );
+    let mut origins: Vec<_> = footprints
+        .iter()
+        .map(|(p, _, _)| ((p.x * 1e3) as i64, (p.y * 1e3) as i64))
+        .collect();
+    origins.sort_unstable();
+    origins.dedup();
+    assert_eq!(origins.len(), 8);
+    // Every tag is displayed: font, size and its own level are read back.
+    for a in m.entities.iter().flat_map(|e| e.attributes.iter()) {
+        assert!(!a.invisible);
+        let d = a.display.as_ref().expect("displayed tag presentation");
+        assert!(
+            [0.05, 0.1, 0.25, 0.5]
+                .iter()
+                .any(|h| (d.height - h).abs() < 1e-6)
+        );
+        assert_eq!(d.halign, cadkit_core::HAlign::Center);
+        assert_eq!(d.valign, cadkit_core::VAlign::Middle);
+        assert!(a.layer.is_some(), "tag element sits on its own level");
+    }
     // Tag set definitions survive in the document props (8 sets).
     let Some(Value::List(sets)) = doc.props.get("dgn.tag_sets") else {
         panic!()

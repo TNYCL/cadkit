@@ -155,6 +155,7 @@ fn metadata_fallback_is_explicit_reported_and_preserves_nested_entities() {
         set: Some("Ids".into()),
         position: None,
         invisible: true,
+        ..Default::default()
     });
     let group = Entity::new(EntityKind::Group {
         group_kind: GroupKind::Other,

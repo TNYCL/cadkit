@@ -8,8 +8,8 @@ use std::f64::consts::{FRAC_PI_2, TAU};
 
 use cadkit_core::geom_ops::{arbitrary_axes, clamped_uniform_knots};
 use cadkit_core::{
-    Attribute, Color, Entity, EntityKind, GroupKind, HAlign, LengthUnit, Linetype, Lineweight,
-    Point3, Props, Raw, TextStyle, VAlign, Value, Vec3, Vertex, Warning,
+    Attribute, AttributeDisplay, Color, Entity, EntityKind, GroupKind, HAlign, LengthUnit,
+    Linetype, Lineweight, Point3, Props, Raw, TextStyle, VAlign, Value, Vec3, Vertex, Warning,
 };
 
 use crate::native::element::{
@@ -203,8 +203,6 @@ pub(crate) struct Mapper {
     pub(crate) xattributes: HashMap<u64, Vec<u32>>,
     /// Raster frame id -> image path.
     pub(crate) raster_paths: HashMap<u64, (Option<String>, Option<String>)>,
-    /// Raster frames whose stored extent corner and file are shared with another frame.
-    pub(crate) shared_raster_extent: HashSet<u64>,
     /// Aggregated warnings: code -> (count, first message).
     counts: BTreeMap<String, (u64, String)>,
     pub(crate) warnings: Vec<Warning>,
@@ -226,7 +224,6 @@ impl Mapper {
             attached: HashSet::new(),
             xattributes: HashMap::new(),
             raster_paths: HashMap::new(),
-            shared_raster_extent: HashSet::new(),
             counts: BTreeMap::new(),
             warnings: Vec::new(),
         }
@@ -402,6 +399,14 @@ impl Mapper {
                 );
             }
             p.insert("dgn.properties".into(), Value::Int(i64::from(h.properties)));
+            // Undocumented type-word flags MicroStation sets on its graphics (`0x00C0`);
+            // kept so a rewrite reproduces them.
+            if h.type_flags & 0x00c0 != 0 {
+                p.insert(
+                    "dgn.type_flags".into(),
+                    Value::Int(i64::from(h.type_flags & 0x00c0)),
+                );
+            }
             if h.properties & 0x8000 != 0 && matches!(h.type_code, 6 | 14) {
                 p.insert("dgn.hole".into(), Value::Bool(true));
             }
@@ -441,7 +446,10 @@ impl Mapper {
         }
         if let Some(id) = h.id {
             if let Some(attrs) = self.pending_tags.remove(&id) {
-                e.attributes = attrs.into_iter().map(|(_, a)| a).collect();
+                e.attributes = attrs
+                    .into_iter()
+                    .map(|(_, a)| relative_to_owner(a, &e))
+                    .collect();
             }
         }
         e
@@ -561,7 +569,8 @@ impl Mapper {
                         type_name: "dgn.type_37".into(),
                     },
                 );
-                e.attributes.push(self.attribute(t, &item.el.header, xf));
+                let a = self.attribute(t, &item.el.header, xf);
+                e.attributes.push(relative_to_owner(a, &e));
                 return Some(e);
             }
             ElementData::RasterFrame { .. } => self.image(item, xf),
@@ -669,15 +678,6 @@ impl Mapper {
                         "dgn.range".into(),
                         Value::List([a.x, a.y, a.z, b.x, b.y, b.z].map(Value::Float).to_vec()),
                     );
-                }
-                if item
-                    .el
-                    .header
-                    .id
-                    .is_some_and(|id| self.shared_raster_extent.contains(&id))
-                {
-                    e.props
-                        .insert("dgn.raster_extent_shared".into(), Value::Bool(true));
                 }
                 e.props.insert(
                     "dgn.raster_matrix".into(),
@@ -925,9 +925,10 @@ impl Mapper {
         }
     }
 
-    /// A tag as an attribute (`position` = origin + offset).
+    /// A tag as an attribute (`position` = origin + offset). The tag element's own level,
+    /// its text presentation and its symbology are kept so a writer can reproduce it.
     pub(crate) fn attribute(
-        &self,
+        &mut self,
         t: &TagData,
         h: &crate::native::element::ElementHeader,
         xf: &Xf,
@@ -937,18 +938,66 @@ impl Mapper {
             .or(t.set_number.map(u64::from))
             .and_then(|k| self.tag_sets.get(&k));
         let def = set.and_then(|s| s.tags.iter().find(|d| d.id == t.tag_index));
+        let tag = def
+            .map(|d| d.name.clone())
+            .unwrap_or_else(|| format!("tag_{}", t.tag_index));
+        let set_name = set.and_then(|s| s.name.clone());
         let [ox, oy, oz] = t.origin;
         let [dx, dy, dz] = t.offset;
         let has_pos = t.origin != [0.0; 3] || t.offset != [0.0; 3];
+        // Observed: hidden tags carry 0x0080 in the property word (FORMAT_NOTES).
+        let invisible = h.properties & 0x0080 != 0;
+        let mut props = Props::new();
+        let mut layer = None;
+        if h.has_display_header {
+            layer = Some(self.level_name(h.level));
+            props.insert("dgn.color_index".into(), Value::Int(i64::from(h.color)));
+            props.insert("dgn.weight".into(), Value::Int(i64::from(h.weight)));
+            props.insert("dgn.style".into(), Value::Int(i64::from(h.style)));
+            if h.graphic_group != 0 {
+                props.insert(
+                    "dgn.graphic_group".into(),
+                    Value::Int(i64::from(h.graphic_group)),
+                );
+            }
+            // Only MicroStation's undecoded property bits add anything to `invisible`.
+            if h.properties & 0x0600 != 0 {
+                props.insert("dgn.properties".into(), Value::Int(i64::from(h.properties)));
+            }
+            if h.type_flags & 0x00c0 != 0 {
+                props.insert(
+                    "dgn.type_flags".into(),
+                    Value::Int(i64::from(h.type_flags & 0x00c0)),
+                );
+            }
+        }
+        // V7 tags and hidden V8 tags without a text size have no usable presentation.
+        let display = (t.size[1] > 0.0 && t.size[0] > 0.0).then(|| {
+            self.used_fonts.insert(t.font);
+            props.insert("dgn.font_number".into(), Value::Int(i64::from(t.font)));
+            props.insert(
+                "dgn.justification".into(),
+                Value::Int(i64::from(t.justification)),
+            );
+            let (halign, valign, _, _) = justification(t.justification);
+            AttributeDisplay {
+                height: xf.dist(t.size[1]),
+                width: xf.dist(t.size[0]),
+                style: Some(self.font_style_name(t.font)),
+                halign,
+                valign,
+                rotation: tag_rotation(t.quaternion),
+            }
+        });
         Attribute {
-            tag: def
-                .map(|d| d.name.clone())
-                .unwrap_or_else(|| format!("tag_{}", t.tag_index)),
+            tag,
             value: tag_value(&t.value),
-            set: set.and_then(|s| s.name.clone()),
+            set: set_name,
             position: has_pos.then(|| xf.pt([ox + dx, oy + dy, oz + dz])),
-            // Observed: hidden tags carry 0x0080 in the property word (FORMAT_NOTES).
-            invisible: h.properties & 0x0080 != 0,
+            invisible,
+            layer,
+            display,
+            props,
         }
     }
 }
@@ -1071,8 +1120,9 @@ pub(crate) fn frame_placement(
     let [m00, m01, _, m03, m10, m11, _, m13, m20, m21, _, m23, ..] = *m;
     let a = Vec3::new(m00, m10, m20);
     let b = Vec3::new(m01, m11, m21);
-    let [cx, cy] = corner?;
-    let (dx, dy) = (cx - m03, cy - m13);
+    // `0x108`/`0x110` is the frame's extent from its origin (the same values as the
+    // element range extent on the private sample), not an absolute corner.
+    let [dx, dy] = corner?;
     let det = a.x * b.y - a.y * b.x;
     if !det.is_finite() || det.abs() <= 1e-12 * a.length() * b.length() {
         return None;
@@ -1152,6 +1202,28 @@ pub(crate) fn justification(code: u16) -> (HAlign, VAlign, f64, f64) {
         _ => (VAlign::Baseline, 0.0),
     };
     (h, v, fx, fy)
+}
+
+/// Keeps only what a tag element does not share with its owner: `layer` stays `None` on the
+/// owner's level, and symbology/flag props equal to the owner's are dropped.
+fn relative_to_owner(mut a: Attribute, owner: &Entity) -> Attribute {
+    if a.layer.is_some() && a.layer == owner.layer {
+        a.layer = None;
+    }
+    a.props
+        .retain(|key, value| owner.props.get(key) != Some(value) || key == "dgn.font_number");
+    a
+}
+
+/// Rotation of a displayed tag about +Z in radians, from its stored quaternion (same
+/// convention as text, see [`Rotation::matrix`]). An all-zero quaternion means none.
+pub(crate) fn tag_rotation(q: [f64; 4]) -> f64 {
+    if q.iter().all(|v| *v == 0.0) {
+        return 0.0;
+    }
+    let [m00, _, _, m10, ..] = Rotation::Quaternion(q).matrix();
+    let a = m10.atan2(m00);
+    if a.abs() < 1e-12 { 0.0 } else { a }
 }
 
 /// Text length in UOR and whether it is estimated (`characters x character width`, the
@@ -1458,15 +1530,13 @@ mod tests {
     #[test]
     fn raster_placement_follows_the_matrix() {
         // 30 degree rotation, 2 UOR per pixel, translation (100, 50); a 300 x 200 pixel image.
+        // The frame stores its extent from the translation (rotated frames unverified).
         let (s, c) = 30f64.to_radians().sin_cos();
         let (a, b) = ([2.0 * c, 2.0 * s], [-2.0 * s, 2.0 * c]);
         let m = [
             a[0], b[0], 0.0, 100.0, a[1], b[1], 0.0, 50.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
         ];
-        let corner = [
-            100.0 + 300.0 * a[0] + 200.0 * b[0],
-            50.0 + 300.0 * a[1] + 200.0 * b[1],
-        ];
+        let corner = [300.0 * a[0] + 200.0 * b[0], 300.0 * a[1] + 200.0 * b[1]];
         let (o, u, v) = frame_placement(&m, Some(corner)).unwrap();
         assert_eq!(o, [100.0, 50.0, 0.0]);
         assert!(close(u.x, 600.0 * c) && close(u.y, 600.0 * s));

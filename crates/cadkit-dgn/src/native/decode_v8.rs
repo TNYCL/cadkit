@@ -42,9 +42,14 @@ pub fn decode(raw: &RawElement, enc: &'static Encoding, limits: &Limits) -> Elem
     } else {
         0
     };
+    // The second range triple is the extent (high - low) for every graphic type, not
+    // an absolute corner: MicroStation and ODA files agree on this (FORMAT_NOTES,
+    // "Element range").
     let range = if display {
         let r = |o: usize| le::i64_at(b, o).map(|v| v as f64).unwrap_or(0.0);
-        Some([[r(0x38), r(0x40), r(0x48)], [r(0x50), r(0x58), r(0x60)]])
+        let low = [r(0x38), r(0x40), r(0x48)];
+        let span = [r(0x50), r(0x58), r(0x60)];
+        Some([low, [low[0] + span[0], low[1] + span[1], low[2] + span[2]]])
     } else {
         None
     };
@@ -420,6 +425,9 @@ impl Decoder<'_> {
                 le::f64_at(self.b, 0xf0).unwrap_or(0.0) * TEXT_MULT_TO_UOR,
                 le::f64_at(self.b, 0xf8).unwrap_or(0.0) * TEXT_MULT_TO_UOR,
             ],
+            font: le::u32_at(self.b, 0x12c).unwrap_or(0),
+            justification: le::u16_at(self.b, 0x130).unwrap_or(0),
+            quaternion: le::f64s::<4>(self.b, 0x100).unwrap_or([0.0; 4]),
         })
     }
 

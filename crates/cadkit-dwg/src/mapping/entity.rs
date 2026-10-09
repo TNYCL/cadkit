@@ -403,6 +403,7 @@ impl Mapper<'_> {
                         set: None,
                         position: Some(pos),
                         invisible: a.flags & 1 != 0,
+                        ..Default::default()
                     });
                 }
                 _ => {

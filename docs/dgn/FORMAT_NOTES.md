@@ -143,7 +143,7 @@ counts them per element (`dgn.xattribute_count`, `dgn.xattribute_kinds`).
 | `0x2C` | u32 | line style | oracle (4) |
 | `0x30` | u32 | line weight | oracle (5) |
 | `0x34` | u32 | color index (>255 = extended color) | oracle (3, 256) |
-| `0x38` | 6 × i64 | absolute range low xyz, high xyz (UOR); type 17 stores high as a relative span | public text byte inspection |
+| `0x38` | 6 × i64 | element range: low corner xyz, then the extent (high − low) xyz, in UOR, for every graphic type (text, tags and cell headers included); only the model header (`Dgn~Mh` `0x90`) stores absolute low/high corners | public test_dgnv8 (ODA): every line, line string and shape, including a zero-length line stored with extent (0, 0, 0) (`tests/v8_range.rs`); Water and the MicroStation 8.11 files of the private corpus agree on every record. An absolute high corner reads as a negative extent wherever the geometry lies below zero, and MicroStation does not draw such elements |
 
 Type-word flags (high 16 bits): `0x2000` complex header, `0x4000` complex component,
 `0x1000` set on graphic elements, `0x0080`/`0x0040`/`0x0400`/`0x0800` vary by writer
@@ -162,16 +162,16 @@ store 3 doubles and a quaternion `(w, x, y, z)`. All coordinates are UOR doubles
 | 22 point string | as 4, then `count × 4` doubles (orientation quaternions) | oracle MULTIPOINT |
 | 15 ellipse | `0x68` primary axis, `0x70` secondary; 2D: `0x78` rotation, `0x80` center; 3D: `0x78` quaternion, `0x98` center | oracle (stroked points on the curve within 1e-6) |
 | 16 arc | `0x68` start, `0x70` sweep (signed radians), `0x78` primary, `0x80` secondary; 2D: `0x88` rotation, `0x90` center; 3D: `0x88` quaternion, `0xA8` center | oracle incl. negative sweep in a complex shape |
-| 17 text | `0x68` u32 font, `0x6C` u16 justification, `0x6E` u16 byte length, `0x70`/`0x78` width/height multipliers (UOR = value × 6/1000), `0x80`/`0x88` measured length/height in UOR (0 when not measured; TreeText 583.33/50 for 12 characters of width 50, the same values sit in the range "high" slots, which hold extents relative to the origin for text); 2D: `0x90` rotation, `0x98` origin = lower-left corner, `0xA8` u16 editable fields, `0xAA` text; 3D: `0x90` quaternion, `0xB0` origin, `0xC8`, `0xCA` text | oracle: value, size 1.0, angle −45°, Arial (font 1024); range low = origin on left-top texts |
+| 17 text | `0x68` u32 font, `0x6C` u16 justification, `0x6E` u16 payload byte length (no terminator counted), `0x70`/`0x78` width/height multipliers (UOR = value × 6/1000), `0x80`/`0x88` measured length/height in UOR (0 when not measured; TreeText 583.33/50 for 12 characters of width 50, the same values as the range extent); 2D: `0x90` rotation, `0x98` origin = lower-left corner, `0xA8` u16 editable fields, `0xAA` text; 3D: `0x90` quaternion, `0xB0` origin, `0xC8`, `0xCA` text | oracle: value, size 1.0, angle −45°, Arial (font 1024); range low = origin on left-top texts |
 | 7 text node | `0x68` u32 components, `0x6C` u32 node number, `0x70` u32 font, `0x74` u16 max length, `0x76` u16 justification, `0x78` line spacing, `0x80`/`0x88` multipliers; 2D: `0x90` rotation, `0x98` origin; 3D: `0x90` quaternion, `0xB0` origin | TreeText (font/justification equal the child text's) |
 | 12, 14 complex | `0x68` u32 component count | oracle |
 | 18, 19 | assumed as 12/14 (unverified) | — |
-| 2 cell, 34 shared cell definition, 35 instance | `0x68` u32 components, `0x6C` u32 (unknown); 2D (primary length `0xC0`): `0x70` range low, `0x80` high, `0x90` 2×2 matrix, `0xB0` origin; 3D (`0x100`): `0x70` low, `0x88` high, `0xA0` 3×3 row-major matrix, `0xE8` origin; name = string linkage 1 | test_dgnv8: identity matrices, instance matrix `10000·I` at origin (0,1,2) = oracle POINT Z; definitions are stored in the 3D layout even with the 2D flag, so the variant is chosen by length |
+| 2 cell, 34 shared cell definition, 35 instance | `0x68` u32 components, `0x6C` u32 1 in every ODA and MicroStation cell (meaning unknown); 2D (primary length `0xC0`): `0x70` range low, `0x80` high, `0x90` 2×2 matrix, `0xB0` origin; 3D (`0x100`): `0x70` low, `0x88` high, `0xA0` 3×3 row-major matrix, `0xE8` origin; name = string linkage 1 | test_dgnv8: identity matrices, instance matrix `10000·I` at origin (0,1,2) = oracle POINT Z; definitions are stored in the 3D layout even with the 2D flag, so the variant is chosen by length |
 | 27 B-spline curve | `0x68` u32 components, `0x6C` u8 order−2 (low nibble) + flags (`0x10` curve display, `0x20` polygon display, `0x40` rational, `0x80` closed), `0x6D` u8, `0x6E` u16 (unknown), `0x70` u32 poles, `0x74` u32 knots (0 = uniform) | oracle: cubic, see open question on "closed" |
 | 26, 28 knots / weights | doubles after the `0x20` prefix (unverified, no sample) | — |
-| 37 tag | `0xA0` origin (3 doubles), `0xB8` offset (3 doubles), `0xD0` u16 tag number, `0xD2` u16 value type, `0xF0`/`0xF8` text multipliers, `0x138` u32 value length, `0x140` value; set = dependency `0x2717`, target = dependency `0x2710` | TreeText (13,808 tags, 2D) and private sample (418 tags, 3D) — same offsets for 2D and 3D |
+| 37 tag | `0xA0` origin (3 doubles), `0xB8` offset (3 doubles), `0xD0` u16 tag number, `0xD2` u16 value type, `0xF0`/`0xF8` text multipliers, `0x138` u32 value length, `0x140` value; set = dependency `0x2717`, target = dependency `0x2710`; displayed tags: see "Displayed tags" below | TreeText (13,808 tags, 2D) and private sample (418 tags, 3D) — same offsets for 2D and 3D |
 | 39 tag set definition | `0x28` magic `teSt`, `0x2C` u32 (`0xF81` in every set), `0x30` u32 (varies), `0x34` u32 definitions length, `0x38` u32 same, `0x3C` definitions (V7 layout below), set name = string linkage 1 | TreeText (1 set), private sample (8 sets) |
-| 94 raster frame | `0x78` 4×4 row-major pixel-to-UOR matrix (translation in column 3; observed: 62.65 UOR/pixel, translation = range low), `0xF0` m33 = 1, `0x108`/`0x110` extent corner (UOR, = range high), `0x118`/`0x120` 200/200 (DPI?), `0x140` u32 768, 768 (unknown); the same values are repeated in a type-91 control record (`0x28` low corner, `0x40` corner, `0x60`/`0x68` DPI, `0x88`/`0xA8` scale) | private sample (8 frames; all 8 share one extent corner, so it may be a clip box rather than the image size) |
+| 94 raster frame | `0x78` 4×4 row-major pixel-to-UOR matrix (translation in column 3; observed: 62.65 UOR/pixel, translation = range low), `0xF0` m33 = 1, `0x108`/`0x110` frame extent from the translation (UOR, = the element range extent), `0x118`/`0x120` 200/200 (DPI?), `0x140` u32 768, 768 (unknown); the same values are repeated in a type-91 control record (`0x28` low corner, `0x40` corner, `0x60`/`0x68` DPI, `0x88`/`0xA8` scale) | private sample (8 frames of one raster file: one size, eight places) |
 | 90 raster attachment (control) | string linkage 3 = file name (8-bit), `0x1F` = full path/URL (UTF-16) | private sample |
 | 92 raster link (control) | `0x30` u64 id of the type-90 element; dependency `0x271B` (root type 3) → frame (94) id | private sample (all 8 frames resolve) |
 | 96 table header | `0x0C` table number (1 levels, 2 fonts, 4 level filters, …), `0x20` u32 entry count | all V8 samples |
@@ -197,14 +197,36 @@ flags (`0x10` user data), `u16 +2` linkage id. V8 zero padding ends the area. V7
 
 | Id | Layout | Evidence |
 |---|---|---|
-| `0x56D2` string | `+4` u32 string id, `+8` u32 byte length, `+0C` bytes (`ff fd` = UTF-16LE, else 8-bit) | model/cell/level/tag-set names, raster paths |
-| `0x56D0` dependency | `+4` u16 application id, `+6` u16 value, `+8` u8 copy option, `+9` u8 root type, `+0A` u16 root count; root type 2/3: u64 ids from `+0C`; type 9/10: 16-byte roots, id in the second half (`+14`) | tags (`0x2717` → set, `0x2710` → target), rasters (`0x271B`) |
+| `0x56D2` string | `+4` u32 string id, `+8` u32 byte length (no terminator counted), `+0C` bytes (`ff fd` = UTF-16LE, else 8-bit) | model/cell/level/tag-set names, raster paths |
+| `0x56D0` dependency | `+4` u16 application id, `+6` u16 value, `+8` u8 copy option, `+9` u8 root type, `+0A` u16 root count; root type 2/3: u64 ids from `+0C`; type 9/10: 16-byte roots, id in the second half (`+14`). MicroStation 8.11 tag targets: value 1, copy option 2, root type 9, root `01 00 00 00 00 00 01 00` + id, then 28 zero bytes (56 bytes in all) | tags (`0x2717` → set, `0x2710` → target), rasters (`0x271B`) |
 | `0x0041` fill | V7: fill color byte `+8`; V8: u32 `+8` (meaning of the value unverified) | test_dgnv8, smalltest |
 | `0x7D2F` association id | `+4` u32 | GDAL |
-| `0x80D4` | `+0C` u32 = 1252 on every TreeText text: taken as the text's code page (inferred) | TreeText |
+| `0x80D4` | `07 10 d4 80 00 02 00 00 00 00 00 00`, then `+0C` u32 code page: 1252 on every TreeText text, 1254 on the texts of Turkish MicroStation 8.11 files; taken as the text's code page | TreeText, private corpus |
 
 String ids seen: 1 name, 2 description, 3 file name, `0x13` master unit label, `0x14`
 sub unit label, `0x1F` full path.
+
+### Displayed tags (type 37)
+
+MicroStation 8.11 writes every displayed tag of the private corpus (68,745 tags in 113
+files) with the layout below; offsets from the element start.
+
+| Offset | Content |
+|---|---|
+| `0x00` | type word `0x10C0_0025`; property word `0x0E00` (3D); own level, named after the tag (e.g. `OdaAdi` for "Oda Adı"), not the target's; graphic group shared by the tags of one target |
+| `0x38` | range: the text box around the display point, `2 × height` tall (low corner + extent like every graphic) |
+| `0x98` / `0x9A` | u16 3 / u16 11 (TreeText's hidden tags: 3 / 3) |
+| `0xA0` | origin: the target's first vertex |
+| `0xB8` | offset from the origin to the display point (z 0) |
+| `0xD0` / `0xD2` | tag number / value type |
+| `0xD4` | u32 `0x02000000` on most tags (meaning unknown) |
+| `0xF0` / `0xF8` | width / height multipliers (UOR = value × 6/1000) |
+| `0x100` | quaternion; `(-1, 0, 0, 0)` when unrotated |
+| `0x12C` / `0x130` | u32 font number / u32 justification (7 = center-middle) |
+| `0x138` / `0x140` | value length / value: 8-bit text in the locale code page with a counted NUL, i32, or f64 |
+| after the value | 10 bytes, then the linkages at a 2-byte boundary: set dependency (24 bytes), target dependency (56 bytes, root type 9) |
+
+Hidden tags written by MicroStation (TreeText) leave the range empty.
 
 ### Model index (`Dgn~Mix`, ezdgn, confirmed)
 
@@ -326,18 +348,18 @@ skipped (counted in `dgn.deleted_count`). Records without a display header and t
   (the oracle reports it as POINT).
 - **Point strings (22)** → `Group { Other, name "point string" }` of `Point`s.
 - **Tags** → `Attribute { tag: definition name, value, set: set name, position: origin +
-  offset, invisible: property bit 0x0080 }` on the target entity (looked up by element
+  offset, invisible: property bit 0x0080, layer: the tag element's level when it is not
+  the target's, display: size, font style, alignment and rotation of displayed tags,
+  props: symbology and flags that differ from the target's }` on the target entity (looked up by element
   id, also inside groups). Tags whose target is missing (and V7 tags) stay as
   `Unknown { "dgn.type_37" }` entities carrying the attribute (`dgn.tag_target_missing`).
 - **Raster frames (94)** → `Image`: `position` = matrix translation, `u_vector` /
-  `v_vector` = the matrix X / Y columns scaled so the frame reaches its extent corner
-  (`0x108`/`0x110`), which handles rotated or sheared frames. Consistency rule: the four
+  `v_vector` = the matrix X / Y columns scaled so the frame spans its extent
+  (`0x108`/`0x110`, relative to the translation), which handles rotated or sheared frames. Consistency rule: the four
   corners must lie inside the element range (MicroStation's own bounding box) within
   4 UOR; otherwise the rectangle is rebuilt from the range — along the matrix axes when
   that is solvable, else axis-aligned (`dgn.raster_outside_range`); without a transform
-  the range is used (`dgn.raster_range_placement`). Frames of one model that store the same
-  extent corner for the same file get `dgn.raster_extent_shared` and a warning: their
-  rectangles are probably not image footprints. Props: `dgn.range` (element range in
+  the range is used (`dgn.raster_range_placement`). Props: `dgn.range` (element range in
   document units), `dgn.raster_matrix`, `dgn.raster_file`, `dgn.raster_path`. Path =
   attachment full path, else file name. `size_px` stays `None` (pixel counts live in the
   external raster).
@@ -383,6 +405,11 @@ timestamp), the type-9 settings element and every inflated stream: the only code
 values are the per-text `0x80D4` linkages (12,627 in TreeText for 12,623 texts); the
 private sample contains none (it has no text elements).
 
+Lengths never count a terminator in text element payloads (`0x6E`) or string linkages:
+TreeText, test_dgnv8 and the private corpus agree, and MicroStation draws a counted NUL as
+an extra glyph at the end of the text. Tag values do count it (TreeText 13 bytes for 12
+characters), and tag set definition strings are NUL-terminated.
+
 ## Verification
 
 | Check | Result |
@@ -424,16 +451,11 @@ private sample contains none (it has no text elements).
 8. **Hidden flag** `0x0080` on tags (TreeText) is inferred from one file.
 9. **Text length estimate**: V7 rotated text and V8 text without a stored length use
    `characters × character width`, which is exact only for fixed-pitch fonts.
-10. **Raster extent**: on all 8 frames of the private sample the matrix translation equals
-    the element range low corner (≤ 1 UOR) and `0x108`/`0x110` equals the range high corner
-    (≤ 2 UOR), so the stored extent *is* MicroStation's range. Yet all 8 frames reference
-    one raster file, share that upper-right corner, and span 4.9× the width of the drawn
-    geometry (their union covers about 5× the geometry's bounding box), so the extent is
-    not the image footprint (a 200 DPI scan of that size would be about 8 m wide). No pixel
-    size or clip polygon was found in the frame, its seven control records (types 90–93) or
-    its XAttribute record (identical for all 8 frames). The real footprint needs the
-    raster's pixel size from the image file; the reader cannot derive it. No public sample
-    contains a raster frame.
+10. **Raster extent** (resolved): `0x108`/`0x110` hold the frame extent from its
+    translation, the same values as the element range extent. The 8 frames of the private
+    sample show one raster file at one size in eight places; reading the extent as an
+    absolute corner had made them appear to share one corner. Rotated frames are not
+    sampled. No public sample contains a raster frame.
 
 ## Seed-based V8 writer
 
@@ -508,18 +530,23 @@ font, height or width factor; cadkit does not measure fonts. Left-aligned text
 without it uses the existing character-count estimate. Bottom alignment relative
 to descenders is distinct from the DGN baseline and remains unsupported.
 
-Type-17 range lows enclose the absolute rotated measured rectangle; highs store
-its nonnegative relative spans, including zero Z span for planar text. Model and
-cell aggregate ranges convert these spans back to absolute highs before union.
-This fixes misplaced fit/selection bounds without changing the text anchor.
-Measured advance and nominal height do not promise exact target-font glyph bounds.
+Every graphic record stores its range as the floored low corner and the extent to the
+ceiled high corner, both in UOR; a negative or overflowing extent is an error. Before
+0.3.0 the writer stored absolute high corners for everything but text, which MicroStation
+reads as negative extents below zero and does not draw. Cell headers aggregate their
+components the same way; their body repeats the absolute low/high corners (as ODA
+writes them) and `0x6C` holds 1. The model header keeps absolute corners. Text ranges
+enclose the rotated measured rectangle; measured advance and nominal height do not
+promise exact target-font glyph bounds.
 
 `preserve_seed_rasters` (default true) retains unchanged attachments from the same
 seed. All image entities must have unique original IDs and unchanged geometry,
 paths, display properties and native props. Frame records (94), raster control
 records (90..93), and their auxiliary payloads retain their bytes and IDs; other
-graphics and attached tags are regenerated. Unrelated control records are cleared
-as in ordinary seed export. Incomplete auxiliary pages, mixed/new/deleted raster
+graphics and attached tags are regenerated. `preserve_seed_controls` (default true)
+keeps every other seed control record (coordinate system, model settings and the like)
+and its auxiliary data byte for byte, unless the record holds the id of a seed graphic;
+the control auxiliary page counter is kept while all of its pages are. Incomplete auxiliary pages, mixed/new/deleted raster
 sets, or edited attachment settings are rejected. An output is still dependent
 on its external raster file; no raster bytes are embedded or fabricated. This is
 retention of existing attachments, not a new native raster encoder.
@@ -527,9 +554,20 @@ retention of existing attachments, not a new native raster encoder.
 Level names, tag sets and attached text/integer/double values are writable.
 Unnamed tag sets remain unnamed rather than being silently renamed to `CADKIT`.
 Standalone type-37 tags are written without an invented owner; their values and
-positions are retained without creating a dangling dependency.
+positions are retained without creating a dangling dependency. An attribute with
+`display` is written as a displayed tag in the layout of "Displayed tags": origin at
+the owner's first vertex, offset to `position`, size, font (`display.style` resolved
+by name like text styles, or `dgn.font_number`), justification and quaternion; its range
+uses `dgn.text_length` when given, else characters × width. `Attribute::layer` places the
+tag element on its own level, and the attribute's `dgn.color_index`, `dgn.weight`,
+`dgn.style`, `dgn.graphic_group`, `dgn.properties` (`0x0600` bits) and `dgn.type_flags`
+(`0x00C0` bits) props override the owner's. Owner dependencies use MicroStation's
+56-byte root type 9 form. Every entity likewise reproduces `dgn.graphic_group` and the
+`0x0600` / `0x00C0` flag bits the reader records.
 Strings default to UTF-16; `codepage="windows-1254"` selects explicit legacy
-Turkish text encoding and codepage linkage. Names use UTF-16. Unrepresentable
+Turkish text encoding and, on text elements, the code page linkage as MicroStation
+writes it. Text payloads and name linkages count no terminator; tag values end with a
+counted NUL. Names use UTF-16. Unrepresentable
 characters fail. IDs and tag owner dependencies are assigned together. DGN tag
 integers are restricted to the on-disk signed 32-bit range. A tag definition has one
 value type, so when any integer value of a (tag set, tag) pair exceeds that range,
@@ -545,7 +583,8 @@ an entity's explicit `dgn.weight` takes precedence over the neutral layer's
 `dgn.weight`. A millimetre-only weight has no universal DGN index mapping and
 requires explicit caller conversion. Nonzero font indexes must be in the seed's
 font table or actually referenced by seed Text/TextNode records; font zero is
-the implicit default. A named style must agree with its numeric font index.
+the default when a text names neither a style nor a number (before 0.3.0 the first
+table entry by name was taken, an arbitrary seed font). A named style must agree with its numeric font index.
 Line-style indexes must refer to the seed's tables. Existing seed level settings are retained;
 writing arbitrary neutral level flags, custom fonts/linetypes, CAD props and
 layout/application semantics is not implemented. This is new geometry export,

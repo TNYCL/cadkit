@@ -6,6 +6,44 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+DGN V8 output that MicroStation draws: element ranges, string lengths and displayed tags
+now follow the layout of MicroStation and ODA files.
+
+### Changed
+
+- `Attribute` gains `layer`, `display` (`AttributeDisplay`: height, width, style,
+  alignment, rotation) and `props`; struct literals need the new fields or
+  `..Default::default()`. Serialized documents omit them when empty.
+- DGN reading returns each tag's own level, the presentation of displayed tags and the
+  tag symbology that differs from its target.
+- Raster frames are placed from their stored extent relative to the transform origin;
+  the `dgn.raster_extent_shared` warning, an artifact of reading that extent as a
+  corner, is gone.
+
+### Fixed
+
+- DGN V8 element ranges store the low corner and the extent for every graphic type, not
+  an absolute high corner; MicroStation skipped elements below zero, which read as
+  negative extents. The reader resolves ranges the same way.
+- DGN text payloads and string linkages no longer count a terminating NUL, which
+  MicroStation drew as an extra glyph; tag values keep their counted NUL.
+- The DGN code page linkage on text matches MicroStation byte for byte; tags no longer
+  carry it.
+- DGN text without a style or font number uses font 0 instead of the alphabetically
+  first seed font.
+- DGN cell headers write `1` at `0x6C` and absolute body bounds, as ODA and MicroStation
+  cells do.
+
+### Added
+
+- DGN displayed tags in MicroStation's layout: own level, origin at the owner's first
+  vertex with an offset to the display point, size, font, justification, text-box range
+  and the 56-byte tag target dependency.
+- `WriteOptions::preserve_seed_controls` (default on) keeps seed control records such as
+  the coordinate system and model settings, with their auxiliary data.
+- DGN writing reproduces graphic groups and MicroStation's undecoded `0x0600` property
+  and `0x00C0` type-word flags carried in entity props.
+
 ## [0.2.1] - 2026-10-05
 
 ### Fixed
