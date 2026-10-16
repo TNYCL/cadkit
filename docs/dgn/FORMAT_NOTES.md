@@ -601,9 +601,15 @@ promise exact target-font glyph bounds.
 
 **New raster attachments** (0.3.1). An `Image` without an `id`, with `path` and
 `size_px`, becomes a new attachment cloned from the first complete attachment group of
-the seed (`seed_has_raster_template` tells whether there is one; without it the write
-fails with `Unsupported("new DGN raster attachments need a seed raster attachment to
-clone")`). The template is captured from the parsed seed before `clear_seed_model` drops
+the seed (`seed_has_raster_template` tells whether there is one). Since 0.3.3 a seed
+without one gets a built-in group (`writer/raster_builtin.rs`): the bytes equal in all
+2,316 complete groups of the private corpus, and for the undecoded display fields that
+differ between files (frame `0x29`, `0x34`, `0x70`, `0xFE`, `0x12A`, `0x144`–`0x14B`;
+`0x20008` record `0x2A`–`0x3C`; 90 `0x28`; control levels) one combination observed
+together: bitonal display with foreground `FFFFFF` and background `000000`, frame
+colour 0 and weight 1, 200 DPI, control records on level 64. Its XAttribute pages take
+the format version of the new graphic pages (every observed file whose graphic pages
+are all version 3 has version 3 auxiliary pages). The template is captured from the parsed seed before `clear_seed_model` drops
 its records. Each image gets ten fresh ids above every seed id (94, 92, 93, 93, 90,
 91 × 5) and the group's records are copied with only these fields rewritten: every
 record's id and time; 90: the 92 id, string 3 = bare file name (`dgn.raster_file`, else

@@ -1,4 +1,4 @@
-//! New raster attachments cloned from a synthetic seed attachment group.
+//! New raster attachments cloned from a synthetic seed attachment group or the built-in one.
 //!
 //! The seed group follows the observed layout (FORMAT_NOTES, "Raster attachments"): control
 //! records 92, 93, 93, 90 and five 91, a 1024-byte frame 94 and an XAttribute 170 with
@@ -241,91 +241,118 @@ fn new_attachments_read_back_as_written() {
         let seed = template_seed(three);
         assert!(crate::seed_has_raster_template(&seed, &ReadOptions::default()).unwrap());
         let written = attachments();
-        let doc = document(three, written.clone());
-        let output = write_v8(&doc, &seed, &clear()).unwrap();
-        let reread = crate::read(&output, &ReadOptions::default()).unwrap();
-        assert!(
-            reread
-                .warnings
-                .iter()
-                .all(|w| !w.code.starts_with("dgn.raster")),
-            "{:?}",
-            reread.warnings
-        );
-        let images = &reread.models[0].entities;
+        let output = write_v8(&document(three, written.clone()), &seed, &clear()).unwrap();
+        assert_read_back(&output, &written);
+    }
+}
+
+#[test]
+fn seeds_without_an_attachment_use_the_builtin_group() {
+    let read = ReadOptions::default();
+    for three in [false, true] {
+        let plain = seed(three);
+        assert!(!crate::seed_has_raster_template(&plain, &read).unwrap());
+        let written = attachments();
+        let output = write_v8(&document(three, written.clone()), &plain, &clear()).unwrap();
+        assert_read_back(&output, &written);
+        // The output's groups are the built-in records with the documented fields written.
+        let native = v8::read(&output, &read).unwrap();
+        let model = &native.models[0];
+        let builtin = crate::writer::raster_template::Template::builtin(3).unwrap();
+        let captured = crate::writer::raster_template::Template::capture(model).unwrap();
         assert_eq!(
-            images.len(),
-            written.len(),
-            "the seed line and frame are cleared"
+            captured.aux_version,
+            model.graphic_pages[0].header.format_version
         );
-        for (got, want) in images.iter().zip(&written) {
-            let (
-                EntityKind::Image {
-                    path,
-                    position,
-                    u_vector,
-                    v_vector,
-                    size_px,
-                },
-                EntityKind::Image {
-                    path: want_path,
-                    position: want_position,
-                    u_vector: want_u,
-                    v_vector: want_v,
-                    size_px: want_size,
-                },
-            ) = (&got.kind, &want.kind)
-            else {
-                panic!("not an image: {:?}", got.kind);
-            };
-            let want_path = want_path.as_deref().unwrap();
-            let url = if want_path.starts_with("file://") {
-                want_path.to_owned()
-            } else {
-                format!("file://{want_path}")
-            };
-            // The stored path is the `file://` form of the given path.
-            assert_eq!(path.as_deref(), Some(url.as_str()));
-            assert_eq!(text(got, "dgn.raster_path").as_deref(), Some(url.as_str()));
-            let name = want_path.rsplit('\\').next().unwrap();
-            assert_eq!(text(got, "dgn.raster_file").as_deref(), Some(name));
-            assert_eq!(size_px, want_size);
-            let scale = want_u.length().max(want_position.x.abs());
-            assert!(close(position.x, want_position.x, scale));
-            assert!(close(position.y, want_position.y, scale));
-            assert!(close(position.z, want_position.z, scale));
-            assert!(same_vec(*u_vector, *want_u), "{u_vector:?} {want_u:?}");
-            assert!(same_vec(*v_vector, *want_v), "{v_vector:?} {want_v:?}");
-            assert_eq!(got.layer.as_deref(), Some("Default"));
-            let dpi = if want.props.contains_key("dgn.raster_dpi") {
-                300.0
-            } else {
-                200.0
-            };
-            assert_eq!(float(got, "dgn.raster_dpi"), Some(dpi));
-            assert!(!got.props.contains_key("dgn.raster_dpi_y"));
-            let rotation = want_u.y.atan2(want_u.x);
-            assert!(close(
-                float(got, "dgn.raster_rotation").unwrap(),
-                rotation,
-                1.0
-            ));
-            assert!(got.visible);
-        }
-        // Y axis angle - X axis angle - 90 degrees: the sheared frame leans left.
-        let skew = float(&images[2], "dgn.raster_skew").unwrap();
-        assert!(
-            close(skew, -2f64.atan2(15.0) - 5f64.atan2(30.0), 1.0),
-            "{skew}"
-        );
+        assert!(captured.same_constants(&builtin), "{captured:?}");
+    }
+}
+
+/// `output` holds `written` as new attachments: path, name, placement, resolution, level,
+/// no raster warning, and complete groups that can serve as a template again.
+fn assert_read_back(output: &[u8], written: &[Entity]) {
+    let reread = crate::read(output, &ReadOptions::default()).unwrap();
+    assert!(
+        reread
+            .warnings
+            .iter()
+            .all(|w| !w.code.starts_with("dgn.raster")),
+        "{:?}",
+        reread.warnings
+    );
+    let images = &reread.models[0].entities;
+    assert_eq!(
+        images.len(),
+        written.len(),
+        "the seed line and frame are cleared"
+    );
+    for (got, want) in images.iter().zip(written) {
+        let (
+            EntityKind::Image {
+                path,
+                position,
+                u_vector,
+                v_vector,
+                size_px,
+            },
+            EntityKind::Image {
+                path: want_path,
+                position: want_position,
+                u_vector: want_u,
+                v_vector: want_v,
+                size_px: want_size,
+            },
+        ) = (&got.kind, &want.kind)
+        else {
+            panic!("not an image: {:?}", got.kind);
+        };
+        let want_path = want_path.as_deref().unwrap();
+        let url = if want_path.starts_with("file://") {
+            want_path.to_owned()
+        } else {
+            format!("file://{want_path}")
+        };
+        // The stored path is the `file://` form of the given path.
+        assert_eq!(path.as_deref(), Some(url.as_str()));
+        assert_eq!(text(got, "dgn.raster_path").as_deref(), Some(url.as_str()));
+        let name = want_path.rsplit('\\').next().unwrap();
+        assert_eq!(text(got, "dgn.raster_file").as_deref(), Some(name));
+        assert_eq!(size_px, want_size);
+        let scale = want_u.length().max(want_position.x.abs());
+        assert!(close(position.x, want_position.x, scale));
+        assert!(close(position.y, want_position.y, scale));
+        assert!(close(position.z, want_position.z, scale));
+        assert!(same_vec(*u_vector, *want_u), "{u_vector:?} {want_u:?}");
+        assert!(same_vec(*v_vector, *want_v), "{v_vector:?} {want_v:?}");
+        assert_eq!(got.layer.as_deref(), Some("Default"));
+        let dpi = if want.props.contains_key("dgn.raster_dpi") {
+            300.0
+        } else {
+            200.0
+        };
+        assert_eq!(float(got, "dgn.raster_dpi"), Some(dpi));
+        assert!(!got.props.contains_key("dgn.raster_dpi_y"));
+        let rotation = want_u.y.atan2(want_u.x);
         assert!(close(
-            float(&images[1], "dgn.raster_skew").unwrap(),
-            0.0,
+            float(got, "dgn.raster_rotation").unwrap(),
+            rotation,
             1.0
         ));
-        // The output holds complete attachment groups again.
-        assert!(crate::seed_has_raster_template(&output, &ReadOptions::default()).unwrap());
+        assert!(got.visible);
     }
+    // Y axis angle - X axis angle - 90 degrees: the sheared frame leans left.
+    let skew = float(&images[2], "dgn.raster_skew").unwrap();
+    assert!(
+        close(skew, -2f64.atan2(15.0) - 5f64.atan2(30.0), 1.0),
+        "{skew}"
+    );
+    assert!(close(
+        float(&images[1], "dgn.raster_skew").unwrap(),
+        0.0,
+        1.0
+    ));
+    // The output holds complete attachment groups again.
+    assert!(crate::seed_has_raster_template(output, &ReadOptions::default()).unwrap());
 }
 
 #[test]
@@ -571,18 +598,8 @@ fn ascii_and_unicode_paths_use_their_observed_encodings() {
 }
 
 #[test]
-fn missing_template_and_invalid_attachments_are_reported() {
+fn invalid_attachments_are_reported() {
     let read = ReadOptions::default();
-    let plain = seed(false);
-    assert!(!crate::seed_has_raster_template(&plain, &read).unwrap());
-    let doc = document(false, vec![attachments().remove(0)]);
-    match write_v8(&doc, &plain, &clear()) {
-        Err(Error::Unsupported(m)) => assert_eq!(
-            m,
-            "new DGN raster attachments need a seed raster attachment to clone"
-        ),
-        other => panic!("{other:?}"),
-    }
     let seed = template_seed(false);
     let mut no_size = attachments().remove(0);
     if let EntityKind::Image { size_px, .. } = &mut no_size.kind {

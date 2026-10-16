@@ -1,4 +1,5 @@
-//! New raster attachments cloned from a raster attachment of the seed.
+//! New raster attachments cloned from a raster attachment of the seed, or from the built-in
+//! group of [`super::raster_builtin`] when the seed holds none.
 //!
 //! A MicroStation raster attachment is a fixed group of ten records and one XAttribute
 //! (FORMAT_NOTES, "Raster attachments"): control records 92, 93, 93, 90 and five 91 in
@@ -34,8 +35,6 @@ const PLACEMENT_MIN: usize = 0xb8;
 const CONTROLS: usize = 9;
 
 /// Errors with stable messages.
-pub(super) const NO_TEMPLATE: &str =
-    "new DGN raster attachments need a seed raster attachment to clone";
 const NEEDS_PATH_AND_SIZE: &str = "new DGN raster attachments need path and size_px";
 
 /// One complete raster attachment group of the seed, captured before the seed model is
@@ -105,6 +104,45 @@ impl Template {
             }
         }
         (0..controls.len()).find_map(|i| group(&controls, i, &frames, &xattributes))
+    }
+
+    /// The built-in group of [`super::raster_builtin`], for seeds that hold no attachment;
+    /// its XAttribute goes in auxiliary pages of format `aux_version`.
+    pub fn builtin(aux_version: u32) -> Result<Self> {
+        use super::raster_builtin as b;
+        let mut subs = Vec::with_capacity(XA_SUBS);
+        for (index, data) in (0u16..).zip(&b::XATTRIBUTE_SUBS) {
+            let data = data.bytes()?;
+            let mut head = [0u8; 16];
+            put(&mut head, 0, &index.to_le_bytes())?;
+            put(&mut head, 2, &XA_SUB_MAGIC.to_le_bytes())?;
+            let len = u16::try_from(data.len())
+                .map_err(|_| Error::LimitExceeded("DGN raster XAttribute string".into()))?;
+            put(&mut head, 8, &len.to_le_bytes())?;
+            put(&mut head, 10, &b::XATTRIBUTE_SUB_FLAGS.to_le_bytes())?;
+            subs.push((head, data));
+        }
+        let [option_a, option_b] = &b::OPTIONS;
+        Ok(Self {
+            frame: b::FRAME.bytes()?,
+            link: b::LINK.bytes()?,
+            link_root: b::LINK_ROOT,
+            options: [option_a.bytes()?, option_b.bytes()?],
+            reference: b::REFERENCE.bytes()?,
+            reference_dependency: b::REFERENCE_DEPENDENCY.bytes()?,
+            settings: b::SETTINGS
+                .iter()
+                .map(b::Sparse::bytes)
+                .collect::<Result<_>>()?,
+            placement: 0,
+            xattribute: XAttribute {
+                reserved: 0,
+                flags: b::XATTRIBUTE_FLAGS,
+                subs,
+                trailer: b::XATTRIBUTE_TRAILER.to_vec(),
+            },
+            aux_version,
+        })
     }
 
     /// Records of a new attachment for `e`: ids are `ids[0..10]` in the order 94, 92, 93,
@@ -567,5 +605,70 @@ impl Placement {
             f64_at(b, offset, v)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+impl Template {
+    /// Whether `self` and `other` agree outside the fields `instantiate` writes.
+    pub fn same_constants(&self, other: &Self) -> bool {
+        fn masked(b: &[u8], ranges: &[(usize, usize)]) -> Vec<u8> {
+            let mut b = b.to_vec();
+            for &(from, to) in [(0x10, 0x20)].iter().chain(ranges) {
+                b.iter_mut().take(to).skip(from).for_each(|x| *x = 0);
+            }
+            b
+        }
+        let same =
+            |a: &[u8], b: &[u8], ranges: &[(usize, usize)]| masked(a, ranges) == masked(b, ranges);
+        let frame = [(0x0c, 0x10), (0x38, 0x68), (0x78, 0xf8), (0x108, 0x118)];
+        let placement = [(0x28, 0x70), (0x88, 0xb8)];
+        let link = [(0x30, 0x38), (self.link_root, self.link_root + 8)];
+        let xattribute = |x: &XAttribute| {
+            let subs: Vec<_> = x
+                .subs
+                .iter()
+                .enumerate()
+                .map(|(i, (head, data))| {
+                    let head = masked(head, &[(8, 10)]);
+                    (
+                        head,
+                        if matches!(i, 3 | 4) {
+                            vec![]
+                        } else {
+                            data.clone()
+                        },
+                    )
+                })
+                .collect();
+            (x.reserved, x.flags, subs, x.trailer.clone())
+        };
+        same(&self.frame, &other.frame, &frame)
+            && self.link_root == other.link_root
+            && same(&self.link, &other.link, &link)
+            && self
+                .options
+                .iter()
+                .zip(&other.options)
+                .all(|(a, b)| same(a, b, &[]))
+            && same(
+                &self.reference,
+                &other.reference,
+                &[(0x04, 0x08), (0x38, 0x40)],
+            )
+            && same(
+                &self.reference_dependency,
+                &other.reference_dependency,
+                &[(12, 20)],
+            )
+            && self.placement == other.placement
+            && self.settings.len() == other.settings.len()
+            && self
+                .settings
+                .iter()
+                .zip(&other.settings)
+                .enumerate()
+                .all(|(i, (a, b))| same(a, b, if i == self.placement { &placement } else { &[] }))
+            && xattribute(&self.xattribute) == xattribute(&other.xattribute)
     }
 }

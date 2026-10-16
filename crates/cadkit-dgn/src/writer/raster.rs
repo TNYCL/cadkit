@@ -5,9 +5,10 @@
 //! those fields or leaving known dependencies pointing at regenerated graphic IDs. Control
 //! records that reference a seed graphic are only kept together with that graphic, which
 //! the writer can do for unchanged rasters alone. New attachments (images without an id)
-//! are cloned from a seed attachment instead ([`super::raster_template`]).
+//! are cloned from a seed attachment, or the built-in group, instead
+//! ([`super::raster_template`]).
 
-use super::raster_template::{NO_TEMPLATE, Template};
+use super::raster_template::Template;
 use super::{WriteOptions, compressed, encode::*};
 use crate::native::v8::{AuxPage, AuxRecord, PageHeader, RawElement, V8Model};
 use cadkit_core::{Document, Entity, EntityKind, Error, ReadOptions, Result};
@@ -76,8 +77,13 @@ impl Preserved {
             ));
         }
         let template = if new > 0 {
-            // Captured from the parsed seed, before its model records are dropped.
-            Some(Template::capture(model).ok_or_else(|| Error::Unsupported(NO_TEMPLATE.into()))?)
+            // Captured from the parsed seed, before its model records are dropped; a seed
+            // without an attachment gets the built-in group, its XAttribute paged like the
+            // new graphic pages.
+            Some(match Template::capture(model) {
+                Some(template) => template,
+                None => Template::builtin(super::graphic_page_version(model))?,
+            })
         } else {
             None
         };

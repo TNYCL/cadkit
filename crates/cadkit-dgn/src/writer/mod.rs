@@ -4,13 +4,14 @@ mod container;
 mod encode;
 mod polyline;
 mod raster;
+mod raster_builtin;
 mod raster_template;
 mod tables;
 mod text;
 
 use crate::{
     le,
-    native::v8::{self, AuxRecord, ModelHeader, PageHeader, RawElement},
+    native::v8::{self, AuxRecord, ModelHeader, PageHeader, RawElement, V8Model},
 };
 use cadkit_core::{
     Attribute, Document, Entity, EntityKind, Error, GroupKind, Limits, Point3, ReadOptions, Result,
@@ -41,8 +42,9 @@ pub struct WriteOptions {
     pub planarity_tolerance: f64,
     /// Preserve unchanged raster attachments from the same seed, including their
     /// opaque control and auxiliary records. Edited attachments are rejected; images
-    /// without an id are new attachments cloned from a seed attachment (see
-    /// [`seed_has_raster_template`]) whatever this option says.
+    /// without an id are new attachments cloned from a seed attachment, or from the
+    /// built-in group when the seed has none (see [`seed_has_raster_template`]), whatever
+    /// this option says.
     pub preserve_seed_rasters: bool,
     /// Keep the seed model's control records that reference no seed graphic (coordinate
     /// system, model settings and similar) with their auxiliary data, byte for byte.
@@ -71,18 +73,29 @@ pub fn repack_v8(seed: &[u8], options: &ReadOptions) -> Result<Vec<u8>> {
     container::rewrite(seed, &BTreeMap::new(), options)
 }
 
-/// Whether `seed` can receive new raster attachments: its single model holds at least one
-/// complete raster attachment (the records 92, 93, 93, 90, 91 x 5 in the control pages,
+/// Whether `seed` holds its own raster attachment template: its single model holds at least
+/// one complete raster attachment (the records 92, 93, 93, 90, 91 x 5 in the control pages,
 /// the frame 94 they point at and its XAttribute 170) that [`write_v8`] clones for every
-/// [`EntityKind::Image`] without an id. Seeds with several models return `false`, as
-/// `write_v8` accepts single-model seeds only. `Err` when the seed is not a readable
-/// DGN V8 file.
+/// [`EntityKind::Image`] without an id. Without one, `write_v8` clones a built-in group
+/// (bitonal display, 200 DPI unless `dgn.raster_dpi` is given) instead. Seeds with several
+/// models return `false`, as `write_v8` accepts single-model seeds only. `Err` when the
+/// seed is not a readable DGN V8 file.
 pub fn seed_has_raster_template(seed: &[u8], options: &ReadOptions) -> Result<bool> {
     let native = v8::read(seed, options)?;
     Ok(match native.models.as_slice() {
         [model] => raster_template::Template::capture(model).is_some(),
         _ => false,
     })
+}
+
+/// Format version of new graphic pages: the seed's first page version, else 3.
+fn graphic_page_version(model: &V8Model) -> u32 {
+    model
+        .graphic_pages
+        .first()
+        .map(|p| p.header.format_version)
+        .filter(|v| matches!(v, 2 | 3))
+        .unwrap_or(3)
 }
 
 fn compressed(bytes: &[u8]) -> Result<Vec<u8>> {
@@ -320,12 +333,7 @@ pub fn write_v8(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<V
             replacements.insert(stream.path.clone(), None);
         }
     }
-    let version = model
-        .graphic_pages
-        .first()
-        .map(|p| p.header.format_version)
-        .filter(|v| matches!(v, 2 | 3))
-        .unwrap_or(3);
+    let version = graphic_page_version(model);
     let record_pages = put_pages(
         &mut replacements,
         &format!("Dgn-Md/{}/Dgn^G", model.storage),
@@ -1048,7 +1056,7 @@ impl State<'_> {
             .rasters
             .template
             .as_ref()
-            .ok_or_else(|| Error::Unsupported(raster_template::NO_TEMPLATE.into()))?;
+            .ok_or_else(|| Error::invalid(0, "raster template missing for a new attachment"))?;
         let mut ids = [0u64; 10];
         for id in &mut ids {
             *id = self.tables.id()?;

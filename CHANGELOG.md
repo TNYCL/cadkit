@@ -6,6 +6,18 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-10-16
+
+DGN raster attachments can be written into seeds that hold none.
+
+### Added
+
+- New raster attachments no longer need a seed attachment to clone: a seed without one
+  gets a built-in attachment group made of the bytes every surveyed attachment shares,
+  with a bitonal display (white foreground, black background) and 200 DPI unless
+  `dgn.raster_dpi` is set. `seed_has_raster_template` still tells whether the seed's own
+  group is used.
+
 ## [0.3.2] - 2026-10-16
 
 DGN seeds with a second level table no longer move new elements to the wrong level.

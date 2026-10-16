@@ -343,3 +343,83 @@ fn private_seed_takes_a_new_raster_attachment() {
         assert_eq!(got.props.get(key), image.props.get(key));
     }
 }
+
+/// A private seed without raster attachments takes a new attachment from the built-in
+/// group: it reads back with the placement, pixel size, path and resolution it was written
+/// with, and the output holds a complete group.
+#[test]
+fn private_seed_without_rasters_takes_the_builtin_group() {
+    let read = ReadOptions::default();
+    let paths = common::private_dgn_paths();
+    let single = |p: &std::path::PathBuf, template: bool| {
+        let bytes = std::fs::read(p).ok()?;
+        if cadkit_dgn::seed_has_raster_template(&bytes, &read).ok()? != template {
+            return None;
+        }
+        let doc = cadkit_dgn::read(&bytes, &read).ok()?;
+        (doc.models.len() == 1).then_some((bytes, doc))
+    };
+    let Some((_, source)) = paths.iter().find_map(|p| single(p, true)) else {
+        return;
+    };
+    let Some((seed, mut doc)) = paths.iter().find_map(|p| single(p, false)) else {
+        return;
+    };
+    let mut image = source.models[0]
+        .entities
+        .iter()
+        .find(|e| matches!(e.kind, EntityKind::Image { .. }))
+        .unwrap()
+        .clone();
+    image.id = None;
+    image.attributes.clear();
+    image.layer = None;
+    doc.models[0].entities = vec![image.clone()];
+    let options = cadkit_dgn::WriteOptions {
+        clear_seed_model: true,
+        ..Default::default()
+    };
+    let output = cadkit_dgn::write_v8(&doc, &seed, &options).unwrap();
+    assert!(cadkit_dgn::seed_has_raster_template(&output, &read).unwrap());
+    let reread = cadkit_dgn::read(&output, &read).unwrap();
+    assert!(
+        reread
+            .warnings
+            .iter()
+            .all(|w| !w.code.starts_with("dgn.raster"))
+    );
+    let images: Vec<_> = reread.models[0]
+        .entities
+        .iter()
+        .filter(|e| matches!(e.kind, EntityKind::Image { .. }))
+        .collect();
+    assert_eq!(images.len(), 1);
+    let (
+        EntityKind::Image {
+            path,
+            position,
+            u_vector,
+            v_vector,
+            size_px,
+        },
+        EntityKind::Image {
+            path: want_path,
+            position: want_position,
+            u_vector: want_u,
+            v_vector: want_v,
+            size_px: want_size,
+        },
+    ) = (&images[0].kind, &image.kind)
+    else {
+        panic!()
+    };
+    assert_eq!(path, want_path);
+    assert_eq!(size_px, want_size);
+    let tol = 1e-6 * want_u.length().max(want_v.length());
+    assert!(common::dist(*position, *want_position) <= tol);
+    assert!(u_vector.minus(*want_u).length() <= tol);
+    assert!(v_vector.minus(*want_v).length() <= tol);
+    for key in ["dgn.raster_file", "dgn.raster_path", "dgn.raster_dpi"] {
+        assert_eq!(images[0].props.get(key), image.props.get(key));
+    }
+}
