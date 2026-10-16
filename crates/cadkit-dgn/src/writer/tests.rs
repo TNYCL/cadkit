@@ -7,6 +7,7 @@ use std::io::{Cursor, Read};
 mod application;
 mod microstation;
 mod raster;
+mod raster_template;
 mod regressions;
 mod text;
 

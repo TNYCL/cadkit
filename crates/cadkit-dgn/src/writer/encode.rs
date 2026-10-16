@@ -240,7 +240,12 @@ pub(super) fn utf16_unterminated(value: &str) -> Result<Vec<u8>> {
 }
 
 pub(super) fn string_link(id: u32, value: &str) -> Result<Vec<u8>> {
-    let text = utf16_unterminated(value)?;
+    string_link_bytes(id, &utf16_unterminated(value)?)
+}
+
+/// String linkage holding `text` as already encoded (`ff fd` + UTF-16LE or 8-bit bytes),
+/// zero padded to 8 bytes; its length counts no terminator.
+pub(super) fn string_link_bytes(id: u32, text: &[u8]) -> Result<Vec<u8>> {
     let size = (12 + text.len() + 7) & !7;
     if size > 512 {
         return Err(Error::LimitExceeded(
@@ -252,7 +257,7 @@ pub(super) fn string_link(id: u32, value: &str) -> Result<Vec<u8>> {
     put(&mut b, 2, &0x56d2u16.to_le_bytes())?;
     u32_at(&mut b, 4, id)?;
     u32_at(&mut b, 8, text.len() as u32)?;
-    put(&mut b, 12, &text)?;
+    put(&mut b, 12, text)?;
     Ok(b)
 }
 pub(super) fn dependency(app: u16, id: u64) -> Result<Vec<u8>> {

@@ -671,7 +671,7 @@ impl Mapper {
                 e.props.insert("dgn.point_string".into(), Value::Bool(true));
             }
             ElementData::RasterFrame { matrix, .. } => {
-                // Pixel-to-UOR matrix as stored; the image rectangle comes from the range.
+                // Pixel-to-UOR matrix as stored; the range only checks the placement.
                 if let Some([lo, hi]) = item.el.header.range {
                     let (a, b) = (xf.pt(lo), xf.pt(hi));
                     e.props.insert(
@@ -683,6 +683,19 @@ impl Mapper {
                     "dgn.raster_matrix".into(),
                     Value::List(matrix.iter().map(|v| Value::Float(*v)).collect()),
                 );
+                // `0x118` / `0x120`: horizontal and vertical resolution in dots per inch.
+                let dpi = crate::le::f64_at(item.raw, 0x118);
+                if let Some(x) = dpi {
+                    e.props.insert("dgn.raster_dpi".into(), Value::Float(x));
+                }
+                if let Some(y) = crate::le::f64_at(item.raw, 0x120).filter(|y| Some(*y) != dpi) {
+                    e.props.insert("dgn.raster_dpi_y".into(), Value::Float(y));
+                }
+                if let Some((rotation, skew)) = frame_angles(matrix) {
+                    e.props
+                        .insert("dgn.raster_rotation".into(), Value::Float(rotation));
+                    e.props.insert("dgn.raster_skew".into(), Value::Float(skew));
+                }
                 let id = item.el.header.id.unwrap_or(0);
                 if let Some((name, full)) = self.raster_paths.get(&id) {
                     if let Some(n) = name {
@@ -873,34 +886,33 @@ impl Mapper {
     fn image(&mut self, item: &Item<'_>, xf: &Xf) -> EntityKind {
         let id = item.el.header.id.unwrap_or(0);
         let range = item.el.header.range;
-        let (matrix_placement, axes) = match &item.el.data {
-            ElementData::RasterFrame { matrix, corner } => {
-                let [m00, m01, _, _, m10, m11, _, _, m20, m21, ..] = *matrix;
-                (
-                    frame_placement(matrix, *corner),
-                    Some((Vec3::new(m00, m10, m20), Vec3::new(m01, m11, m21))),
-                )
-            }
-            _ => (None, None),
+        let (matrix_placement, pixels, axes) = match &item.el.data {
+            ElementData::RasterFrame { matrix, corner } => (
+                frame_placement(matrix, *corner),
+                frame_pixels(matrix, *corner),
+                Some(frame_axes(matrix)),
+            ),
+            _ => (None, None, None),
         };
-        // The element range is MicroStation's own bounding box: a matrix placement that does
-        // not fit inside it is rejected in favour of a placement derived from the range.
-        let placement = match (matrix_placement, range) {
+        // The element range is MicroStation's own bounding box. It only checks the matrix
+        // placement: one that does not fit inside it is replaced by a placement derived from
+        // the range, and the pixel size is then not trusted either.
+        let (placement, size_px) = match (matrix_placement, range) {
             (Some(p), Some(r)) if !within_range(&p, &r, RASTER_RANGE_TOLERANCE) => {
                 self.note("dgn.raster_outside_range", || {
                     "raster transform places the image outside its element range; the range was used"
                         .into()
                 });
-                Some(range_placement(&r, axes))
+                (Some(range_placement(&r, axes)), None)
             }
-            (Some(p), _) => Some(p),
+            (Some(p), _) => (Some(p), pixels),
             (None, Some(r)) => {
                 self.note("dgn.raster_range_placement", || {
                     "raster frame placed from its range (no usable transform)".into()
                 });
-                Some(range_placement(&r, axes))
+                (Some(range_placement(&r, axes)), None)
             }
-            (None, None) => None,
+            (None, None) => (None, None),
         };
         let Some((origin, u, v)) = placement else {
             return EntityKind::Unknown {
@@ -921,7 +933,7 @@ impl Mapper {
             position: xf.pt(origin),
             u_vector: tidy(u.scaled(xf.scale)),
             v_vector: tidy(v.scaled(xf.scale)),
-            size_px: None,
+            size_px,
         }
     }
 
@@ -1109,30 +1121,63 @@ fn curve(points: &[UorPoint], xf: &Xf) -> EntityKind {
     }
 }
 
+/// Pixel X and Y axes of a raster frame matrix (row-major 4x4): its first two columns,
+/// one pixel long each, in UOR.
+pub(crate) fn frame_axes(m: &[f64; 16]) -> (Vec3, Vec3) {
+    let [m00, m01, _, _, m10, m11, _, _, m20, m21, ..] = *m;
+    (Vec3::new(m00, m10, m20), Vec3::new(m01, m11, m21))
+}
+
 /// Raster frame placement from its pixel-to-UOR matrix (row-major, translation in the
-/// last column): the image starts at the translation and its edges follow the matrix X / Y
-/// columns, scaled so that the frame reaches its stored extent corner. Handles rotated and
-/// sheared frames; `None` when the corner is missing or the system is degenerate.
+/// last column) and its edge lengths (`0x108`/`0x110`, UOR): the image starts at the
+/// translation (its lower-left corner) and its edges run along the unit matrix X / Y
+/// columns for those lengths, `u = â·ext_x`, `v = b̂·ext_y`. The lengths are measured
+/// along the image axes (width·|a| and height·|b|), not as an XY extent, so rotated and
+/// sheared frames need no solving. `None` when an axis or a length is degenerate.
 pub(crate) fn frame_placement(
     m: &[f64; 16],
-    corner: Option<[f64; 2]>,
+    edges: Option<[f64; 2]>,
 ) -> Option<(UorPoint, Vec3, Vec3)> {
-    let [m00, m01, _, m03, m10, m11, _, m13, m20, m21, _, m23, ..] = *m;
-    let a = Vec3::new(m00, m10, m20);
-    let b = Vec3::new(m01, m11, m21);
-    // `0x108`/`0x110` is the frame's extent from its origin (the same values as the
-    // element range extent on the private sample), not an absolute corner.
-    let [dx, dy] = corner?;
-    let det = a.x * b.y - a.y * b.x;
-    if !det.is_finite() || det.abs() <= 1e-12 * a.length() * b.length() {
+    let [_, _, _, m03, _, _, _, m13, _, _, _, m23, ..] = *m;
+    let (a, b) = frame_axes(m);
+    let [ex, ey] = edges?;
+    if !(ex.is_finite() && ey.is_finite() && ex > 0.0 && ey > 0.0) {
         return None;
     }
-    let w = (dx * b.y - dy * b.x) / det;
-    let h = (a.x * dy - a.y * dx) / det;
-    if !(w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0) {
+    let (ua, ub) = (a.normalized()?, b.normalized()?);
+    // Parallel axes span no rectangle.
+    if ua.cross(ub).length() <= 1e-9 {
         return None;
     }
-    Some(([m03, m13, m23], a.scaled(w), b.scaled(h)))
+    if ![m03, m13, m23].iter().all(|v| v.is_finite()) {
+        return None;
+    }
+    Some(([m03, m13, m23], ua.scaled(ex), ub.scaled(ey)))
+}
+
+/// Pixel size of a raster frame: its edge lengths over the pixel lengths `|a|` and `|b|`
+/// of the matrix axes, rounded. `None` when that is not a positive `u32`.
+pub(crate) fn frame_pixels(m: &[f64; 16], edges: Option<[f64; 2]>) -> Option<[u32; 2]> {
+    let (a, b) = frame_axes(m);
+    let [ex, ey] = edges?;
+    let count = |edge: f64, axis: Vec3| {
+        let n = (edge / axis.length()).round();
+        (n.is_finite() && n >= 1.0 && n <= f64::from(u32::MAX)).then_some(n as u32)
+    };
+    Some([count(ex, a)?, count(ey, b)?])
+}
+
+/// Rotation of the image X axis and skew of its Y axis from the perpendicular, both in
+/// the XY plane, in radians within (-π, π].
+fn frame_angles(m: &[f64; 16]) -> Option<(f64, f64)> {
+    let (a, b) = frame_axes(m);
+    if a.normalized().is_none() || b.normalized().is_none() {
+        return None;
+    }
+    let rotation = a.y.atan2(a.x);
+    let skew = b.y.atan2(b.x) - rotation - FRAC_PI_2;
+    let skew = skew.sin().atan2(skew.cos());
+    (rotation.is_finite() && skew.is_finite()).then_some((rotation, skew))
 }
 
 /// Most XAttribute kinds listed on one entity (the count is always complete).
@@ -1529,23 +1574,46 @@ mod tests {
 
     #[test]
     fn raster_placement_follows_the_matrix() {
-        // 30 degree rotation, 2 UOR per pixel, translation (100, 50); a 300 x 200 pixel image.
-        // The frame stores its extent from the translation (rotated frames unverified).
+        // 30 degree rotation, 2 UOR per pixel, translation (100, 50); a 300 x 200 pixel
+        // image. `0x108`/`0x110` hold the edge lengths along the image axes (W·|a|, H·|b|).
         let (s, c) = 30f64.to_radians().sin_cos();
         let (a, b) = ([2.0 * c, 2.0 * s], [-2.0 * s, 2.0 * c]);
         let m = [
             a[0], b[0], 0.0, 100.0, a[1], b[1], 0.0, 50.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
         ];
-        let corner = [300.0 * a[0] + 200.0 * b[0], 300.0 * a[1] + 200.0 * b[1]];
-        let (o, u, v) = frame_placement(&m, Some(corner)).unwrap();
+        let edges = [600.0, 400.0];
+        let (o, u, v) = frame_placement(&m, Some(edges)).unwrap();
         assert_eq!(o, [100.0, 50.0, 0.0]);
         assert!(close(u.x, 600.0 * c) && close(u.y, 600.0 * s));
         assert!(close(v.x, -400.0 * s) && close(v.y, 400.0 * c));
+        assert_eq!(frame_pixels(&m, Some(edges)), Some([300, 200]));
+        let (rotation, skew) = frame_angles(&m).unwrap();
+        assert!(close(rotation, 30f64.to_radians()) && close(skew, 0.0));
         assert!(frame_placement(&m, None).is_none());
+        assert!(frame_placement(&m, Some([0.0, 400.0])).is_none());
         let mut flat = m;
         flat[1] = flat[0];
         flat[5] = flat[4];
-        assert!(frame_placement(&flat, Some(corner)).is_none(), "degenerate");
+        assert!(frame_placement(&flat, Some(edges)).is_none(), "degenerate");
+    }
+
+    #[test]
+    fn sheared_raster_frames_keep_their_axes() {
+        // X axis 3 UOR per pixel along +X; Y axis 2 UOR per pixel tilted 10 degrees left of
+        // +Y. The Y edge runs along the tilted axis for H·|b| UOR.
+        let (s, c) = 10f64.to_radians().sin_cos();
+        let (a, b) = ([3.0, 0.0], [-2.0 * s, 2.0 * c]);
+        let m = [
+            a[0], b[0], 0.0, -5.0, a[1], b[1], 0.0, 7.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+        ];
+        let edges = [3.0 * 120.0, 2.0 * 80.0];
+        let (o, u, v) = frame_placement(&m, Some(edges)).unwrap();
+        assert_eq!(o, [-5.0, 7.0, 0.0]);
+        assert!(close(u.x, 360.0) && close(u.y, 0.0));
+        assert!(close(v.x, -160.0 * s) && close(v.y, 160.0 * c));
+        assert_eq!(frame_pixels(&m, Some(edges)), Some([120, 80]));
+        let (rotation, skew) = frame_angles(&m).unwrap();
+        assert!(close(rotation, 0.0) && close(skew, 10f64.to_radians()));
     }
 
     #[test]

@@ -10,7 +10,9 @@ Latest coverage follow-up: all 112 supplied DGN files now rewrite/read back with
 the compared geometry, attributes and layers preserved. All 56 CityGML-to-DGN
 projections also pass again. This includes unchanged seed-raster retention, not
 creation or modification of arbitrary raster attachments. See the coverage
-follow-up below and [direct library integration](CADKIT_INTEGRATION.md).
+follow-up below and [direct library integration](CADKIT_INTEGRATION.md). 0.3.1
+corrects raster frame placement and adds new attachments cloned from a seed
+attachment; see the [raster follow-up](#raster-attachment-follow-up-031).
 
 The subsequent generic GML follow-up adds closed-curve handling, exact circles,
 and explicit conversion diagnostics. All 112 DGN files produced XSD-valid generic
@@ -119,8 +121,8 @@ Results after the fixes:
 | DGN repack | 112/112, entity histograms identical |
 | CityGML validate, strict rewrite | 56/56 clean; structure counters unchanged |
 | CityGML → DGN, into each record's plan and 3D DGN as seed | 112/112. Group, shape and hole counts and all attribute values match. 511,753 rings match in order with a maximum coordinate deviation of 4.7e-10. Readback has no warnings. |
-| 3D DGN → DGN (own file as seed) | 49/56 with identical histograms; 6 non-baseline-left texts and 1 raster attachment are `Unsupported` |
-| Plan DGN → DGN / CityGML | 0/56: every plan has raster attachments (`Unsupported`) |
+| 3D DGN → DGN (own file as seed) | 49/56 with identical histograms; 6 non-baseline-left texts and 1 raster attachment are `Unsupported` (before seed-raster retention and 0.3.1 new attachments; not re-run) |
+| Plan DGN → DGN / CityGML | 0/56: every plan has raster attachments (`Unsupported` at the time; not re-run with 0.3.1) |
 | 3D DGN → CityGML | 26/56. Failures: 13 text, 11 self-intersecting rings, 5 degenerate exteriors and 1 raster. Every output passes `validate-gml`. |
 | DGN / CityGML → DXF, SVG | 168/168 |
 
@@ -206,6 +208,17 @@ memory with `CADKIT_RASTER_CORPUS` and `CADKIT_RASTER_VERIFY=1`. It prints only
 aggregate structural results and never writes source or derived drawing files.
 No Cady source files, branches or commits were created or changed by this work.
 
+## Raster attachment follow-up (0.3.1)
+
+| Item | Status |
+|---|---|
+| Raster frame placement (read) | Fixed. `0x108`/`0x110` are edge lengths along the image axes; `u = â·ext_x`, `v = b̂·ext_y`. All 2,029 frames of the 567 private DGN files are placed from their matrix inside their own range; `dgn.raster_outside_range` and `dgn.raster_range_placement` no longer occur (0.3.0: 1,635 of the 1,742 frames of the 2D files). |
+| Raster pixel size, resolution, rotation, skew (read) | `size_px` from the edge lengths and pixel axes; `dgn.raster_dpi`, `dgn.raster_rotation`, `dgn.raster_skew` props. |
+| Unchanged seed attachments (write) | Retained byte for byte, as before. |
+| New attachments (write) | Supported when the seed holds a complete attachment group (`seed_has_raster_template`): the group is cloned and only documented fields are rewritten. Synthetic round trips (2D/3D, rotated, sheared, shared file, non-ASCII path) and one private seed read back at the written placement with no raster warning. |
+| Edited seed attachments, new attachments without a seed template, mixing kept and new attachments | `Unsupported`. |
+| MicroStation / CityMax opening of new attachments | **Untested.** The cloned records keep every undecoded template field; whether MicroStation re-derives anything from them is unknown. |
+
 ## External acceptance and limitations
 
 No external test environment is currently available. MicroStation opening,
@@ -218,8 +231,8 @@ supports the documented entity subset, not every neutral CAD entity. Unknown see
 streams are retained and can contain opaque references. Unsupported geometry,
 unrepresentable colors/text and invalid options return errors instead of silently
 discarding those entities. Arbitrary CAD tables and application metadata are not
-fully mapped to DGN. V7 writing and new/edited raster attachments are unsupported;
-vendor SDKs are excluded. Retaining an unchanged attachment does not embed its
+fully mapped to DGN. V7 writing and edited raster attachments are unsupported; new
+attachments need a seed attachment to clone; vendor SDKs are excluded. Retaining an unchanged attachment does not embed its
 external image or prove that the referenced image is available to a recipient.
 
 CityGML native preservation supports the documented CityGML 2.0 profile. It does

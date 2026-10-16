@@ -171,9 +171,8 @@ store 3 doubles and a quaternion `(w, x, y, z)`. All coordinates are UOR doubles
 | 26, 28 knots / weights | doubles after the `0x20` prefix (unverified, no sample) | — |
 | 37 tag | `0xA0` origin (3 doubles), `0xB8` offset (3 doubles), `0xD0` u16 tag number, `0xD2` u16 value type, `0xF0`/`0xF8` text multipliers, `0x138` u32 value length, `0x140` value; set = dependency `0x2717`, target = dependency `0x2710`; displayed tags: see "Displayed tags" below | TreeText (13,808 tags, 2D) and private sample (418 tags, 3D) — same offsets for 2D and 3D |
 | 39 tag set definition | `0x28` magic `teSt`, `0x2C` u32 (`0xF81` in every set), `0x30` u32 (varies), `0x34` u32 definitions length, `0x38` u32 same, `0x3C` definitions (V7 layout below), set name = string linkage 1 | TreeText (1 set), private sample (8 sets) |
-| 94 raster frame | `0x78` 4×4 row-major pixel-to-UOR matrix (translation in column 3; observed: 62.65 UOR/pixel, translation = range low), `0xF0` m33 = 1, `0x108`/`0x110` frame extent from the translation (UOR, = the element range extent), `0x118`/`0x120` 200/200 (DPI?), `0x140` u32 768, 768 (unknown); the same values are repeated in a type-91 control record (`0x28` low corner, `0x40` corner, `0x60`/`0x68` DPI, `0x88`/`0xA8` scale) | private sample (8 frames of one raster file: one size, eight places) |
-| 90 raster attachment (control) | string linkage 3 = file name (8-bit), `0x1F` = full path/URL (UTF-16) | private sample |
-| 92 raster link (control) | `0x30` u64 id of the type-90 element; dependency `0x271B` (root type 3) → frame (94) id | private sample (all 8 frames resolve) |
+| 94 raster frame | see [Raster attachments](#raster-attachments) | private corpus (2,029 frames) |
+| 90, 91, 92, 93 raster attachment (control) | see [Raster attachments](#raster-attachments) | private corpus |
 | 96 table header | `0x0C` table number (1 levels, 2 fonts, 4 level filters, …), `0x20` u32 entry count | all V8 samples |
 | 95 table entry, table 1 (level) | `0x20` u32 level id, `0x24` u32 parent (`ffffffff` none), `0x28` u32 flags (raw), name = string linkage 1, description = 2 | test_dgnv8 ("Default" = 64), TreeText (2 levels), private (370) |
 | 95 table entry, table 2 (font) | `0x28` u32 font number, `0x2C` u16 name bytes, `0x2E` UTF-16 name | test_dgnv8 ("Arial" = 1024) |
@@ -227,6 +226,61 @@ files) with the layout below; offsets from the element start.
 | after the value | 10 bytes, then the linkages at a 2-byte boundary: set dependency (24 bytes), target dependency (56 bytes, root type 9) |
 
 Hidden tags written by MicroStation (TreeText) leave the range empty.
+
+### Raster attachments
+
+Evidence: own hex analysis of the private corpus (567 MicroStation V8 files, 2,029 frames,
+every one linking an external TIF by path; no raster bytes are embedded). Every
+attachment is the same group of ten records and one XAttribute:
+
+| Where | Records |
+|---|---|
+| `Dgn^C` (control), consecutive | 92, 93 (`0x1000C`), 93 (`0x1000D`), 90, then five 91: `0x20007`, `0x20008`, `0x10009` (rarely `0x1000A`), `0x1000B`, `0x1000B` |
+| graphic page `$n` | 94 frame (1,024 bytes, no linkages, never a complex component) |
+| `Dgn^GA/$n`, same `n` as the frame's graphic page | XAttribute kind 170 on the frame |
+
+In most groups the ids are consecutive in the order 94, 92, 93, 93, 90, 91 × 5. Cross
+links: `90.0x38` = id of the 92 and `92.0x30` = id of the 90; both carry a dependency
+linkage `0x271B` (value 1, root type 3, one root) whose root is the frame id. No other
+field of the group holds an id: comparing the groups that show one raster file in one
+file, the records differ only in their id, time, the cross ids, the roots, the
+placement fields below and the path strings.
+
+94 frame (offsets from the element start):
+
+| Offset | Content |
+|---|---|
+| `0x0C` | level (observed on several levels, mostly the default level) |
+| `0x28` | property word `0x0A00` or `0x0E00` |
+| `0x38` / `0x50` | range: i64 low corner and i64 extent, like every graphic; it encloses the four image corners, rounded outwards to whole UOR (every bound within 1 UOR of a corner) |
+| `0x78` | 4×4 row-major pixel-to-UOR matrix: column 0 = pixel X axis `a`, column 1 = pixel Y axis `b` (one pixel long, UOR), column 2 = (0, 0, 1) in all but 10 groups, column 3 = translation = the image's lower-left corner; row 3 = (0, 0, 0, 1) |
+| `0x108` / `0x110` | f64 edge lengths along the image axes in UOR: width·`\|a\|` and height·`\|b\|` (not an XY extent: they equal the range extent only for unrotated frames) |
+| `0x118` / `0x120` | f64 horizontal / vertical resolution in DPI (equal in every group, mostly 200) |
+| `0x70`, `0xF8`, `0x128`, `0x140`–`0x150`, `0x358`–`0x3A0` | not decoded (`0x140`/`0x148` do not follow the TIF compression or photometry); copied |
+
+The image is `translation + s·â·ext_x + t·b̂·ext_y` for `s, t` in [0, 1], `â`, `b̂` the
+unit axes; its pixel size is `ext_x / |a|` × `ext_y / |b|`. With this reading all 2,029
+corpus frames lie inside their own range; reading `0x108`/`0x110` as an extent from the
+translation (cadkit 0.3.0) left 1,635 of the 1,742 frames of the 2D files outside their
+range or without a solvable placement.
+
+Control records:
+
+| Record | Content |
+|---|---|
+| 90 (linkages at `0x78`) | `0x38` u64 id of the 92; string linkage 3 = bare file name, 8-bit, no terminator; string linkage `0x1F` = `file://` + absolute drive path (`file://C:\…`, backslashes, never relative), stored 8-bit when ASCII and `ff fd` UTF-16 otherwise (some files store non-ASCII paths 8-bit in the locale code page); dependency `0x271B` → frame. Padding after a string may hold stale bytes |
+| 91 `0x20007` (184 bytes) | `0x28` origin (x, y, z) = matrix translation, `0x40`/`0x48` edge lengths = `0x108`/`0x110`, `0x50` rotation of `a` = atan2(a.y, a.x) in [0, 2π), `0x58` skew = atan2(b) − atan2(a) − π/2 in [0, 2π), `0x60`/`0x68` DPI, `0x70` u32 `0x20000000`, `0x88` `a` (x, y, z), `0xA0` `b` (x, y, z) |
+| 91 `0x20008`, `0x10009`/`0x1000A`, `0x1000B` × 2; 93 `0x1000C`, `0x1000D` | subtype at `0x20` (91) / `0x30` (93); contents not decoded and identical within a file apart from id and time; the `0x1000B` records hold short UTF-16 constants |
+| 92 (144 bytes) | `0x30` u64 id of the 90; dependency `0x271B` → frame (root at `0x84`) |
+
+XAttribute 170 payload: eight sub-records, each `u16` index (0..7), `u16` `0x570B`,
+`u32` 0, `u16` data length, `u16` `0x8000`, `u32` 0, then the data; a 4-byte trailer
+(`u32` 1) follows. Sub-record 3 holds the bare file name and 4 the `file://` path, both
+UTF-16LE without marker and with a counted NUL; sub-record 1 holds constants. The
+auxiliary record header carries reserved 0 and flags 8.
+
+`Dgn^GA/^AH` (4 bytes) is at least the highest auxiliary page number in every file and
+most often that number + 1; its exact meaning is unknown.
 
 ### Model index (`Dgn~Mix`, ezdgn, confirmed)
 
@@ -353,16 +407,20 @@ skipped (counted in `dgn.deleted_count`). Records without a display header and t
   props: symbology and flags that differ from the target's }` on the target entity (looked up by element
   id, also inside groups). Tags whose target is missing (and V7 tags) stay as
   `Unknown { "dgn.type_37" }` entities carrying the attribute (`dgn.tag_target_missing`).
-- **Raster frames (94)** → `Image`: `position` = matrix translation, `u_vector` /
-  `v_vector` = the matrix X / Y columns scaled so the frame spans its extent
-  (`0x108`/`0x110`, relative to the translation), which handles rotated or sheared frames. Consistency rule: the four
-  corners must lie inside the element range (MicroStation's own bounding box) within
-  4 UOR; otherwise the rectangle is rebuilt from the range — along the matrix axes when
-  that is solvable, else axis-aligned (`dgn.raster_outside_range`); without a transform
-  the range is used (`dgn.raster_range_placement`). Props: `dgn.range` (element range in
-  document units), `dgn.raster_matrix`, `dgn.raster_file`, `dgn.raster_path`. Path =
-  attachment full path, else file name. `size_px` stays `None` (pixel counts live in the
-  external raster).
+- **Raster frames (94)** → `Image`: `position` = matrix translation (lower-left image
+  corner), `u_vector = â·ext_x`, `v_vector = b̂·ext_y` with `â`, `b̂` the unit matrix X / Y
+  columns and `ext` the edge lengths at `0x108`/`0x110` (see
+  [Raster attachments](#raster-attachments)); `size_px = (round(ext_x/|a|),
+  round(ext_y/|b|))`. Rotated and sheared frames need no solving. The element range is
+  only a consistency check: when the four corners do not lie inside it within 4 UOR the
+  rectangle is rebuilt from the range — along the matrix axes when that is solvable, else
+  axis-aligned — and `size_px` is left `None` (`dgn.raster_outside_range`); without a
+  usable transform the range is used (`dgn.raster_range_placement`). Props: `dgn.range`
+  (element range in document units), `dgn.raster_matrix`, `dgn.raster_dpi` (`0x118`;
+  `dgn.raster_dpi_y` only when `0x120` differs), `dgn.raster_rotation` (angle of the image
+  X axis) and `dgn.raster_skew` (angle of the Y axis from the perpendicular), both in
+  radians in (−π, π] in the XY plane, `dgn.raster_file` (90 string 3), `dgn.raster_path`
+  (90 string `0x1F`, the `file://` URL). Path = attachment full path, else file name.
 - **Everything else** → `Unknown { "dgn.type_N" }` with `dgn.*` props; `keep_raw` stores the
   exact element bytes. Undecodable bodies keep their header/symbology and get
   `dgn.decode_problem`.
@@ -420,6 +478,7 @@ characters), and tag set definition strings are NUL-terminated.
 | TreeText | 6,904 text nodes, 12,623 texts, 13,808 tags all attached (2 per node, set "Trees", tags "Species" text / "Tree Count" integer) |
 | Water | 66,053 elements (66,035 line strings, 18 lines), no warnings |
 | private sample | 7 graphic pages, 2,032 records (1,533 shapes, 418 tags, 49 ellipses, 24 line strings, 8 raster frames); 418/418 tags attached with resolved set and tag names; 8/8 rasters linked to a path; 370 levels; no Unknown entities |
+| private corpus rasters | 567 files, 2,029 frames: every frame placed from its matrix inside its own range with a pixel size, no `dgn.raster_outside_range` / `dgn.raster_range_placement` (`tests/private_corpus.rs`); a corpus seed takes a new attachment whose records have the corpus record signature and which reads back at the source attachment's placement |
 | robustness | truncations and bit flips of every sample (`tests/robustness.rs`); mutations of the inflated pages repacked into new compound files (`src/fuzz_tests.rs`); V7 body stamping |
 
 ## Open questions
@@ -451,11 +510,11 @@ characters), and tag set definition strings are NUL-terminated.
 8. **Hidden flag** `0x0080` on tags (TreeText) is inferred from one file.
 9. **Text length estimate**: V7 rotated text and V8 text without a stored length use
    `characters × character width`, which is exact only for fixed-pitch fonts.
-10. **Raster extent** (resolved): `0x108`/`0x110` hold the frame extent from its
-    translation, the same values as the element range extent. The 8 frames of the private
-    sample show one raster file at one size in eight places; reading the extent as an
-    absolute corner had made them appear to share one corner. Rotated frames are not
-    sampled. No public sample contains a raster frame.
+10. **Raster extent** (resolved in 0.3.1): `0x108`/`0x110` hold the edge lengths along
+    the image axes (width·|a|, height·|b|). 0.3.0 read them as an XY extent from the
+    translation, which matched only exactly unrotated frames; 1,635 of the 1,742 frames
+    of the private 2D files then fell outside their range or could not be solved. No
+    public sample contains a raster frame.
 
 ## Seed-based V8 writer
 
@@ -518,7 +577,7 @@ Faces and meshes become shapes/cells. Polygons with holes become a cell with
 hole-marked shape components. Polygon rings must lie within
 `WriteOptions::planarity_tolerance` (default 0.01 source units, 1 cm in metres) of the
 exterior ring's plane; 1e-6 rejected every polygon with a hole in 0.1 mm-rounded
-CityGML sources. Shared-cell instances, new/edited raster attachments, splines,
+CityGML sources. Shared-cell instances, edited raster attachments, splines,
 hatches, dimensions, fitted/oblique text and nonzero polyline widths require
 explicit conversion and currently return `Unsupported`.
 
@@ -539,6 +598,31 @@ writes them) and `0x6C` holds 1. The model header keeps absolute corners. Text r
 enclose the rotated measured rectangle; measured advance and nominal height do not
 promise exact target-font glyph bounds.
 
+**New raster attachments** (0.3.1). An `Image` without an `id`, with `path` and
+`size_px`, becomes a new attachment cloned from the first complete attachment group of
+the seed (`seed_has_raster_template` tells whether there is one; without it the write
+fails with `Unsupported("new DGN raster attachments need a seed raster attachment to
+clone")`). The template is captured from the parsed seed before `clear_seed_model` drops
+its records. Each image gets ten fresh ids above every seed id (94, 92, 93, 93, 90,
+91 × 5) and the group's records are copied with only these fields rewritten: every
+record's id and time; 90: the 92 id, string 3 = bare file name (`dgn.raster_file`, else
+the last component of `path`), string `0x1F` = the `file://` URL (`path` as given when it
+already starts with `file://`, else `file://` + `path`; the path must be absolute), both
+8-bit when ASCII and `ff fd` UTF-16 otherwise, and the frame root; 92: the 90 id and the
+frame root; 91 `0x20007`: origin, edge lengths, rotation, skew, DPI and both axes; 94:
+level (from `layer`), hidden bit `0x80` (from `visible`), range, matrix (`a = u/W`,
+`b = v/H`, column 2 = unit normal of the image plane), edge lengths `|u|`, `|v|` and DPI
+(`dgn.raster_dpi` / `dgn.raster_dpi_y`, else the template's); XAttribute 170:
+sub-records 3 and 4 and their lengths. Everything else (symbology, the other 91/93
+records, the undecoded frame fields, the XAttribute constants) is the template's. Control
+records follow the retained seed controls in `Dgn^C`; each XAttribute goes to the
+`Dgn^GA/$n` page numbered like its frame's graphic page, and `Dgn^GA/^AH` is set to the
+highest such page + 1. The writer is the inverse of the reader: an attachment reads back
+with the same `position`, `u_vector`, `v_vector` (1e-6 relative), `size_px`, the
+`file://` form of its path and no raster warning. Mixing new attachments with preserved
+seed attachments (images that keep their id) in one write, new attachments inside groups,
+relative paths and strings longer than a 512-byte string linkage are rejected.
+
 `preserve_seed_rasters` (default true) retains unchanged attachments from the same
 seed. All image entities must have unique original IDs and unchanged geometry,
 paths, display properties and native props. Frame records (94), raster control
@@ -548,8 +632,8 @@ keeps every other seed control record (coordinate system, model settings and the
 and its auxiliary data byte for byte, unless the record holds the id of a seed graphic;
 the control auxiliary page counter is kept while all of its pages are. Incomplete auxiliary pages, mixed/new/deleted raster
 sets, or edited attachment settings are rejected. An output is still dependent
-on its external raster file; no raster bytes are embedded or fabricated. This is
-retention of existing attachments, not a new native raster encoder.
+on its external raster file; no raster bytes are embedded or fabricated. New attachments
+are clones of a seed attachment, not a general native raster encoder.
 
 Level names, tag sets and attached text/integer/double values are writable.
 Unnamed tag sets remain unnamed rather than being silently renamed to `CADKIT`.

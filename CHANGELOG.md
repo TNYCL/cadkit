@@ -6,6 +6,31 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-16
+
+DGN raster attachments: frames are placed the way MicroStation stores them, and new
+attachments can be written by cloning one from the seed.
+
+### Fixed
+
+- DGN raster frames read `0x108`/`0x110` as the edge lengths along the image axes
+  (width·|a|, height·|b|), not as an XY extent: `u_vector = â·ext_x`,
+  `v_vector = b̂·ext_y`. Rotated and sheared frames no longer fall back to their range;
+  `dgn.raster_outside_range` and `dgn.raster_range_placement` no longer occur on any
+  frame of the private corpus.
+
+### Added
+
+- DGN raster frames report `size_px` (edge lengths over the pixel axis lengths) and the
+  props `dgn.raster_dpi` (`dgn.raster_dpi_y` when it differs), `dgn.raster_rotation` and
+  `dgn.raster_skew` (radians).
+- `write_v8` writes an `Image` without an `id` (with `path` and `size_px`) as a new
+  raster attachment cloned from a complete attachment of the seed, rewriting only ids,
+  cross links, the file name and `file://` path, placement, resolution and level. Optional
+  props: `dgn.raster_file`, `dgn.raster_dpi`, `dgn.raster_dpi_y`.
+- `seed_has_raster_template(seed, &ReadOptions)` tells whether a seed can receive new
+  raster attachments.
+
 ## [0.3.0] - 2026-10-09
 
 DGN V8 output that MicroStation draws: element ranges, string lengths and displayed tags

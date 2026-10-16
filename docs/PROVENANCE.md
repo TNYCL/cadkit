@@ -70,6 +70,11 @@ Private client drawings in `corpus/private/` are used only for local, structural
   fields. New regression fixtures contain invented records only. Bulged-polyline
   decomposition uses the analytic `tan(sweep / 4)` convention already documented
   by cadkit-core; no additional external implementation was consulted.
+- DGN raster frame placement and new raster attachments (0.3.1) rest on own
+  structural hex analysis of the private corpus only (record sizes, subtypes, field
+  variation between attachments, cross ids, XAttribute 170 framing). New
+  attachments copy a seed attachment and rewrite only the fields that analysis
+  identified; tests use invented records. No external implementation was consulted.
 - `cadkit-core`'s existing serde_json workspace dependency is now used for a
   bounded streaming writer preflight; no new serialization format is introduced.
 - DGN V8 type-17 range writing uses own byte inspection of the existing public

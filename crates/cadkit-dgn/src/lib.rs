@@ -10,7 +10,7 @@
 pub mod cfb;
 pub mod native;
 pub mod writer;
-pub use writer::{WriteOptions, repack_v8, write_v8};
+pub use writer::{WriteOptions, repack_v8, seed_has_raster_template, write_v8};
 pub mod palette;
 
 mod budget;

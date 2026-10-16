@@ -33,6 +33,31 @@ pub fn private_files(sub: &str) -> Vec<Vec<u8>> {
         .collect()
 }
 
+/// Every `.dgn` file anywhere under `corpus/private`, sorted (empty when it is absent).
+/// Paths are only opened, never printed or asserted on.
+pub fn private_dgn_paths() -> Vec<PathBuf> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../corpus/private");
+    let mut out = Vec::new();
+    let mut todo = vec![(root, 0u32)];
+    while let Some((dir, depth)) = todo.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for path in entries.filter_map(|e| e.ok().map(|e| e.path())) {
+            if path.is_dir() && depth < 16 {
+                todo.push((path, depth + 1));
+            } else if path
+                .extension()
+                .is_some_and(|x| x.eq_ignore_ascii_case("dgn"))
+            {
+                out.push(path);
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
 pub fn prop_int(e: &Entity, key: &str) -> Option<i64> {
     match e.props.get(key) {
         Some(Value::Int(v)) => Some(*v),

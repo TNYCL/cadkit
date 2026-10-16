@@ -4,15 +4,20 @@
 //! which are not yet decoded. Retaining them with their original IDs avoids fabricating
 //! those fields or leaving known dependencies pointing at regenerated graphic IDs. Control
 //! records that reference a seed graphic are only kept together with that graphic, which
-//! the writer can do for unchanged rasters alone.
+//! the writer can do for unchanged rasters alone. New attachments (images without an id)
+//! are cloned from a seed attachment instead ([`super::raster_template`]).
 
+use super::raster_template::{NO_TEMPLATE, Template};
 use super::{WriteOptions, compressed, encode::*};
-use crate::native::v8::{AuxPage, RawElement, V8Model};
+use crate::native::v8::{AuxPage, AuxRecord, PageHeader, RawElement, V8Model};
 use cadkit_core::{Document, Entity, EntityKind, Error, ReadOptions, Result};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Default)]
 pub(super) struct Preserved {
+    /// Seed attachment that new attachments are cloned from; set when the document has
+    /// images without an id.
+    pub template: Option<Template>,
     frames: BTreeMap<u64, Vec<u8>>,
     auxiliary: Vec<AuxPage>,
     controls: Vec<Vec<u8>>,
@@ -33,15 +38,18 @@ fn references_graphics(raw: &RawElement, graphics: &BTreeSet<u64>) -> bool {
         .any(|o| crate::le::u64_at(b, o).is_some_and(|v| v != 0 && graphics.contains(&v)))
 }
 
-fn images(doc: &Document) -> Result<BTreeMap<u64, &Entity>> {
+/// Images with a seed id, by id, and the number of new images (without an id).
+fn images(doc: &Document) -> Result<(BTreeMap<u64, &Entity>, usize)> {
     let mut out = BTreeMap::new();
+    let mut new = 0usize;
     let mut todo: Vec<_> = doc.models.iter().flat_map(|m| &m.entities).collect();
     while let Some(e) = todo.pop() {
         match &e.kind {
             EntityKind::Image { .. } => {
-                let id = e.id.ok_or_else(|| {
-                    Error::Unsupported("new DGN raster attachments need a native encoder".into())
-                })?;
+                let Some(id) = e.id else {
+                    new += 1;
+                    continue;
+                };
                 if out.insert(id, e).is_some() {
                     return Err(Error::invalid(0, "duplicate raster entity ID"));
                 }
@@ -50,7 +58,7 @@ fn images(doc: &Document) -> Result<BTreeMap<u64, &Entity>> {
             _ => {}
         }
     }
-    Ok(out)
+    Ok((out, new))
 }
 
 impl Preserved {
@@ -61,8 +69,20 @@ impl Preserved {
         read: &ReadOptions,
         options: &WriteOptions,
     ) -> Result<Self> {
-        let requested = images(doc)?;
+        let (requested, new) = images(doc)?;
+        if new > 0 && !requested.is_empty() {
+            return Err(Error::Unsupported(
+                "mixing preserved seed rasters with new raster attachments is not supported".into(),
+            ));
+        }
+        let template = if new > 0 {
+            // Captured from the parsed seed, before its model records are dropped.
+            Some(Template::capture(model).ok_or_else(|| Error::Unsupported(NO_TEMPLATE.into()))?)
+        } else {
+            None
+        };
         let mut out = Self {
+            template,
             control_prefix: format!("Dgn-Md/{}/Dgn^C", model.storage),
             control_version: model
                 .control_pages
@@ -82,7 +102,7 @@ impl Preserved {
                 ));
             }
             let source = crate::read(seed, read)?;
-            let original = images(&source)?;
+            let (original, _) = images(&source)?;
             if requested.len() != original.len() {
                 return Err(Error::Unsupported(
                     "adding/removing seed rasters requires rewriting their native control graph"
@@ -242,47 +262,62 @@ impl Preserved {
         Ok((id, bytes.clone()))
     }
 
+    /// Writes the retained control records followed by `new_controls` (the control records
+    /// of new attachments) to the control pages, and the retained auxiliary pages.
     pub fn write_auxiliary(
         &self,
         replacements: &mut BTreeMap<String, Option<Vec<u8>>>,
+        new_controls: &[Vec<u8>],
     ) -> Result<()> {
-        if !self.controls.is_empty() {
+        if !self.controls.is_empty() || !new_controls.is_empty() {
+            let controls: Vec<Vec<u8>> =
+                self.controls.iter().chain(new_controls).cloned().collect();
             super::put_pages(
                 replacements,
                 &self.control_prefix,
-                &self.controls,
+                &controls,
                 self.control_version,
                 self.max_bytes,
             )?;
         }
         for page in &self.auxiliary {
-            let mut payload = Vec::new();
-            for a in &page.records {
-                let mut record = vec![0; 28];
-                u32_at(&mut record, 0, 0xa11b)?;
-                u32_at(
-                    &mut record,
-                    4,
-                    u32::try_from(a.payload.len())
-                        .map_err(|_| Error::LimitExceeded("raster auxiliary bytes".into()))?,
-                )?;
-                u32_at(&mut record, 8, a.kind)?;
-                u32_at(&mut record, 12, a.reserved)?;
-                u64_at(&mut record, 16, a.element_id)?;
-                u32_at(&mut record, 24, a.flags)?;
-                payload.extend(record);
-                payload.extend_from_slice(&a.payload);
-            }
-            let mut encoded = vec![0; 16];
-            let count = u32::try_from(page.records.len())
-                .map_err(|_| Error::LimitExceeded("raster auxiliary count".into()))?;
-            u32_at(&mut encoded, 0, count)?;
-            u32_at(&mut encoded, 4, page.header.format_version)?;
-            u32_at(&mut encoded, 8, page.header.page_number)?;
-            u32_at(&mut encoded, 12, count)?;
-            encoded.extend(compressed(&payload)?);
-            replacements.insert(page.path.clone(), Some(encoded));
+            replacements.insert(
+                page.path.clone(),
+                Some(aux_page(&page.records, page.header)?),
+            );
         }
         Ok(())
     }
+}
+
+/// An auxiliary page stream: the 16-byte page header (record count, format version, page
+/// number, population = record count) and the zlib-compressed records, each a 28-byte
+/// header (magic `0xA11B`, payload length, kind, reserved, element id, flags) + payload.
+pub(super) fn aux_page(records: &[AuxRecord], header: PageHeader) -> Result<Vec<u8>> {
+    let mut payload = Vec::new();
+    for a in records {
+        let mut record = vec![0; 28];
+        u32_at(&mut record, 0, 0xa11b)?;
+        u32_at(
+            &mut record,
+            4,
+            u32::try_from(a.payload.len())
+                .map_err(|_| Error::LimitExceeded("raster auxiliary bytes".into()))?,
+        )?;
+        u32_at(&mut record, 8, a.kind)?;
+        u32_at(&mut record, 12, a.reserved)?;
+        u64_at(&mut record, 16, a.element_id)?;
+        u32_at(&mut record, 24, a.flags)?;
+        payload.extend(record);
+        payload.extend_from_slice(&a.payload);
+    }
+    let mut encoded = vec![0; 16];
+    let count = u32::try_from(records.len())
+        .map_err(|_| Error::LimitExceeded("raster auxiliary count".into()))?;
+    u32_at(&mut encoded, 0, count)?;
+    u32_at(&mut encoded, 4, header.format_version)?;
+    u32_at(&mut encoded, 8, header.page_number)?;
+    u32_at(&mut encoded, 12, count)?;
+    encoded.extend(compressed(&payload)?);
+    Ok(encoded)
 }

@@ -182,3 +182,164 @@ fn known_sample(bytes: &[u8]) {
             .all(|e| prop_int(e, "dgn.level_id").is_some())
     );
 }
+
+/// Every raster frame of the private corpus is placed from its matrix and edge lengths
+/// (`0x108`/`0x110` along the image axes) and fits inside its own element range: neither
+/// range fallback is needed, and every frame knows its pixel size.
+#[test]
+fn private_raster_frames_fit_their_ranges() {
+    let mut images = 0usize;
+    for path in common::private_dgn_paths() {
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        let doc = cadkit_dgn::read(&bytes, &ReadOptions::default()).unwrap();
+        assert!(doc.warnings.iter().all(
+            |w| w.code != "dgn.raster_outside_range" && w.code != "dgn.raster_range_placement"
+        ));
+        for m in &doc.models {
+            let mut all = Vec::new();
+            for e in &m.entities {
+                common::walk(e, &mut all);
+            }
+            for e in all {
+                if let EntityKind::Image { size_px, .. } = &e.kind {
+                    images += 1;
+                    assert!(size_px.is_some_and(|[w, h]| w > 0 && h > 0));
+                    assert!(e.props.contains_key("dgn.raster_dpi"));
+                    assert!(e.props.contains_key("dgn.raster_rotation"));
+                }
+            }
+        }
+    }
+    if !common::private_dgn_paths().is_empty() {
+        assert!(images > 0);
+    }
+}
+
+/// A private seed with raster attachments takes a new attachment cloned from its own
+/// group: the new records have the corpus record signature, and the attachment reads back
+/// with the placement, pixel size and path of the attachment it was copied from.
+#[test]
+fn private_seed_takes_a_new_raster_attachment() {
+    let read = ReadOptions::default();
+    let Some((bytes, source)) = common::private_dgn_paths().into_iter().find_map(|p| {
+        let bytes = std::fs::read(p).ok()?;
+        if !cadkit_dgn::seed_has_raster_template(&bytes, &read).ok()? {
+            return None;
+        }
+        let doc = cadkit_dgn::read(&bytes, &read).ok()?;
+        (doc.models.len() == 1).then_some((bytes, doc))
+    }) else {
+        return;
+    };
+    let mut image = source.models[0]
+        .entities
+        .iter()
+        .find(|e| matches!(e.kind, EntityKind::Image { .. }))
+        .unwrap()
+        .clone();
+    image.id = None;
+    image.attributes.clear();
+    let mut doc = source.clone();
+    doc.models[0].entities = vec![image.clone()];
+    // As Cady writes: the seed model is cleared, its other control records are kept.
+    let options = cadkit_dgn::WriteOptions {
+        clear_seed_model: true,
+        ..Default::default()
+    };
+    let output = cadkit_dgn::write_v8(&doc, &bytes, &options).unwrap();
+
+    // Record signature against the seed's own groups.
+    let before = cadkit_dgn::native::v8::read(&bytes, &read).unwrap();
+    let after = cadkit_dgn::native::v8::read(&output, &read).unwrap();
+    let signature = |m: &cadkit_dgn::native::v8::V8Model| -> Vec<(u16, usize)> {
+        m.control_pages
+            .iter()
+            .flat_map(|p| &p.elements)
+            .filter(|r| (90..=93).contains(&r.type_code()))
+            .map(|r| {
+                (
+                    r.type_code(),
+                    if r.type_code() == 90 {
+                        0
+                    } else {
+                        r.bytes.len()
+                    },
+                )
+            })
+            .collect()
+    };
+    let (seed_sig, out_sig) = (signature(&before.models[0]), signature(&after.models[0]));
+    assert_eq!(out_sig.len(), 9);
+    assert!(seed_sig.windows(9).any(|w| w == out_sig.as_slice()));
+    let frames: Vec<_> = after.models[0]
+        .graphic_pages
+        .iter()
+        .flat_map(|p| &p.elements)
+        .filter(|r| r.type_code() == 94)
+        .collect();
+    assert_eq!(frames.len(), 1);
+    assert!(
+        before.models[0]
+            .graphic_pages
+            .iter()
+            .flat_map(|p| &p.elements)
+            .any(|r| r.type_code() == 94 && r.bytes.len() == frames[0].bytes.len())
+    );
+    let xattributes: Vec<_> = after.models[0]
+        .graphic_aux
+        .iter()
+        .flat_map(|p| &p.records)
+        .collect();
+    assert_eq!(xattributes.len(), 1);
+    assert_eq!(xattributes[0].kind, 170);
+    assert_eq!(Some(xattributes[0].element_id), frames[0].id());
+    // Eight sub-records: `u16` index, `u16` 0x570B, ..., `u16` length at +8.
+    let payload = &xattributes[0].payload;
+    let mut offset = 0usize;
+    for index in 0..8u16 {
+        let head = &payload[offset..offset + 16];
+        assert_eq!(u16::from_le_bytes([head[0], head[1]]), index);
+        assert_eq!(u16::from_le_bytes([head[2], head[3]]), 0x570b);
+        offset += 16 + usize::from(u16::from_le_bytes([head[8], head[9]]));
+    }
+    assert!(payload.len() - offset <= 16);
+
+    let reread = cadkit_dgn::read(&output, &read).unwrap();
+    assert!(
+        reread
+            .warnings
+            .iter()
+            .all(|w| !w.code.starts_with("dgn.raster"))
+    );
+    let got = &reread.models[0].entities[0];
+    let (
+        EntityKind::Image {
+            path,
+            position,
+            u_vector,
+            v_vector,
+            size_px,
+        },
+        EntityKind::Image {
+            path: want_path,
+            position: want_position,
+            u_vector: want_u,
+            v_vector: want_v,
+            size_px: want_size,
+        },
+    ) = (&got.kind, &image.kind)
+    else {
+        panic!()
+    };
+    assert_eq!(path, want_path);
+    assert_eq!(size_px, want_size);
+    let tol = 1e-6 * want_u.length().max(want_v.length());
+    assert!(common::dist(*position, *want_position) <= tol);
+    assert!(u_vector.minus(*want_u).length() <= tol);
+    assert!(v_vector.minus(*want_v).length() <= tol);
+    for key in ["dgn.raster_file", "dgn.raster_path", "dgn.raster_dpi"] {
+        assert_eq!(got.props.get(key), image.props.get(key));
+    }
+}

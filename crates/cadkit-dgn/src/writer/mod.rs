@@ -4,12 +4,13 @@ mod container;
 mod encode;
 mod polyline;
 mod raster;
+mod raster_template;
 mod tables;
 mod text;
 
 use crate::{
     le,
-    native::v8::{self, ModelHeader, RawElement},
+    native::v8::{self, AuxRecord, ModelHeader, PageHeader, RawElement},
 };
 use cadkit_core::{
     Attribute, Document, Entity, EntityKind, Error, GroupKind, Limits, Point3, ReadOptions, Result,
@@ -39,7 +40,9 @@ pub struct WriteOptions {
     /// drawing units. Defaults to 0.01 (1 cm for metres), allowing coordinate rounding.
     pub planarity_tolerance: f64,
     /// Preserve unchanged raster attachments from the same seed, including their
-    /// opaque control and auxiliary records. New or edited attachments are rejected.
+    /// opaque control and auxiliary records. Edited attachments are rejected; images
+    /// without an id are new attachments cloned from a seed attachment (see
+    /// [`seed_has_raster_template`]) whatever this option says.
     pub preserve_seed_rasters: bool,
     /// Keep the seed model's control records that reference no seed graphic (coordinate
     /// system, model settings and similar) with their auxiliary data, byte for byte.
@@ -66,6 +69,20 @@ pub fn repack_v8(seed: &[u8], options: &ReadOptions) -> Result<Vec<u8>> {
         return Err(Error::invalid(0, "DGN seed has no model"));
     }
     container::rewrite(seed, &BTreeMap::new(), options)
+}
+
+/// Whether `seed` can receive new raster attachments: its single model holds at least one
+/// complete raster attachment (the records 92, 93, 93, 90, 91 x 5 in the control pages,
+/// the frame 94 they point at and its XAttribute 170) that [`write_v8`] clones for every
+/// [`EntityKind::Image`] without an id. Seeds with several models return `false`, as
+/// `write_v8` accepts single-model seeds only. `Err` when the seed is not a readable
+/// DGN V8 file.
+pub fn seed_has_raster_template(seed: &[u8], options: &ReadOptions) -> Result<bool> {
+    let native = v8::read(seed, options)?;
+    Ok(match native.models.as_slice() {
+        [model] => raster_template::Template::capture(model).is_some(),
+        _ => false,
+    })
 }
 
 fn compressed(bytes: &[u8]) -> Result<Vec<u8>> {
@@ -232,6 +249,8 @@ pub fn write_v8(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<V
         rasters: &rasters,
         records: vec![],
         tags: vec![],
+        new_controls: vec![],
+        new_xattributes: vec![],
         work: 0,
         vertices: 0,
         bytes: rasters.bytes,
@@ -245,6 +264,8 @@ pub fn write_v8(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<V
         state.entity(entity, 0, false)?;
     }
     state.records.append(&mut state.tags);
+    let new_controls = std::mem::take(&mut state.new_controls);
+    let new_xattributes = std::mem::take(&mut state.new_xattributes);
     let records = state.records;
     let named = state.tables.finish(options.timestamp_ms)?;
     let max_id = records
@@ -305,14 +326,50 @@ pub fn write_v8(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<V
         .map(|p| p.header.format_version)
         .filter(|v| matches!(v, 2 | 3))
         .unwrap_or(3);
-    put_pages(
+    let record_pages = put_pages(
         &mut replacements,
         &format!("Dgn-Md/{}/Dgn^G", model.storage),
         &records,
         version,
         options.limits.max_decompressed_bytes,
     )?;
-    rasters.write_auxiliary(&mut replacements)?;
+    rasters.write_auxiliary(&mut replacements, &new_controls)?;
+    if let Some(template) = rasters
+        .template
+        .as_ref()
+        .filter(|_| !new_xattributes.is_empty())
+    {
+        // An XAttribute sits in the auxiliary page numbered like the graphic page of its
+        // element, as in every observed attachment.
+        let mut pages: BTreeMap<u32, Vec<AuxRecord>> = BTreeMap::new();
+        for (index, record) in new_xattributes {
+            let number = record_pages
+                .get(index)
+                .copied()
+                .ok_or_else(|| Error::invalid(0, "raster frame record outside the pages"))?;
+            pages.entry(number).or_default().push(record);
+        }
+        let mut last = 0;
+        for (number, records) in &pages {
+            let header = PageHeader {
+                record_count: 0,
+                format_version: template.aux_version,
+                page_number: *number,
+                population: 0,
+            };
+            replacements.insert(
+                format!("Dgn-Md/{}/Dgn^GA/${number}", model.storage),
+                Some(raster::aux_page(records, header)?),
+            );
+            last = *number;
+        }
+        // `^AH` is at least the highest page number in every observed file; the next free
+        // number is the most common value.
+        replacements.insert(
+            format!("Dgn-Md/{}/Dgn^GA/^AH", model.storage),
+            Some(last.saturating_add(1).to_le_bytes().to_vec()),
+        );
+    }
     if rasters.keep_control_counter {
         // Every control auxiliary page is retained as is; so is its page counter.
         replacements.remove(&format!("Dgn-Md/{}/Dgn^CA/^AH", model.storage));
@@ -391,13 +448,15 @@ pub fn write_v8(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<V
 #[cfg(test)]
 mod tests;
 
+/// Writes `records` to pages `{prefix}/$1`, `$2`, ... of at most 256 KiB and returns the
+/// page number of every record.
 fn put_pages(
     replacements: &mut BTreeMap<String, Option<Vec<u8>>>,
     prefix: &str,
     records: &[Vec<u8>],
     version: u32,
     max: u64,
-) -> Result<()> {
+) -> Result<Vec<u32>> {
     let total = records
         .iter()
         .try_fold(0u64, |sum, r| sum.checked_add(r.len() as u64 + 4))
@@ -408,6 +467,7 @@ fn put_pages(
     let mut first = 0;
     let mut bytes = 0usize;
     let mut number = 1u32;
+    let mut numbers = Vec::with_capacity(records.len());
     for (i, r) in records.iter().enumerate() {
         if bytes > 0 && bytes.saturating_add(r.len() + 4) > 256 * 1024 {
             replacements.insert(
@@ -421,12 +481,13 @@ fn put_pages(
                 .ok_or_else(|| Error::LimitExceeded("DGN page count".into()))?;
         }
         bytes = bytes.saturating_add(r.len() + 4);
+        numbers.push(number);
     }
     replacements.insert(
         format!("{prefix}/${number}"),
         Some(page(records.get(first..).unwrap_or(&[]), version, number)?),
     );
-    Ok(())
+    Ok(numbers)
 }
 
 /// An absent tag set is distinct from every explicitly named tag set.
@@ -476,6 +537,10 @@ struct State<'a> {
     rasters: &'a raster::Preserved,
     records: Vec<Vec<u8>>,
     tags: Vec<Vec<u8>>,
+    /// Control records of new raster attachments, in stored order.
+    new_controls: Vec<Vec<u8>>,
+    /// XAttributes of new raster frames with the index of the frame in `records`.
+    new_xattributes: Vec<(usize, AuxRecord)>,
     work: u64,
     vertices: u64,
     bytes: u64,
@@ -584,9 +649,14 @@ impl State<'_> {
 
     fn add(&mut self, b: Vec<u8>, tag: bool) -> Result<()> {
         self.bytes = self.bytes.saturating_add(b.len() as u64);
+        let new_rasters = self
+            .new_controls
+            .len()
+            .saturating_add(self.new_xattributes.len()) as u64;
         if self.bytes > self.options.limits.max_decompressed_bytes
             || (self.records.len().saturating_add(self.tags.len()) as u64)
                 .saturating_add(self.rasters.objects)
+                .saturating_add(new_rasters)
                 >= self.options.limits.max_objects
         {
             return Err(Error::LimitExceeded("DGN output record budget".into()));
@@ -607,6 +677,9 @@ impl State<'_> {
             .tables
             .level(e.layer.as_deref(), self.options.timestamp_ms)?;
         if matches!(e.kind, EntityKind::Image { .. }) {
+            if e.id.is_none() {
+                return self.new_raster(e, level, component);
+            }
             let (id, record) = self.rasters.frame(e, component)?;
             self.add(record, false)?;
             return self.attributes(e, id, level);
@@ -963,6 +1036,36 @@ impl State<'_> {
         }
         self.add(finish(b, &links)?, false)?;
         self.attributes(e, id, level)
+    }
+    /// A new raster attachment cloned from the seed template (see `raster_template`).
+    fn new_raster(&mut self, e: &Entity, level: u32, component: bool) -> Result<()> {
+        if component {
+            return Err(Error::Unsupported(
+                "new DGN raster attachments cannot be complex group components".into(),
+            ));
+        }
+        let template = self
+            .rasters
+            .template
+            .as_ref()
+            .ok_or_else(|| Error::Unsupported(raster_template::NO_TEMPLATE.into()))?;
+        let mut ids = [0u64; 10];
+        for id in &mut ids {
+            *id = self.tables.id()?;
+        }
+        let group = template.instantiate(e, ids, level, self.model, self.options.timestamp_ms)?;
+        let extra = group
+            .controls
+            .iter()
+            .map(|c| c.len() as u64)
+            .sum::<u64>()
+            .saturating_add(group.xattribute.payload.len() as u64 + 28);
+        self.bytes = self.bytes.saturating_add(extra);
+        let index = self.records.len();
+        self.new_controls.extend(group.controls);
+        self.new_xattributes.push((index, group.xattribute));
+        self.add(group.frame, false)?;
+        self.attributes(e, group.frame_id, level)
     }
     fn points(
         &mut self,
