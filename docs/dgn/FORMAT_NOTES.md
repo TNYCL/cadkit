@@ -175,6 +175,7 @@ store 3 doubles and a quaternion `(w, x, y, z)`. All coordinates are UOR doubles
 | 90, 91, 92, 93 raster attachment (control) | see [Raster attachments](#raster-attachments) | private corpus |
 | 96 table header | `0x0C` table number (1 levels, 2 fonts, 4 level filters, …), `0x20` u32 entry count | all V8 samples |
 | 95 table entry, table 1 (level) | `0x20` u32 level id, `0x24` u32 parent (`ffffffff` none), `0x28` u32 flags (raw), name = string linkage 1, description = 2 | test_dgnv8 ("Default" = 64), TreeText (2 levels), private (370) |
+| Second level table | Most private 3D files (261/293; plans 3/274) hold a second type-96 table-1 header in a later `Dgn^Nm` page with its own type-95 entries whose level ids repeat ids of the first table (1–9 and 64). Elements carry the id only; a reader that lets the later entry win shows them on the second table's level. The writer keeps the first definition of an id, renumbers later ones above the highest id and keeps one header | private structural count |
 | 95 table entry, table 2 (font) | `0x28` u32 font number, `0x2C` u16 name bytes, `0x2E` UTF-16 name | test_dgnv8 ("Arial" = 1024) |
 | 5 color table (level slot 1) | `0x20` u16 screen flag, `0x22` 256 RGB triples, first = color 255 (V7 order assumed), then u16 length + table file name | private sample (layout of the triples inferred from the trailing name) |
 | 36 | multi-line (assumed); not decoded → Unknown | oracle shows a 1-point line string |

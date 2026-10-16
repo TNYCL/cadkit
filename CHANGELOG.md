@@ -6,6 +6,19 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-10-16
+
+DGN seeds with a second level table no longer move new elements to the wrong level.
+
+### Fixed
+
+- Some seeds (most 3D files a CityMax-style post-processor wrote) hold a second level
+  table whose level codes repeat those of the first table. Elements store the code only,
+  so elements written on a first-table level read back, and displayed, on the second
+  table's level of the same code. The writer now keeps the first definition of each code,
+  moves later definitions to free codes above the highest one and keeps a single level
+  table header with the total count.
+
 ## [0.3.1] - 2026-10-16
 
 DGN raster attachments: frames are placed the way MicroStation stores them, and new

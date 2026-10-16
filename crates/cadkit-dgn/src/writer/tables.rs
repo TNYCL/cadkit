@@ -42,12 +42,50 @@ impl Tables {
             changed_sets: BTreeMap::new(),
         };
         let mut level_names = HashSet::new();
-        for raw in records {
-            let e = decode_v8::decode(
-                &raw,
+        let read_record = |raw: &RawElement| {
+            decode_v8::decode(
+                raw,
                 crate::text::encoding_for(read.fallback_codepage.as_deref()),
                 &read.limits,
-            );
+            )
+        };
+        let records: Vec<RawElement> = records.collect();
+        // Some seeds (files a 3D post-processor touched) carry a second level table
+        // whose codes repeat codes of the first one. Elements store the code only, so
+        // a repeated code makes readers show new elements on the other table's level.
+        // Later definitions of a code move to free codes after the highest one, and the
+        // extra table headers are dropped: the output has one table with unique codes.
+        let mut free_level = records
+            .iter()
+            .filter_map(|raw| match read_record(raw).data {
+                ElementData::Level(level) => Some(level.id),
+                _ => None,
+            })
+            .max()
+            .unwrap_or(0);
+        let mut level_codes = HashSet::new();
+        let mut level_header = false;
+        for mut raw in records {
+            let is_level_header = crate::le::u32_at(&raw.bytes, 0).map(|v| v & 0xffff) == Some(96)
+                && crate::le::u32_at(&raw.bytes, 12) == Some(1);
+            if is_level_header {
+                if level_header {
+                    continue;
+                }
+                level_header = true;
+            }
+            let mut e = read_record(&raw);
+            if let ElementData::Level(level) = &mut e.data
+                && !level_codes.insert(level.id)
+                && crate::le::u32_at(&raw.bytes, 0x20) == Some(level.id)
+            {
+                free_level = free_level
+                    .checked_add(1)
+                    .ok_or_else(|| Error::LimitExceeded("DGN levels".into()))?;
+                u32_at(&mut raw.bytes, 0x20, free_level)?;
+                level.id = free_level;
+                level_codes.insert(free_level);
+            }
             match e.data {
                 ElementData::Font { number, name } => {
                     out.fonts.insert(name, number);

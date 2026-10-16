@@ -217,6 +217,7 @@ No Cady source files, branches or commits were created or changed by this work.
 | Unchanged seed attachments (write) | Retained byte for byte, as before. |
 | New attachments (write) | Supported when the seed holds a complete attachment group (`seed_has_raster_template`): the group is cloned and only documented fields are rewritten. Synthetic round trips (2D/3D, rotated, sheared, shared file, non-ASCII path) and one private seed read back at the written placement with no raster warning. |
 | Edited seed attachments, new attachments without a seed template, mixing kept and new attachments | `Unsupported`. |
+| Seeds with a second level table (0.3.2) | 261 of the 293 private 3D DGN files and 3 of the 274 plan files hold a second level table that repeats level codes. The writer keeps the first definition of each code, moves later ones to free codes and keeps one table header, so new elements read back on their own level (synthetic regression). |
 | MicroStation / CityMax opening of new attachments | **Untested.** The cloned records keep every undecoded template field; whether MicroStation re-derives anything from them is unknown. |
 
 ## External acceptance and limitations

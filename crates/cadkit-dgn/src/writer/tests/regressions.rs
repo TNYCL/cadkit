@@ -297,3 +297,91 @@ fn literal_names_cannot_collide_with_generated_level_aliases() {
         (2, Some("Shared")),
     ]);
 }
+
+/// A seed whose second level table (as left by a 3D post-processor) repeats the codes of
+/// the first one: elements written on a first-table level must read back on that level.
+#[test]
+fn a_second_level_table_with_repeated_codes_cannot_capture_new_elements() {
+    let level = |id: u64, code: u32, name: &str| {
+        let mut b = prefix(95, 0x30, id, 1, 0.).unwrap();
+        u32_at(&mut b, 0x20, code).unwrap();
+        u32_at(&mut b, 0x24, u32::MAX).unwrap();
+        finish(b, &string_link(1, name).unwrap()).unwrap()
+    };
+    let header = |id: u64, count: u32| {
+        let mut b = prefix(96, 0x28, id, 1, 0.).unwrap();
+        u32_at(&mut b, 0x20, count).unwrap();
+        finish(b, &[]).unwrap()
+    };
+    let first = vec![
+        header(90, 3),
+        level(100, 1, "Frame"),
+        level(101, 2, "Area"),
+        level(102, 64, "Default"),
+    ];
+    let second = vec![
+        header(200, 2),
+        level(201, 1, "Temp"),
+        level(202, 2, "Surface"),
+    ];
+    let mut file = ::cfb::CompoundFile::open(Cursor::new(seed(false))).unwrap();
+    file.create_storage_all("Dgn^Nm").unwrap();
+    for (path, records) in [("Dgn^Nm/$1", &first), ("Dgn^Nm/$2", &second)] {
+        file.create_stream(path)
+            .unwrap()
+            .write_all(&page(records, 3, 1).unwrap())
+            .unwrap();
+    }
+    file.flush().unwrap();
+    let seed = file.into_inner().into_inner();
+
+    let mut doc = crate::read(&seed, &ReadOptions::default()).unwrap();
+    doc.models[0].entities = ["Frame", "Area"]
+        .into_iter()
+        .map(|name| {
+            let mut entity = line();
+            entity.layer = Some(name.into());
+            entity
+        })
+        .collect();
+    let bytes = write_v8(&doc, &seed, &WriteOptions::default()).unwrap();
+    let parsed = crate::read(&bytes, &ReadOptions::default()).unwrap();
+    let layers: Vec<_> = parsed.models[0]
+        .entities
+        .iter()
+        .map(|e| e.layer.clone().unwrap())
+        .collect();
+    assert_eq!(layers, ["Frame", "Area"]);
+
+    let native = v8::read(&bytes, &ReadOptions::default()).unwrap();
+    let records: Vec<_> = native
+        .named_pages
+        .iter()
+        .flat_map(|p| &p.elements)
+        .collect();
+    let headers: Vec<_> = records
+        .iter()
+        .filter(|e| {
+            crate::le::u32_at(&e.bytes, 0).map(|n| n & 0xffff) == Some(96)
+                && crate::le::u32_at(&e.bytes, 12) == Some(1)
+        })
+        .collect();
+    assert_eq!(headers.len(), 1, "one level table");
+    let codes: Vec<_> = records
+        .iter()
+        .filter(|e| e.type_code() == 95 && crate::le::u32_at(&e.bytes, 12) == Some(1))
+        .filter_map(|e| crate::le::u32_at(&e.bytes, 0x20))
+        .collect();
+    let unique: BTreeSet<_> = codes.iter().collect();
+    assert_eq!(
+        unique.len(),
+        codes.len(),
+        "level codes are unique: {codes:?}"
+    );
+    assert_eq!(
+        crate::le::u32_at(&headers[0].bytes, 0x20),
+        Some(codes.len() as u32)
+    );
+    // The second table's levels are kept under fresh codes.
+    assert!(parsed.layers.iter().any(|l| l.name.starts_with("Temp")));
+}
