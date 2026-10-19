@@ -6,6 +6,8 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-10-19
+
 DGN dictionary pages keep the seed's layout, so a level table is no longer split across
 pages.
 
@@ -24,6 +26,8 @@ pages.
 - A new level entry is appended to the level table's page with the seed entries' flags
   and a fresh level code (`+0x5C`), instead of the first level's code. Seeds written by
   earlier cadkit versions (split tables) are repaired on write.
+- The workspace builds with its declared MSRV (Rust 1.85) again: the DGN writer no
+  longer uses `let` chains (since 0.3.2).
 
 ## [0.3.4] - 2026-10-19
 
