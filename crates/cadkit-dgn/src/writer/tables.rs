@@ -4,13 +4,63 @@ use super::encode::*;
 use crate::native::{
     decode_v8,
     element::{ElementData, TagDef, TagSetData, TagValue},
-    v8::RawElement,
+    v8::{Page, RawElement},
 };
 use cadkit_core::{Attribute, Entity, Error, Result, Value};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
+/// Type word bit of a complex header (a table header, a cell definition).
+const COMPLEX_HEADER: u32 = 0x2000_0000;
+/// Type word bit of a complex component (a table entry, a cell component).
+const COMPLEX_COMPONENT: u32 = 0x4000_0000;
+/// Level code (`u32`) of a level entry: the number users see, stable for a level name
+/// across files and unique among the nonzero codes of a table, unlike the level id at
+/// `0x20` that elements store (`docs/dgn/FORMAT_NOTES.md`, "Dictionary pages").
+const LEVEL_CODE: usize = 0x5c;
+
+/// A dictionary (`Dgn^Nm`) record with the seed page that holds it.
+pub(super) struct NamedRecord {
+    /// Number of the seed page holding the record; `None` for a record of a new table or
+    /// tag set, which goes to a new page.
+    pub page: Option<u32>,
+    /// The 4-byte record prefix as stored in the seed (0 for new records).
+    pub prefix: u32,
+    /// The complete element.
+    pub bytes: Vec<u8>,
+}
+
+impl NamedRecord {
+    fn new(page: Option<u32>, bytes: Vec<u8>) -> Self {
+        Self {
+            page,
+            prefix: 0,
+            bytes,
+        }
+    }
+}
+
+fn table_record(b: &[u8], kind: u32) -> bool {
+    crate::le::u32_at(b, 0).map(|v| v & 0xffff) == Some(kind)
+        && crate::le::u32_at(b, 12) == Some(decode_v8::TABLE_LEVELS)
+}
+
+/// The header (type 96) of the level table.
+fn is_level_header(b: &[u8]) -> bool {
+    table_record(b, 96)
+}
+
+/// A level table entry (type 95).
+fn is_level_entry(b: &[u8]) -> bool {
+    table_record(b, 95)
+}
+
+fn is_component(b: &[u8]) -> bool {
+    crate::le::u32_at(b, 0).is_some_and(|v| v & COMPLEX_COMPONENT != 0)
+}
+
 pub(super) struct Tables {
-    pub records: Vec<Vec<u8>>,
+    /// Dictionary records in stored order, seed records first.
+    pub records: Vec<NamedRecord>,
     pub fonts: BTreeMap<String, u32>,
     pub palette: [[u8; 3]; 256],
     pub levels: BTreeMap<String, u32>,
@@ -19,15 +69,21 @@ pub(super) struct Tables {
     referenced_fonts: BTreeSet<u32>,
     max_level: u32,
     level_template: Option<Vec<u8>>,
+    /// High 16 bits of the type word of new level entries: those of the seed's entries.
+    level_flags: u32,
+    /// Highest level code of the seed's and the new level entries.
+    max_level_code: u32,
+    /// New level entries in creation order; [`Tables::finish`] appends them to the table.
+    new_levels: Vec<Vec<u8>>,
     tag_set_template: Option<Vec<u8>>,
     changed_sets: BTreeMap<Option<String>, ()>,
 }
 impl Tables {
-    pub fn new(
-        records: impl Iterator<Item = RawElement>,
-        last_id: u64,
-        read: &cadkit_core::ReadOptions,
-    ) -> Result<Self> {
+    /// Reads the seed's dictionary `pages` in order. Every record keeps its page, except
+    /// that complex components at the start of a page rejoin the page of the element before
+    /// them and level entries after the level table header join that table, so no table or
+    /// complex element spans pages.
+    pub fn new(pages: &[Page], last_id: u64, read: &cadkit_core::ReadOptions) -> Result<Self> {
         let mut out = Self {
             records: vec![],
             fonts: BTreeMap::new(),
@@ -38,6 +94,9 @@ impl Tables {
             referenced_fonts: BTreeSet::new(),
             max_level: 0,
             level_template: None,
+            level_flags: 0,
+            max_level_code: 0,
+            new_levels: vec![],
             tag_set_template: None,
             changed_sets: BTreeMap::new(),
         };
@@ -49,7 +108,22 @@ impl Tables {
                 &read.limits,
             )
         };
-        let records: Vec<RawElement> = records.collect();
+        // MicroStation keeps a complex element (a table with its entries, a cell definition
+        // with its components) on one page and does not join one across a page boundary.
+        // Components at the start of a page continue the element before them in a seed whose
+        // writer split it (cadkit before 0.3.5 among them), so they move back to its page.
+        let mut records: Vec<(u32, &RawElement)> = vec![];
+        for page in pages {
+            let mut leading = true;
+            for raw in &page.elements {
+                leading &= raw.is_complex_component();
+                let number = match records.last() {
+                    Some((previous, _)) if leading => *previous,
+                    _ => page.number,
+                };
+                records.push((number, raw));
+            }
+        }
         // Some seeds (files a 3D post-processor touched) carry a second level table
         // whose codes repeat codes of the first one. Elements store the code only, so
         // a repeated code makes readers show new elements on the other table's level.
@@ -57,34 +131,43 @@ impl Tables {
         // extra table headers are dropped: the output has one table with unique codes.
         let mut free_level = records
             .iter()
-            .filter_map(|raw| match read_record(raw).data {
+            .filter_map(|(_, raw)| match read_record(raw).data {
                 ElementData::Level(level) => Some(level.id),
                 _ => None,
             })
             .max()
             .unwrap_or(0);
         let mut level_codes = HashSet::new();
-        let mut level_header = false;
-        for mut raw in records {
-            let is_level_header = crate::le::u32_at(&raw.bytes, 0).map(|v| v & 0xffff) == Some(96)
-                && crate::le::u32_at(&raw.bytes, 12) == Some(1);
-            if is_level_header {
-                if level_header {
+        // Indexes in `out.records` of the level table header and of the last record of its
+        // run of entries; entries stored elsewhere after it, collected to join the run.
+        let mut level_table: Option<(usize, usize)> = None;
+        let mut joining = vec![];
+        let mut header_word = None;
+        for (number, raw) in records {
+            let mut bytes = raw.bytes.clone();
+            if is_level_header(&bytes) {
+                if level_table.is_some() {
                     continue;
                 }
-                level_header = true;
+                level_table = Some((out.records.len(), out.records.len()));
+                header_word = Some(raw.type_word);
             }
-            let mut e = read_record(&raw);
+            let mut e = read_record(raw);
             if let ElementData::Level(level) = &mut e.data
                 && !level_codes.insert(level.id)
-                && crate::le::u32_at(&raw.bytes, 0x20) == Some(level.id)
+                && crate::le::u32_at(&bytes, 0x20) == Some(level.id)
             {
                 free_level = free_level
                     .checked_add(1)
                     .ok_or_else(|| Error::LimitExceeded("DGN levels".into()))?;
-                u32_at(&mut raw.bytes, 0x20, free_level)?;
+                u32_at(&mut bytes, 0x20, free_level)?;
                 level.id = free_level;
                 level_codes.insert(free_level);
+            }
+            let primary = bytes.get(..raw.attribute_offset()).unwrap_or(&[]);
+            let entry = matches!(e.data, ElementData::Level(_));
+            if entry && let Some(code) = crate::le::u32_at(primary, LEVEL_CODE) {
+                out.max_level_code = out.max_level_code.max(code);
             }
             match e.data {
                 ElementData::Font { number, name } => {
@@ -105,7 +188,7 @@ impl Tables {
                         &mut level_names,
                     );
                     out.levels.insert(name, level.id);
-                    out.level_template.get_or_insert(raw.primary().to_vec());
+                    out.level_template.get_or_insert(primary.to_vec());
                 }
                 ElementData::TagSet(set) => {
                     out.sets
@@ -115,8 +198,40 @@ impl Tables {
                 }
                 _ => {}
             }
-            out.records.push(raw.bytes);
+            let record = NamedRecord {
+                page: Some(number),
+                prefix: raw.prefix,
+                bytes,
+            };
+            match level_table {
+                // Entries of the dropped tables, and entries a split seed left on a later
+                // page, join the level table after its last entry, on its page.
+                Some((header, last)) if entry => {
+                    let page = out.records.get(header).and_then(|r| r.page);
+                    let record = NamedRecord { page, ..record };
+                    if last.checked_add(1) == Some(out.records.len()) {
+                        out.records.push(record);
+                        level_table = Some((header, out.records.len() - 1));
+                    } else {
+                        joining.push(record);
+                    }
+                }
+                _ => out.records.push(record),
+            }
         }
+        if let Some((_, last)) = level_table {
+            let at = last.saturating_add(1).min(out.records.len());
+            out.records.splice(at..at, joining);
+        }
+        // A new entry looks like its siblings: the first entry's flags, or the component
+        // flags that go with the header's (`0x2440_0060` header, `0x4440_005F` entries).
+        out.level_flags = match (&out.level_template, header_word) {
+            (Some(template), _) => crate::le::u32_at(template, 0).unwrap_or(0) & 0xffff_0000,
+            (None, Some(word)) if word & COMPLEX_HEADER != 0 => {
+                (word & 0xffff_0000 & !COMPLEX_HEADER) | COMPLEX_COMPONENT
+            }
+            _ => 0,
+        };
         Ok(out)
     }
     pub fn observe_model_fonts<'a>(
@@ -164,14 +279,22 @@ impl Tables {
         } else {
             prefix(95, 0x30, id, 1, time)?
         };
-        u32_at(&mut b, 0, 95)?;
+        u32_at(&mut b, 0, self.level_flags | 95)?;
         u32_at(&mut b, 12, 1)?;
         u64_at(&mut b, 16, id)?;
         f64_at(&mut b, 24, time)?;
         u32_at(&mut b, 0x20, level)?;
         u32_at(&mut b, 0x24, u32::MAX)?;
+        // A template entry carries its own level's code; a new level takes the next one.
+        if b.len() >= LEVEL_CODE + 4 {
+            self.max_level_code = self
+                .max_level_code
+                .checked_add(1)
+                .ok_or_else(|| Error::LimitExceeded("DGN level codes".into()))?;
+            u32_at(&mut b, LEVEL_CODE, self.max_level_code)?;
+        }
         let b = finish(b, &string_link(1, name)?)?;
-        self.records.push(b);
+        self.new_levels.push(b);
         self.levels.insert(name.into(), level);
         Ok(level)
     }
@@ -301,7 +424,7 @@ impl Tables {
         self.changed_sets.insert(name.clone(), ());
         Ok((*id, next, value_type))
     }
-    pub fn finish(mut self, time: f64) -> Result<Vec<Vec<u8>>> {
+    pub fn finish(mut self, time: f64) -> Result<Vec<NamedRecord>> {
         for name in self.changed_sets.keys() {
             let (id, set) = self
                 .sets
@@ -346,35 +469,65 @@ impl Tables {
                 .transpose()?
                 .unwrap_or_default();
             let b = finish(b, &links)?;
+            // A changed seed tag set stays where it is; a new one goes to a new page.
             if let Some(old) = self
                 .records
                 .iter_mut()
-                .find(|b| crate::le::u64_at(b, 16) == Some(*id))
+                .find(|r| crate::le::u64_at(&r.bytes, 16) == Some(*id))
             {
-                *old = b;
+                old.bytes = b;
             } else {
-                self.records.push(b);
+                self.records.push(NamedRecord::new(None, b));
             }
         }
         let level_count = u32::try_from(self.levels.len())
             .map_err(|_| Error::LimitExceeded("DGN level count".into()))?;
-        let mut header = false;
-        for r in &mut self.records {
-            if crate::le::u32_at(r, 0).map(|v| v & 0xffff) == Some(96)
-                && crate::le::u32_at(r, 12) == Some(1)
-            {
-                u32_at(r, 0x20, level_count)?;
-                header = true;
+        let mut header = None;
+        for (i, r) in self.records.iter_mut().enumerate() {
+            if is_level_header(&r.bytes) {
+                u32_at(&mut r.bytes, 0x20, level_count)?;
+                header.get_or_insert(i);
             }
         }
-        if !header && level_count > 0 {
+        if header.is_none() && level_count > 0 {
             let id = self
                 .last_id
                 .checked_add(1)
                 .ok_or_else(|| Error::LimitExceeded("DGN table header id".into()))?;
             let mut b = prefix(96, 0x28, id, 1, time)?;
             u32_at(&mut b, 0x20, level_count)?;
-            self.records.insert(0, finish(b, &[])?);
+            // The header goes before the seed's level entries, on their page; without any,
+            // the new table goes before the new tag sets, on the new page.
+            let (at, page) = match self.records.iter().position(|r| is_level_entry(&r.bytes)) {
+                Some(first) => (first, self.records.get(first).and_then(|r| r.page)),
+                None => (
+                    self.records
+                        .iter()
+                        .position(|r| r.page.is_none())
+                        .unwrap_or(self.records.len()),
+                    None,
+                ),
+            };
+            self.records
+                .insert(at, NamedRecord::new(page, finish(b, &[])?));
+            header = Some(at);
+        }
+        if let Some(header) = header {
+            // New entries follow the table's last entry, on the table's page.
+            let page = self.records.get(header).and_then(|r| r.page);
+            let mut at = header.saturating_add(1);
+            while self
+                .records
+                .get(at)
+                .is_some_and(|r| is_component(&r.bytes) || is_level_entry(&r.bytes))
+            {
+                at += 1;
+            }
+            let levels = std::mem::take(&mut self.new_levels);
+            self.records.splice(
+                at..at,
+                levels.into_iter().map(|b| NamedRecord::new(page, b)),
+            );
         }
         Ok(self.records)
     }

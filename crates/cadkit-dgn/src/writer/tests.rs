@@ -5,6 +5,7 @@ use cadkit_core::{Attribute, Color, Model};
 use std::io::{Cursor, Read};
 
 mod application;
+mod dictionary;
 mod microstation;
 mod raster;
 mod raster_template;

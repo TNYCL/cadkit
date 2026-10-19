@@ -108,8 +108,8 @@ index. Pages of 16 bytes have no payload (record count 0).
 |---|---|---|
 | `0x00` | u32 | record count |
 | `0x04` | u32 | page format version (2 or 3 observed) |
-| `0x08` | u32 | page number (0 in some writers) |
-| `0x0C` | u32 | population (0 in some writers) |
+| `0x08` | u32 | page number (0 in some writers; 0 on every MicroStation dictionary page) |
+| `0x0C` | u32 | population (0 in some writers; 0 on every MicroStation dictionary page) |
 | `0x10` | zlib | records |
 
 Records follow back to back: `u32` prefix (always 0 observed), then the element. Element
@@ -124,6 +124,38 @@ fit, keeps what it has and warns (`dgn.page_records`, `dgn.page_count`).
 28-byte header: magic `0x0000A11B` `+0x00`, payload length `+0x04`, kind `+0x08`,
 `+0x0C` reserved, element id `u64 +0x10`, flags `+0x18`; payload follows. cadkit only
 counts them per element (`dgn.xattribute_count`, `dgn.xattribute_kinds`).
+
+### Dictionary pages (`Dgn^Nm`, `Dgn^NmA`)
+
+A complex element is a record without the component bit (`0x4000_0000` in the type word)
+followed by every record that has it: a table header (type 96, header bit `0x2000_0000`)
+with its type-95 entries, a cell definition with its components. Structural counts over
+the private corpus (567 MicroStation files, 3,932 dictionary pages; `tests/private_dictionary.rs`
+asserts the rules on the 274 plan files and on what the writer makes of them):
+
+| Rule | Evidence |
+|---|---|
+| A complex element never spans pages: no page starts with a component | 0 of 3,932 pages |
+| A table header's `0x20` equals the number of components that follow it on its page | 5,425 of 5,425 tables |
+| A level table (type 96, table 1) holds only level entries (type 95, table 1) | 918 of 918 tables |
+| Level table flags come in pairs: header `0x2440` / entries `0x4440` or header `0x2480` / entries `0x4480` (high 16 bits) | 568 + 350 tables |
+| The level table header need not open its page; pages hold several tables and tag sets | 422 of 918 at index 0 |
+| A page has no size bound of its own | every file has a page over 256 KiB; largest 595,424 inflated bytes (1,356 records) |
+| Empty pages (16-byte header, no payload) occur | 1,087 of 3,932 pages |
+| Page format versions 2 and 3 both occur; each page keeps its own | 3,364 version-2 and 568 version-3 pages |
+| Page number and population (`+0x08`, `+0x0C`) are 0 | 3,932 of 3,932 `Dgn^Nm` and 1,188 of 1,188 `Dgn^NmA` pages |
+| Every `Dgn^NmA/$n` XAttribute belongs to an element of `Dgn^Nm/$n` | 4,215 of 4,215 records |
+| `Dgn^NmA/^AH` (meaning unknown) never exceeds the highest dictionary page number | equal in 91 files, lower in 476 |
+
+MicroStation does not join a complex element across pages. A cadkit output whose
+414-entry level table was split (216 entries on the header's page, 198 on the next), once
+saved by MicroStation, had the component bit cleared on the 198 entries of the
+continuation page (`0x4440` → `0x0440`) while the entries on the header's page and the
+entries of an intact table on the same page kept it. In a field test MicroStation showed a
+0.3.4 output (level table split 102 + 228) on a single level, and the same file with the
+seed's own dictionary pages restored showed the full level list. Which of the three
+differences (the split, the page number and population, the page numbering) decided it
+was not separated; the writer removes all three.
 
 ## V8 elements
 
@@ -174,8 +206,9 @@ store 3 doubles and a quaternion `(w, x, y, z)`. All coordinates are UOR doubles
 | 94 raster frame | see [Raster attachments](#raster-attachments) | private corpus (2,029 frames) |
 | 90, 91, 92, 93 raster attachment (control) | see [Raster attachments](#raster-attachments) | private corpus |
 | 96 table header | `0x0C` table number (1 levels, 2 fonts, 4 level filters, …), `0x20` u32 entry count | all V8 samples |
-| 95 table entry, table 1 (level) | `0x20` u32 level id, `0x24` u32 parent (`ffffffff` none), `0x28` u32 flags (raw), name = string linkage 1, description = 2 | test_dgnv8 ("Default" = 64), TreeText (2 levels), private (370) |
-| Second level table | Most private 3D files (261/293; plans 3/274) hold a second type-96 table-1 header in a later `Dgn^Nm` page with its own type-95 entries whose level ids repeat ids of the first table (1–9 and 64). Elements carry the id only; a reader that lets the later entry win shows them on the second table's level. The writer keeps the first definition of an id, renumbers later ones above the highest id and keeps one header | private structural count |
+| 95 table entry, table 1 (level) | `0x20` u32 level id (what elements store at `0x0C`), `0x24` u32 parent (`ffffffff` none), `0x28` u32 flags (raw), `0x5C` u32 level code (240-byte entries), name = string linkage 1, description = 2 | test_dgnv8 ("Default" = 64), TreeText (2 levels), private (370) |
+| Level code (`0x5C`) | The number users see for a level, independent of the id: one 0 per table (on "Default"), the nonzero codes of a table are distinct (918 of 918 tables), a level name found in two or more files carries the same code in 717 of 721 cases but the same id in only 57, and code equals id in 561 of 205,849 entries. The writer gives a new level the next code above the table's highest | private structural count |
+| Second level table | Most private 3D files (261/293; plans 3/274) hold a second type-96 table-1 header in a later `Dgn^Nm` page with its own type-95 entries whose level ids repeat ids of the first table (1–9 and 64). Elements carry the id only; a reader that lets the later entry win shows them on the second table's level. The writer keeps the first definition of an id, renumbers later ones above the highest id and keeps one header; since 0.3.5 the later tables' entries follow the first table's last entry on its page, and the XAttributes of the dropped headers are dropped | private structural count |
 | 95 table entry, table 2 (font) | `0x28` u32 font number, `0x2C` u16 name bytes, `0x2E` UTF-16 name | test_dgnv8 ("Arial" = 1024) |
 | 5 color table (level slot 1) | `0x20` u16 screen flag, `0x22` 256 RGB triples, first = color 255 (V7 order assumed), then u16 length + table file name | private sample (layout of the triples inferred from the trailing name) |
 | 36 | multi-line (assumed); not decoded → Unknown | oracle shows a 1-point line string |
@@ -491,8 +524,8 @@ characters), and tag set definition strings are NUL-terminated.
    `0x026F0002` and the used level `0x02670002`; private sample: `0x026F0006` on all 370
    levels (122 used, 248 unused) — so no bit separates any observable state there.
    104-byte entries (public files) have `u32` 1 at `0x3C`, `0x4C`, `0x5C` on the used
-   level and 0 on "Default"; the 240-byte entries (private) have a value at `0x5C` that is
-   distinct for every level and is not the elements' color. Level symbology offsets are
+   level and 0 on "Default"; in the 240-byte entries (private) `0x5C` is the level code
+   (see the level entry rows above), not the elements' color. Level symbology offsets are
    therefore unknown.
 2. **B-spline "closed"**: both test_dgnv8 curves have `0x6C = 0x22` (bit `0x80` clear) and
    `0x6D = 0x01`, yet the oracle strokes them as periodic. cadkit treats bit 0 of `0x6D`
@@ -549,6 +582,27 @@ repeated output deterministic. Model graphic/control/auxiliary pages are replace
 named tables are retained and extended. Unknown seed streams are preserved, not
 interpreted or certified as free of references to cleared graphics.
 
+**Dictionary pages** (0.3.5, `writer/named.rs`). The seed's `Dgn^Nm` layout is kept
+(see "Dictionary pages" above): every seed page keeps its number and its records their
+order, and a page whose records did not change keeps its stream byte for byte, empty
+pages included. A changed record is updated where it is (the level table header's count,
+an extended tag set); a new level follows the last entry of the level table, on its page,
+with the flags of the seed's entries and the next free level code; new tables and tag
+sets share one new page after the seed's last page (a seed without a level table gets
+the table there, before the new tag sets). Rewritten pages keep their own format version
+and store page number and population 0; new pages take the first seed page's version. A
+page is never split at a fixed size: the dictionary records together are bounded only by
+`Limits::max_decompressed_bytes`, beyond which writing fails with `LimitExceeded`. A seed
+whose writer split a complex element (cadkit before 0.3.5 did, at 256 KiB) is repaired:
+components at the start of a page rejoin the page of the element before them, and level
+entries after the level table header join that table. XAttributes (`Dgn^NmA/$n`) of moved
+records move to the page numbered like their element's new page, those of dropped records
+are dropped, and only changed auxiliary pages are rewritten (page number and population
+0); `Dgn^NmA/^AH` is kept. Before 0.3.5 the writer concatenated every dictionary record
+into new 256 KiB pages numbered from 1 with the page number and record count in the page
+header, so a 330-entry level table was split over two pages and MicroStation did not load
+it as one. Graphic pages are unchanged: new graphics still go to 256 KiB pages.
+
 Streams are matched for replacement by their CFB names joined with `/`. The `cfb` crate
 builds entry paths with the platform separator (`\` on Windows), so its path strings are
 not used as keys; before this rule, Windows output kept every nested seed stream
@@ -564,6 +618,7 @@ its content could be neither checked for emptiness nor carried into the named ta
 | Element identity | 64-bit ID at `0x10`, allocated above both observed records and header high-water mark |
 | Display/geometry | Existing V8 decoder layouts; finite UOR conversion, 64-bit range bounds |
 | Levels, tag sets, tags | Existing decoded tables/linkages, seed templates when available, dependency target IDs |
+| Dictionary pages | Seed page layout kept (private corpus structural counts, "Dictionary pages"); field test of a 0.3.4 output against the same file with the seed's dictionary pages |
 
 File-header time and revision fields are preserved: their semantics have not
 been independently established. Page version is taken from the seed; no universal

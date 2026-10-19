@@ -6,6 +6,25 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+DGN dictionary pages keep the seed's layout, so a level table is no longer split across
+pages.
+
+### Fixed
+
+- `write_v8` no longer joins the seed's dictionary records (`Dgn^Nm`) and re-splits them
+  into new 256 KiB pages. A level table split over two pages is not loaded as one table
+  by MicroStation: every element showed on "Default". Every seed page now keeps its
+  number and record order; a page whose records did not change keeps its stream byte for
+  byte (empty pages included), a changed page is rewritten in place, and new tables and
+  tag sets share one new page after the seed's last page. No table or complex element
+  crosses a page; only `max_decompressed_bytes` bounds a page (exceeding it is a
+  `LimitExceeded` error, nothing is split silently).
+- Dictionary and XAttribute page headers write page number and population 0, as on every
+  surveyed file. XAttribute records move with their elements.
+- A new level entry is appended to the level table's page with the seed entries' flags
+  and a fresh level code (`+0x5C`), instead of the first level's code. Seeds written by
+  earlier cadkit versions (split tables) are repaired on write.
+
 ## [0.3.4] - 2026-10-19
 
 DGN raster attachments can name a file beside the DGN instead of a machine path.

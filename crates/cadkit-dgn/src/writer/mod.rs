@@ -2,6 +2,7 @@
 
 mod container;
 mod encode;
+mod named;
 mod polyline;
 mod raster;
 mod raster_builtin;
@@ -237,14 +238,7 @@ pub fn write_v8(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<V
     }
     let max_id = max_id.max(le::u64_at(&seed_header.data, 0x128).unwrap_or(0));
     let rasters = raster::Preserved::prepare(doc, seed, model, &read, options)?;
-    let mut tables = Tables::new(
-        native
-            .named_pages
-            .iter()
-            .flat_map(|p| p.elements.iter().cloned()),
-        max_id,
-        &read,
-    )?;
+    let mut tables = Tables::new(&native.named_pages, max_id, &read)?;
     tables.observe_model_fonts(
         model
             .graphic_pages
@@ -283,7 +277,7 @@ pub fn write_v8(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<V
     let named = state.tables.finish(options.timestamp_ms)?;
     let max_id = records
         .iter()
-        .chain(named.iter())
+        .chain(named.iter().map(|r| &r.bytes))
         .filter_map(|r| le::u64_at(r, 16))
         .max()
         .unwrap_or(max_id)
@@ -304,7 +298,7 @@ pub fn write_v8(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<V
         .collect();
     let mut replacements = BTreeMap::new();
     for stream in &native.streams {
-        if stream
+        let model_stream = stream
             .path
             .starts_with(&format!("Dgn-Md/{}/Dgn^G/", model.storage))
             || stream
@@ -315,9 +309,8 @@ pub fn write_v8(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<V
                 .starts_with(&format!("Dgn-Md/{}/Dgn^GA/", model.storage))
             || stream
                 .path
-                .starts_with(&format!("Dgn-Md/{}/Dgn^CA/", model.storage))
-            || stream.path.starts_with("Dgn^Nm/")
-        {
+                .starts_with(&format!("Dgn-Md/{}/Dgn^CA/", model.storage));
+        if model_stream || stream.path.starts_with("Dgn^Nm/") {
             // A page the reader could not decode was neither checked for content nor
             // carried into the named tables; dropping it would lose seed data silently.
             let page = stream.path.rsplit('/').next().is_some_and(|n| {
@@ -330,7 +323,10 @@ pub fn write_v8(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<V
                     format!("seed page {} could not be decoded", stream.path),
                 ));
             }
-            replacements.insert(stream.path.clone(), None);
+            // Dictionary pages are kept and only rewritten where they change (`named`).
+            if model_stream {
+                replacements.insert(stream.path.clone(), None);
+            }
         }
     }
     let version = graphic_page_version(model);
@@ -382,15 +378,11 @@ pub fn write_v8(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<V
         // Every control auxiliary page is retained as is; so is its page counter.
         replacements.remove(&format!("Dgn-Md/{}/Dgn^CA/^AH", model.storage));
     }
-    put_pages(
+    named::write(
         &mut replacements,
-        "Dgn^Nm",
+        &native.named_pages,
+        &native.named_aux,
         &named,
-        native
-            .named_pages
-            .first()
-            .map(|p| p.header.format_version)
-            .unwrap_or(3),
         options.limits.max_decompressed_bytes,
     )?;
     let mut mh = header.raw.clone();
@@ -456,8 +448,8 @@ pub fn write_v8(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<V
 #[cfg(test)]
 mod tests;
 
-/// Writes `records` to pages `{prefix}/$1`, `$2`, ... of at most 256 KiB and returns the
-/// page number of every record.
+/// Writes graphic `records` to pages `{prefix}/$1`, `$2`, ... of at most 256 KiB and returns
+/// the page number of every record. Dictionary pages keep the seed's layout instead (`named`).
 fn put_pages(
     replacements: &mut BTreeMap<String, Option<Vec<u8>>>,
     prefix: &str,
