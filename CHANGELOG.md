@@ -6,6 +6,22 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-10-19
+
+DGN raster attachments can name a file beside the DGN instead of a machine path.
+
+### Added
+
+- A new raster attachment whose `path` is relative and names a file beside the DGN
+  stores no machine-specific location: a bare file name writes the name and an empty
+  full path, `.\name` (or `./name`) is stored as given. Absolute paths still write the
+  `file://` URL. Relative paths into other folders are rejected.
+
+### Fixed
+
+- An empty raster full path or file name reads as absent: the image `path` falls back to
+  the file name and no empty `dgn.raster_path` is reported.
+
 ## [0.3.3] - 2026-10-16
 
 DGN raster attachments can be written into seeds that hold none.

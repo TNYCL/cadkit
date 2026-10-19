@@ -136,9 +136,10 @@ pub fn decode(raw: &RawElement, enc: &'static Encoding, limits: &Limits) -> Elem
         35 => d.cell().map(ElementData::SharedCellInstance),
         37 => d.tag(&linkages).map(ElementData::Tag),
         39 => d.tag_set(&linkages).map(ElementData::TagSet),
+        // An attachment written with a relative path stores an empty full path.
         90 => Ok(ElementData::RasterReference {
-            file_name: linkage::string(&linkages, 3),
-            full_path: linkage::string(&linkages, 0x1f),
+            file_name: linkage::string(&linkages, 3).filter(|s| !s.is_empty()),
+            full_path: linkage::string(&linkages, 0x1f).filter(|s| !s.is_empty()),
         }),
         94 => le::f64s::<16>(d.b, 0x78)
             .map(|matrix| ElementData::RasterFrame {

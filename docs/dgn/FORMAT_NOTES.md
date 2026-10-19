@@ -421,7 +421,8 @@ skipped (counted in `dgn.deleted_count`). Records without a display header and t
   `dgn.raster_dpi_y` only when `0x120` differs), `dgn.raster_rotation` (angle of the image
   X axis) and `dgn.raster_skew` (angle of the Y axis from the perpendicular), both in
   radians in (−π, π] in the XY plane, `dgn.raster_file` (90 string 3), `dgn.raster_path`
-  (90 string `0x1F`, the `file://` URL). Path = attachment full path, else file name.
+  (90 string `0x1F`, the `file://` URL; absent when empty). Path = attachment full path,
+  else file name.
 - **Everything else** → `Unknown { "dgn.type_N" }` with `dgn.*` props; `keep_raw` stores the
   exact element bytes. Undecodable bodies keep their header/symbology and get
   `dgn.decode_problem`.
@@ -613,8 +614,11 @@ are all version 3 has version 3 auxiliary pages). The template is captured from 
 its records. Each image gets ten fresh ids above every seed id (94, 92, 93, 93, 90,
 91 × 5) and the group's records are copied with only these fields rewritten: every
 record's id and time; 90: the 92 id, string 3 = bare file name (`dgn.raster_file`, else
-the last component of `path`), string `0x1F` = the `file://` URL (`path` as given when it
-already starts with `file://`, else `file://` + `path`; the path must be absolute), both
+the last component of `path`), string `0x1F` = the full path: for an absolute `path` the
+`file://` URL (`path` as given when it already starts with `file://`, else `file://` +
+`path`); since 0.3.4 a relative `path` naming a file beside the DGN stores no machine
+location — a bare file name stores an empty string `0x1F` (and an empty XAttribute
+sub-record 4, the NUL unit only), `.\name` / `./name` is stored as given. Both strings are
 8-bit when ASCII and `ff fd` UTF-16 otherwise, and the frame root; 92: the 90 id and the
 frame root; 91 `0x20007`: origin, edge lengths, rotation, skew, DPI and both axes; 94:
 level (from `layer`), hidden bit `0x80` (from `visible`), range, matrix (`a = u/W`,
@@ -626,9 +630,13 @@ records follow the retained seed controls in `Dgn^C`; each XAttribute goes to th
 `Dgn^GA/$n` page numbered like its frame's graphic page, and `Dgn^GA/^AH` is set to the
 highest such page + 1. The writer is the inverse of the reader: an attachment reads back
 with the same `position`, `u_vector`, `v_vector` (1e-6 relative), `size_px`, the
-`file://` form of its path and no raster warning. Mixing new attachments with preserved
-seed attachments (images that keep their id) in one write, new attachments inside groups,
-relative paths and strings longer than a 512-byte string linkage are rejected.
+`file://` form of an absolute path (a relative one reads back as written, a bare name
+through the file name) and no raster warning. Every observed attachment stores an
+absolute `file://` path; whether MicroStation resolves an empty or `.\name` full path
+from the DGN's folder is not yet confirmed. Mixing new attachments with preserved seed
+attachments (images that keep their id) in one write, new attachments inside groups,
+relative paths into other folders and strings longer than a 512-byte string linkage are
+rejected.
 
 `preserve_seed_rasters` (default true) retains unchanged attachments from the same
 seed. All image entities must have unique original IDs and unchanged geometry,

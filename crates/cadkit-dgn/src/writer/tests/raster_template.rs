@@ -622,7 +622,10 @@ fn invalid_attachments_are_reported() {
             no_size,
             Some("new DGN raster attachments need path and size_px"),
         ),
-        (relative, Some("DGN raster path must be absolute")),
+        (
+            relative,
+            Some("DGN raster path must be absolute or name a file beside the DGN"),
+        ),
         (parallel, None),
         (lifted, Some("nonzero Z cannot be written into a 2D seed")),
     ] {
@@ -645,6 +648,119 @@ fn invalid_attachments_are_reported() {
         write_v8(&doc, &seed, &clear()),
         Err(Error::Unsupported(_))
     ));
+}
+
+/// A relative path names a file beside the DGN: the name is stored and the full path is
+/// empty for a bare name and kept as given for `.\name`, so the file carries no
+/// machine-specific location. The output's groups serve as a template again.
+#[test]
+fn relative_paths_store_no_machine_location() {
+    let read = ReadOptions::default();
+    for (seed, three) in [(template_seed(false), false), (seed(true), true)] {
+        let mut written = attachments();
+        let paths = ["sheet.tif", "sheet.tif", ".\\other.tif", "kat planı.tif"];
+        for (e, p) in written.iter_mut().zip(paths) {
+            if let EntityKind::Image { path, .. } = &mut e.kind {
+                *path = Some(p.into());
+            }
+        }
+        let output = write_v8(&document(three, written), &seed, &clear()).unwrap();
+        let native = v8::read(&output, &read).unwrap();
+        let references: Vec<(String, String)> = native.models[0]
+            .control_pages
+            .iter()
+            .flat_map(|p| &p.elements)
+            .filter(|r| r.type_code() == 90)
+            .map(|r| {
+                let links = linkage::parse(
+                    r.attributes(),
+                    r.attribute_offset(),
+                    true,
+                    encoding_rs::UTF_8,
+                );
+                let text = |id: u32| {
+                    links
+                        .iter()
+                        .find_map(|l| match &l.data {
+                            LinkageData::String {
+                                string_id, text, ..
+                            } if *string_id == id => Some(text.clone()),
+                            _ => None,
+                        })
+                        .unwrap()
+                };
+                (text(3), text(0x1f))
+            })
+            .collect();
+        let want = [
+            ("sheet.tif", ""),
+            ("sheet.tif", ""),
+            ("other.tif", ".\\other.tif"),
+            ("kat planı.tif", ""),
+        ];
+        assert_eq!(references, want.map(|(n, f)| (n.to_owned(), f.to_owned())));
+        let payloads: Vec<Vec<u8>> = native.models[0]
+            .graphic_aux
+            .iter()
+            .flat_map(|p| &p.records)
+            .filter(|a| a.kind == 170)
+            .map(|a| a.payload.clone())
+            .collect();
+        assert_eq!(payloads.len(), 4);
+        for (payload, (name, full)) in payloads.iter().zip(want) {
+            let has = |s: &str| payload.windows(utf16z(s).len()).any(|w| w == utf16z(s));
+            assert!(has(name));
+            assert!(full.is_empty() || has(full));
+            assert!(!has("file://"));
+        }
+        // Read back: the path is the stored full path, else the name; no raster warning.
+        let reread = crate::read(&output, &read).unwrap();
+        assert!(
+            reread
+                .warnings
+                .iter()
+                .all(|w| !w.code.starts_with("dgn.raster")),
+            "{:?}",
+            reread.warnings
+        );
+        let got: Vec<(Option<String>, Option<String>)> = reread.models[0]
+            .entities
+            .iter()
+            .map(|e| match &e.kind {
+                EntityKind::Image { path, .. } => (path.clone(), text(e, "dgn.raster_path")),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            got,
+            [
+                (Some("sheet.tif".into()), None),
+                (Some("sheet.tif".into()), None),
+                (Some(".\\other.tif".into()), Some(".\\other.tif".into())),
+                (Some("kat planı.tif".into()), None),
+            ]
+        );
+        assert!(crate::seed_has_raster_template(&output, &read).unwrap());
+    }
+    for bad in [
+        "plans\\sheet.tif",
+        "..\\sheet.tif",
+        "file://sheet.tif",
+        ".\\",
+        "..",
+    ] {
+        let mut e = attachments().remove(0);
+        if let EntityKind::Image { path, .. } = &mut e.kind {
+            *path = Some(bad.into());
+        }
+        assert!(
+            matches!(
+                write_v8(&document(false, vec![e]), &template_seed(false), &clear()),
+                Err(Error::Unsupported(_))
+            ),
+            "{bad}"
+        );
+    }
 }
 
 #[test]

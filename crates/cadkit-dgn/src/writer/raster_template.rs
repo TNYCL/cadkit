@@ -168,7 +168,7 @@ impl Template {
         let (Some(path), Some(size)) = (path, size_px) else {
             return Err(Error::Unsupported(NEEDS_PATH_AND_SIZE.into()));
         };
-        let url = file_url(path)?;
+        let url = full_path(path)?;
         let name = file_name(e, path)?;
         let p = Placement::new(*position, *u_vector, *v_vector, *size, model)?;
         let dpi = self.dpi(e)?;
@@ -388,9 +388,11 @@ impl XAttribute {
             off = start.checked_add(len)?;
         }
         let trailer = payload.get(off..)?.to_vec();
-        // Sub-records 3 and 4 must hold exactly one string, which is what gets replaced.
+        // Sub-records 3 and 4 must hold exactly one string, which is what gets replaced; the
+        // full path in 4 is empty in attachments written with a relative path.
         let single = |i: usize| subs.get(i).and_then(|(_, d)| utf16z_text(d));
-        if trailer.len() > 16 || single(3).is_none() || single(4).is_none() {
+        let empty = subs.get(4).is_some_and(|(_, d)| d.as_slice() == [0, 0]);
+        if trailer.len() > 16 || single(3).is_none() || (single(4).is_none() && !empty) {
             return None;
         }
         Some(Self {
@@ -466,10 +468,14 @@ fn identity(b: &mut [u8], id: u64, time: f64) -> Result<()> {
     f64_at(b, 0x18, time)
 }
 
-/// The stored URL: the path as given when it is already a `file://` URL, else `file://`
-/// followed by the path. The path must be absolute (a drive, UNC or rooted path): the
-/// attachments carry no relative paths.
-fn file_url(path: &str) -> Result<String> {
+/// The stored full path (string linkage `0x1F`, XAttribute sub-record 4).
+///
+/// An absolute path (a drive, UNC or rooted path) is stored as a `file://` URL, as every
+/// observed attachment stores it; a path that already is one is kept. A relative path
+/// names a file beside the DGN, so the attachment carries no machine-specific location:
+/// a bare file name stores an empty full path, `.\name` (or `./name`) is stored as given.
+/// Relative paths into other folders are refused.
+fn full_path(path: &str) -> Result<String> {
     let has_scheme = path
         .get(..7)
         .is_some_and(|s| s.eq_ignore_ascii_case("file://"));
@@ -478,17 +484,35 @@ fn file_url(path: &str) -> Result<String> {
     } else {
         path
     };
+    if local.contains('\0') {
+        return Err(Error::invalid(0, "DGN raster path contains NUL"));
+    }
     let bytes = local.as_bytes();
     let drive = matches!(bytes, [d, b':', b'\\' | b'/', ..] if d.is_ascii_alphabetic());
-    if local.contains('\0') || !(drive || local.starts_with('\\') || local.starts_with('/')) {
+    if drive || local.starts_with('\\') || local.starts_with('/') {
+        return Ok(if has_scheme {
+            path.to_owned()
+        } else {
+            format!("file://{path}")
+        });
+    }
+    let name = local
+        .strip_prefix(".\\")
+        .or_else(|| local.strip_prefix("./"))
+        .unwrap_or(local);
+    if has_scheme
+        || name.is_empty()
+        || name.contains(['\\', '/', ':'])
+        || matches!(name, "." | "..")
+    {
         return Err(Error::Unsupported(
-            "DGN raster path must be absolute".into(),
+            "DGN raster path must be absolute or name a file beside the DGN".into(),
         ));
     }
-    Ok(if has_scheme {
-        path.to_owned()
+    Ok(if name.len() == local.len() {
+        String::new()
     } else {
-        format!("file://{path}")
+        local.to_owned()
     })
 }
 
