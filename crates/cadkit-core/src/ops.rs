@@ -691,9 +691,14 @@ fn extend_hatch_edge(bb: &mut Option<BBox>, edge: &HatchEdge, normal: Vec3, tf: 
             radius,
             start_angle,
             end_angle,
-            ..
+            ccw,
         } => {
-            circle_arc(*center, *radius, *start_angle, *end_angle, normal, tf).extend_bbox(bb);
+            let (s, en) = if *ccw {
+                (*start_angle, *end_angle)
+            } else {
+                (*end_angle, *start_angle)
+            };
+            circle_arc(*center, *radius, s, en, normal, tf).extend_bbox(bb);
         }
         HatchEdge::Ellipse {
             center,
@@ -701,18 +706,14 @@ fn extend_hatch_edge(bb: &mut Option<BBox>, edge: &HatchEdge, normal: Vec3, tf: 
             ratio,
             start_param,
             end_param,
-            ..
+            ccw,
         } => {
-            full_ellipse_arc(
-                *center,
-                *major_axis,
-                *ratio,
-                normal,
-                *start_param,
-                *end_param,
-                tf,
-            )
-            .extend_bbox(bb);
+            let (s, en) = if *ccw {
+                (*start_param, *end_param)
+            } else {
+                (*end_param, *start_param)
+            };
+            full_ellipse_arc(*center, *major_axis, *ratio, normal, s, en, tf).extend_bbox(bb);
         }
         HatchEdge::Spline {
             degree,
@@ -1426,5 +1427,64 @@ mod tests {
     fn type_names() {
         assert_eq!(line(0.0, 0.0, 1.0, 1.0).kind.type_name(), "line");
         assert_eq!(insert("a", 0.0, 0.0).kind.type_name(), "insert");
+    }
+
+    #[test]
+    fn clockwise_hatch_arc_and_ellipse_bbox() {
+        use crate::HatchLoop;
+        // Clockwise quarter-circle from pi/2 (0, 2) down to 0 (2, 0) stays in quadrant I.
+        let cw_arc = Entity::new(EntityKind::Hatch {
+            loops: vec![HatchLoop {
+                edges: vec![HatchEdge::Arc {
+                    center: Point3::default(),
+                    radius: 2.0,
+                    start_angle: PI / 2.0,
+                    end_angle: 0.0,
+                    ccw: false,
+                }],
+                external: true,
+            }],
+            solid: true,
+            pattern: None,
+            pattern_scale: 1.0,
+            pattern_angle: 0.0,
+            normal: Vec3::Z,
+        });
+        let bb = doc_with(vec![cw_arc], vec![]).bbox(0).unwrap();
+        assert!(
+            bb.min.x >= -1e-9
+                && bb.min.y >= -1e-9
+                && (bb.max.x - 2.0).abs() < 1e-9
+                && (bb.max.y - 2.0).abs() < 1e-9,
+            "unexpected clockwise hatch arc bbox: {bb:?}"
+        );
+
+        // Clockwise quarter-ellipse from pi/2 (0, 1.5) down to 0 (3, 0) also stays in quadrant I.
+        let cw_ellipse = Entity::new(EntityKind::Hatch {
+            loops: vec![HatchLoop {
+                edges: vec![HatchEdge::Ellipse {
+                    center: Point3::default(),
+                    major_axis: Vec3::new(3.0, 0.0, 0.0),
+                    ratio: 0.5,
+                    start_param: PI / 2.0,
+                    end_param: 0.0,
+                    ccw: false,
+                }],
+                external: true,
+            }],
+            solid: true,
+            pattern: None,
+            pattern_scale: 1.0,
+            pattern_angle: 0.0,
+            normal: Vec3::Z,
+        });
+        let bb = doc_with(vec![cw_ellipse], vec![]).bbox(0).unwrap();
+        assert!(
+            bb.min.x >= -1e-9
+                && bb.min.y >= -1e-9
+                && (bb.max.x - 3.0).abs() < 1e-9
+                && (bb.max.y - 1.5).abs() < 1e-9,
+            "unexpected clockwise hatch ellipse bbox: {bb:?}"
+        );
     }
 }

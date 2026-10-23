@@ -783,6 +783,17 @@ unsafe fn options_json<T: serde::de::DeserializeOwned + Default>(
     }
 }
 
+fn register_live_buffer(mut bytes: Vec<u8>) -> (*mut u8, usize) {
+    let len = bytes.len();
+    // Ensure a unique heap allocation even for 0-byte buffers so `NonNull::dangling()` never collides.
+    if bytes.capacity() == 0 {
+        bytes.reserve_exact(1);
+    }
+    let ptr = bytes.as_mut_ptr();
+    live_buffers().insert(ptr as usize, bytes);
+    (ptr, len)
+}
+
 unsafe fn binary_getter(
     doc: *const cadkit_document,
     out: *mut *mut u8,
@@ -808,10 +819,8 @@ unsafe fn binary_getter(
             Err(s) => return s,
         };
         match f(d) {
-            Ok(mut bytes) => {
-                let len = bytes.len();
-                let ptr = bytes.as_mut_ptr();
-                live_buffers().insert(ptr as usize, bytes);
+            Ok(bytes) => {
+                let (ptr, len) = register_live_buffer(bytes);
                 // SAFETY: Both `out` and `out_len` were checked non-null above and are writable per the contract.
                 unsafe {
                     *out = ptr;
@@ -1161,4 +1170,24 @@ pub unsafe extern "C" fn cadkit_citygml_preflight_tkgm(
             Err(e) => map_error(&e),
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_buffers_get_distinct_addresses_in_live_buffers() {
+        let (p1, l1) = register_live_buffer(Vec::new());
+        let (p2, l2) = register_live_buffer(Vec::new());
+        assert_eq!((l1, l2), (0, 0));
+        assert_ne!(p1, p2);
+        assert!(live_buffers().contains_key(&(p1 as usize)));
+        assert!(live_buffers().contains_key(&(p2 as usize)));
+        cadkit_bytes_free(p1);
+        assert!(!live_buffers().contains_key(&(p1 as usize)));
+        assert!(live_buffers().contains_key(&(p2 as usize)));
+        cadkit_bytes_free(p2);
+        assert!(!live_buffers().contains_key(&(p2 as usize)));
+    }
 }

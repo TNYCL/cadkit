@@ -274,14 +274,76 @@ fn attachment_code(a: Attachment) -> i64 {
     }
 }
 
-/// Splits `s` into pieces of at most `max` bytes without cutting a character.
-fn chunks(s: &str, max: usize) -> Vec<&str> {
+fn parse_hex4(bytes: &[u8], at: usize) -> Option<u16> {
+    let slice = bytes.get(at..at.checked_add(4)?)?;
+    slice.iter().try_fold(0u16, |acc, &b| {
+        let v = match b {
+            b'0'..=b'9' => b - b'0',
+            b'a'..=b'f' => b - b'a' + 10,
+            b'A'..=b'F' => b - b'A' + 10,
+            _ => return None,
+        };
+        Some((acc << 4) | u16::from(v))
+    })
+}
+
+/// Byte length of the next atomic token in an already DXF-escaped string so chunk boundaries
+/// never split UTF-8 code points, `^X` caret escapes, `\U+XXXX` (or UTF-16 surrogate pairs),
+/// `\M+nXXXX`, or 2-character MTEXT backslash codes (`\\`, `\{`, `\}`, `\P`, etc.).
+fn escaped_token_len(s: &str, at: usize) -> usize {
+    let bytes = s.as_bytes();
+    match bytes.get(at).copied() {
+        None => 0,
+        Some(b'^') => 2.min(s.len().saturating_sub(at)),
+        Some(b'\\') => {
+            if matches!(bytes.get(at + 1), Some(b'U' | b'u')) && bytes.get(at + 2) == Some(&b'+') {
+                if let Some(unit) = parse_hex4(bytes, at + 3) {
+                    if (0xD800..0xDC00).contains(&unit)
+                        && bytes.get(at + 7) == Some(&b'\\')
+                        && matches!(bytes.get(at + 8), Some(b'U' | b'u'))
+                        && bytes.get(at + 9) == Some(&b'+')
+                        && parse_hex4(bytes, at + 10).is_some()
+                    {
+                        return 14;
+                    }
+                    return 7;
+                }
+            }
+            if bytes.get(at + 1) == Some(&b'M')
+                && bytes.get(at + 2) == Some(&b'+')
+                && bytes.get(at + 3).is_some_and(u8::is_ascii_digit)
+                && parse_hex4(bytes, at + 4).is_some()
+            {
+                return 8;
+            }
+            match s.get(at + 1..).and_then(|r| r.chars().next()) {
+                Some(c) => 1 + c.len_utf8(),
+                None => 1,
+            }
+        }
+        Some(_) => s
+            .get(at..)
+            .and_then(|r| r.chars().next())
+            .map_or(1, char::len_utf8),
+    }
+}
+
+/// Splits an already escaped MTEXT string into chunks of at most `max` bytes without cutting
+/// any UTF-8 character, caret escape, `\U+` / `\M+` escape, or surrogate pair.
+fn escaped_mtext_chunks(s: &str, max: usize) -> Vec<&str> {
     let mut out = Vec::new();
     let mut rest = s;
     while rest.len() > max {
-        let mut cut = max;
-        while cut > 0 && !rest.is_char_boundary(cut) {
-            cut -= 1;
+        let mut cut = 0usize;
+        while cut < rest.len() {
+            let step = escaped_token_len(rest, cut);
+            if step == 0 || (cut > 0 && cut + step > max) {
+                break;
+            }
+            cut += step;
+            if cut >= max {
+                break;
+            }
         }
         if cut == 0 {
             break;
@@ -602,18 +664,71 @@ impl Writer<'_> {
                 ext(out, &ocs);
                 self.xdata(out, &e.props, group);
                 if !e.attributes.is_empty() {
-                    let child = owned_by(&a, insert_handle);
+                    let seq_child = owned_by(&a, insert_handle);
                     for at in &e.attributes {
+                        let mut child = seq_child.clone();
+                        if let Some(layer) = at.layer.as_deref().filter(|l| !l.trim().is_empty()) {
+                            child.layer = self.layers.add(layer);
+                        }
+                        let (height, width_factor, style, halign, valign, rotation) =
+                            match &at.display {
+                                Some(d) => {
+                                    let h = if d.height > 0.0 { d.height } else { 2.5 };
+                                    let wf = if d.width > 0.0 && h > 0.0 {
+                                        d.width / h
+                                    } else {
+                                        1.0
+                                    };
+                                    (h, wf, d.style.as_deref(), d.halign, d.valign, d.rotation)
+                                }
+                                None => (2.5, 1.0, None, HAlign::Left, VAlign::Baseline, 0.0),
+                            };
+                        let default_align = halign == HAlign::Left && valign == VAlign::Baseline;
+                        let pos = ocs.to_local(at.position.unwrap_or(*position));
+                        let val_str = value_text(&at.value);
                         self.head(out, "ATTRIB", &child, "AcDbText");
-                        out.point(10, ocs.to_local(at.position.unwrap_or(*position)));
-                        out.real(40, 2.5);
-                        out.text(1, &value_text(&at.value));
+                        out.point(10, pos);
+                        out.real(40, height);
+                        out.text(1, &val_str);
+                        if rotation != 0.0 {
+                            out.real(50, rotation.to_degrees());
+                        }
+                        if (width_factor - 1.0).abs() > 1e-12 {
+                            out.real(41, width_factor);
+                        }
+                        if let Some(st) = style
+                            .filter(|s| !s.trim().is_empty())
+                            .and_then(|s| self.styles.get(s).cloned())
+                        {
+                            out.text(7, &st);
+                        }
+                        if halign_code(halign) != 0 {
+                            out.int(72, halign_code(halign));
+                        }
+                        if !default_align {
+                            let p2 = if matches!(halign, HAlign::Aligned | HAlign::Fit) {
+                                Point3::new(
+                                    pos.x
+                                        + height.max(1.0)
+                                            * val_str.chars().count().max(1) as f64
+                                            * 0.6,
+                                    pos.y,
+                                    pos.z,
+                                )
+                            } else {
+                                pos
+                            };
+                            out.point(11, p2);
+                        }
                         self.sub(out, "AcDbAttribute");
                         out.text(2, &at.tag);
                         out.int(70, i64::from(at.invisible));
+                        if valign_code(valign) != 0 {
+                            out.int(74, valign_code(valign));
+                        }
                         ext(out, &ocs);
                     }
-                    self.seqend(out, &child);
+                    self.seqend(out, &seq_child);
                 }
                 return;
             }
@@ -698,7 +813,12 @@ impl Writer<'_> {
                     self.head(out, "LEADER", &a, "AcDbLeader");
                     out.text(3, "Standard");
                     out.int(71, i64::from(*arrowhead));
-                    out.int(72, prop_int(&e.props, "dxf.leader.path_type").unwrap_or(0));
+                    out.int(
+                        72,
+                        prop_int(&e.props, "dxf.leader.path_type")
+                            .or_else(|| prop_int(&e.props, "dwg.path_type"))
+                            .unwrap_or(0),
+                    );
                     out.int(73, 3);
                     out.int(74, 1);
                     out.int(75, 0);
@@ -780,26 +900,28 @@ impl Writer<'_> {
                 out.real(41, *height);
                 out.int(68, 1);
                 out.int(69, id);
+                let view_dir = prop_point(&e.props, "dxf.viewport.view_direction")
+                    .or_else(|| prop_point(&e.props, "dwg.view_direction"))
+                    .unwrap_or(Point3::new(0.0, 0.0, 1.0));
+                let view_target = prop_point(&e.props, "dxf.viewport.view_target")
+                    .or_else(|| prop_point(&e.props, "dwg.view_target"))
+                    .unwrap_or_default();
+                let twist = prop_f64(&e.props, "dxf.viewport.twist")
+                    .or_else(|| prop_f64(&e.props, "dwg.twist").map(f64::to_degrees))
+                    .unwrap_or(0.0);
                 if !self.r12 {
                     out.point2(12, view_center.x, view_center.y);
                     out.point2(13, 0.0, 0.0);
                     out.point2(14, 0.5, 0.5);
                     out.point2(15, 0.5, 0.5);
-                    out.point(
-                        16,
-                        prop_point(&e.props, "dxf.viewport.view_direction")
-                            .unwrap_or(Point3::new(0.0, 0.0, 1.0)),
-                    );
-                    out.point(
-                        17,
-                        prop_point(&e.props, "dxf.viewport.view_target").unwrap_or_default(),
-                    );
+                    out.point(16, view_dir);
+                    out.point(17, view_target);
                     out.real(42, 50.0);
                     out.real(43, 0.0);
                     out.real(44, 0.0);
                     out.real(45, *view_height);
                     out.real(50, 0.0);
-                    out.real(51, prop_f64(&e.props, "dxf.viewport.twist").unwrap_or(0.0));
+                    out.real(51, twist);
                     out.int(72, 1000);
                     out.int(90, 32768);
                     out.text(1, "");
@@ -809,17 +931,10 @@ impl Writer<'_> {
                     out.text(1000, "MVIEW");
                     out.text(1002, "{");
                     out.int(1070, 16);
-                    out.point(
-                        1010,
-                        prop_point(&e.props, "dxf.viewport.view_target").unwrap_or_default(),
-                    );
-                    out.point(
-                        1010,
-                        prop_point(&e.props, "dxf.viewport.view_direction")
-                            .unwrap_or(Point3::new(0.0, 0.0, 1.0)),
-                    );
+                    out.point(1010, view_target);
+                    out.point(1010, view_dir);
                     for v in [
-                        prop_f64(&e.props, "dxf.viewport.twist").unwrap_or(0.0),
+                        twist,
                         *view_height,
                         view_center.x,
                         view_center.y,
@@ -854,7 +969,9 @@ impl Writer<'_> {
                 return;
             }
             EntityKind::Unknown { type_name } => {
-                if type_name == "dxf.ATTDEF" && self.attdef(out, e, &a) {
+                if (type_name == "dxf.ATTDEF" || type_name == "dwg.ATTDEF")
+                    && self.attdef(out, e, &a)
+                {
                     self.xdata(out, &e.props, group);
                 } else {
                     self.skip(type_name, "no DXF writer for this record");
@@ -988,10 +1105,20 @@ impl Writer<'_> {
             return;
         }
         let ocs = Ocs::new(normal);
-        let is_3d_prop = matches!(e.props.get("dxf.polyline_3d"), Some(MValue::Bool(true)));
+        let is_3d_prop = matches!(
+            e.props
+                .get("dxf.polyline_3d")
+                .or_else(|| e.props.get("dwg.polyline_3d")),
+            Some(MValue::Bool(true))
+        );
         let local: Vec<Point3> = vertices.iter().map(|v| ocs.to_local(v.position)).collect();
         let flat = same_z(&local);
-        let plinegen = matches!(e.props.get("dxf.plinegen"), Some(MValue::Bool(true)));
+        let plinegen = matches!(
+            e.props
+                .get("dxf.plinegen")
+                .or_else(|| e.props.get("dwg.plinegen")),
+            Some(MValue::Bool(true))
+        );
         if is_3d_prop || !flat {
             let pts: Vec<Point3> = vertices.iter().map(|v| v.position).collect();
             self.polyline3d(out, a, &pts, closed);
@@ -1287,10 +1414,11 @@ impl Writer<'_> {
         out.real(41, width);
         out.int(71, attachment_code(attachment));
         out.int(72, 1);
-        let parts = chunks(&markup, 250);
+        let escaped = super::out::escape_text(&markup, out.utf8);
+        let parts = escaped_mtext_chunks(&escaped, 250);
         let last = parts.len().saturating_sub(1);
         for (i, part) in parts.iter().enumerate() {
-            out.text(if i == last { 1 } else { 3 }, part);
+            out.word(if i == last { 1 } else { 3 }, part);
         }
         if let Some(st) = &style {
             out.text(7, st);
@@ -1349,7 +1477,11 @@ impl Writer<'_> {
                 return;
             }
         };
-        let roles: Vec<String> = match e.props.get("dxf.dim.roles") {
+        let roles: Vec<String> = match e
+            .props
+            .get("dxf.dim.roles")
+            .or_else(|| e.props.get("dwg.dim_roles"))
+        {
             Some(MValue::List(l)) if l.len() == points.len() => l.iter().map(value_text).collect(),
             _ => default_roles.iter().map(|s| (*s).to_owned()).collect(),
         };
@@ -1364,6 +1496,8 @@ impl Writer<'_> {
             .or_else(|| points.first().copied())
             .unwrap_or_default();
         let block_name = block.and_then(|b| self.blocks.get(b).cloned());
+        let ordinate_x = ty == DimensionType::Ordinate
+            && matches!(e.props.get("dwg.dim_ordinate_x"), Some(MValue::Bool(true)));
         let flags = match prop_int(&e.props, "dxf.dim.flags") {
             Some(f) if f & 7 == code => f,
             _ => {
@@ -1371,7 +1505,7 @@ impl Writer<'_> {
                     32
                 } else {
                     0
-                }
+                } | if ordinate_x { 64 } else { 0 }
             }
         };
         let dimstyle = style
@@ -1407,7 +1541,9 @@ impl Writer<'_> {
         if let Some(m) = measurement.filter(|_| self.ge2007) {
             out.real(42, m);
         }
-        if let Some(v) = prop_f64(&e.props, "dxf.dim.text_rotation") {
+        if let Some(v) = prop_f64(&e.props, "dxf.dim.text_rotation")
+            .or_else(|| prop_f64(&e.props, "dwg.dim_text_rotation").map(f64::to_degrees))
+        {
             out.real(53, v);
         }
         let p = |role: &str| get(role).unwrap_or(def);
@@ -1416,8 +1552,18 @@ impl Writer<'_> {
             DimensionType::Linear | DimensionType::Aligned => {
                 out.point(13, p("13"));
                 out.point(14, p("14"));
+                if let Some(v) = prop_f64(&e.props, "dxf.dim.oblique")
+                    .or_else(|| {
+                        prop_f64(&e.props, "dwg.dim_ext_line_rotation").map(f64::to_degrees)
+                    })
+                    .filter(|v| *v != 0.0)
+                {
+                    out.real(52, v);
+                }
                 if ty == DimensionType::Linear {
-                    if let Some(v) = prop_f64(&e.props, "dxf.dim.rotation") {
+                    if let Some(v) = prop_f64(&e.props, "dxf.dim.rotation")
+                        .or_else(|| prop_f64(&e.props, "dwg.dim_rotation").map(f64::to_degrees))
+                    {
                         out.real(50, v);
                     }
                     self.sub(out, "AcDbRotatedDimension");
@@ -1460,7 +1606,7 @@ impl Writer<'_> {
         } else {
             pts.get(3).copied().unwrap_or(p3)
         };
-        let want = prop_text(&e.props, "dxf.type");
+        let want = prop_text(&e.props, "dxf.type").or_else(|| prop_text(&e.props, "dwg.face_type"));
         let planar_xy = same_z(pts);
         let use_solid = filled && planar_xy && want != Some("3DFACE");
         if use_solid {
@@ -1481,7 +1627,9 @@ impl Writer<'_> {
             out.point(11, p2);
             out.point(12, p3);
             out.point(13, p4);
-            if let Some(f) = prop_int(&e.props, "dxf.invisible_edges") {
+            if let Some(f) = prop_int(&e.props, "dxf.invisible_edges")
+                .or_else(|| prop_int(&e.props, "dwg.invisible_edges"))
+            {
                 out.int(70, f);
             }
         }
@@ -1533,23 +1681,40 @@ impl Writer<'_> {
     }
 
     fn attdef(&mut self, out: &mut Out, e: &Entity, a: &Attr) -> bool {
-        let Some(tag) = prop_text(&e.props, "dxf.attdef.tag") else {
+        let Some(tag) =
+            prop_text(&e.props, "dxf.attdef.tag").or_else(|| prop_text(&e.props, "dwg.tag"))
+        else {
             return false;
         };
-        let pos = prop_point(&e.props, "dxf.attdef.position").unwrap_or_default();
+        let pos = prop_point(&e.props, "dxf.attdef.position")
+            .or_else(|| prop_point(&e.props, "dwg.insertion_point"))
+            .unwrap_or_default();
+        let height = prop_f64(&e.props, "dxf.attdef.height")
+            .or_else(|| prop_f64(&e.props, "dwg.height"))
+            .unwrap_or(2.5);
+        let default_val = prop_text(&e.props, "dxf.attdef.default")
+            .or_else(|| prop_text(&e.props, "dwg.default"))
+            .unwrap_or("");
+        let prompt = prop_text(&e.props, "dxf.attdef.prompt")
+            .or_else(|| prop_text(&e.props, "dwg.prompt"))
+            .unwrap_or("");
+        let flags = prop_int(&e.props, "dxf.attdef.flags")
+            .or_else(|| prop_int(&e.props, "dwg.flags"))
+            .unwrap_or(0);
         self.head(out, "ATTDEF", a, "AcDbText");
         out.point(10, pos);
-        out.real(40, prop_f64(&e.props, "dxf.attdef.height").unwrap_or(2.5));
-        out.text(1, prop_text(&e.props, "dxf.attdef.default").unwrap_or(""));
-        if let Some(s) =
-            prop_text(&e.props, "dxf.attdef.style").and_then(|s| self.styles.get(s).cloned())
+        out.real(40, height);
+        out.text(1, default_val);
+        if let Some(s) = prop_text(&e.props, "dxf.attdef.style")
+            .or_else(|| prop_text(&e.props, "dwg.style"))
+            .and_then(|s| self.styles.get(s).cloned())
         {
             out.text(7, &s);
         }
         self.sub(out, "AcDbAttributeDefinition");
-        out.text(3, prop_text(&e.props, "dxf.attdef.prompt").unwrap_or(""));
+        out.text(3, prompt);
         out.text(2, tag);
-        out.int(70, prop_int(&e.props, "dxf.attdef.flags").unwrap_or(0));
+        out.int(70, flags);
         true
     }
 
@@ -1798,9 +1963,22 @@ impl Writer<'_> {
                                     continue;
                                 };
                                 let (s, en) = (to_local(p.position), to_local(q.position));
-                                body.int(72, 1);
-                                body.point2(10, s.x, s.y);
-                                body.point2(11, en.x, en.y);
+                                if let Some(arc) = cadkit_core::geom_ops::bulge_to_arc(
+                                    (s.x, s.y),
+                                    (en.x, en.y),
+                                    p.bulge,
+                                ) {
+                                    body.int(72, 2);
+                                    body.point2(10, arc.center.0, arc.center.1);
+                                    body.real(40, arc.radius);
+                                    body.real(50, arc.start_angle.to_degrees());
+                                    body.real(51, arc.end_angle().to_degrees());
+                                    body.int(73, i64::from(arc.is_ccw()));
+                                } else {
+                                    body.int(72, 1);
+                                    body.point2(10, s.x, s.y);
+                                    body.point2(11, en.x, en.y);
+                                }
                                 count += 1;
                             }
                         }
@@ -1811,14 +1989,24 @@ impl Writer<'_> {
             }
             out.int(97, 0);
         }
-        out.int(75, prop_int(&e.props, "dxf.hatch.style").unwrap_or(0));
+        out.int(
+            75,
+            prop_int(&e.props, "dxf.hatch.style")
+                .or_else(|| prop_int(&e.props, "dwg.hatch_style"))
+                .unwrap_or(0),
+        );
         out.int(76, 1);
         if !solid {
             out.real(52, angle.to_degrees());
             out.real(41, if scale > 0.0 { scale } else { 1.0 });
             out.int(77, 0);
-            match e.props.get("dxf.hatch.pattern_lines") {
-                Some(MValue::List(lines)) if !lines.is_empty() => {
+            let pattern_lines = e
+                .props
+                .get("dxf.hatch.pattern_lines")
+                .map(|v| (v, false))
+                .or_else(|| e.props.get("dwg.hatch_pattern_lines").map(|v| (v, true)));
+            match pattern_lines {
+                Some((MValue::List(lines), angle_in_radians)) if !lines.is_empty() => {
                     out.int(78, lines.len() as i64);
                     for line in lines {
                         let MValue::List(row) = line else { continue };
@@ -1830,7 +2018,15 @@ impl Writer<'_> {
                                 _ => 0.0,
                             })
                             .collect();
-                        out.real(53, nums.first().copied().unwrap_or(0.0));
+                        let raw_angle = nums.first().copied().unwrap_or(0.0);
+                        out.real(
+                            53,
+                            if angle_in_radians {
+                                raw_angle.to_degrees()
+                            } else {
+                                raw_angle
+                            },
+                        );
                         for (k, code) in [43, 44, 45, 46].into_iter().enumerate() {
                             out.real(code, nums.get(k + 1).copied().unwrap_or(0.0));
                         }

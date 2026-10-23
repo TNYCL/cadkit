@@ -20,14 +20,13 @@
 use std::collections::HashMap;
 
 use cadkit_core::{Error, ReadOptions, Result, Warning};
-use encoding_rs::Encoding;
 
 use crate::budget::Budget;
 use crate::cfb::{CompoundFile, EntryKind};
 use crate::le;
 use crate::native::element::UorPoint;
 use crate::native::linkage::{self, Linkage};
-use crate::text;
+use crate::text::{self, TextDecoder};
 use crate::zlib;
 
 const PAGE_HEADER_LEN: usize = 16;
@@ -300,11 +299,7 @@ pub fn read(bytes: &[u8], options: &ReadOptions) -> Result<V8File> {
     read_with(bytes, &mut budget, enc)
 }
 
-pub(crate) fn read_with(
-    bytes: &[u8],
-    budget: &mut Budget,
-    enc: &'static Encoding,
-) -> Result<V8File> {
+pub(crate) fn read_with(bytes: &[u8], budget: &mut Budget, enc: TextDecoder) -> Result<V8File> {
     if bytes.len() as u64 > budget.limits.max_input_bytes {
         return Err(Error::LimitExceeded(format!(
             "input exceeds {} bytes",
@@ -424,7 +419,7 @@ struct Ctx<'a, 'b> {
     numbered: HashMap<String, Vec<(u32, usize)>>,
     budget: &'b mut Budget,
     warnings: &'b mut Vec<Warning>,
-    enc: &'static Encoding,
+    enc: TextDecoder,
 }
 
 impl Ctx<'_, '_> {
@@ -686,7 +681,7 @@ fn walk_aux(data: &[u8], budget: &mut Budget) -> Result<(Vec<AuxRecord>, usize)>
 
 fn parse_model_index(
     b: &[u8],
-    _enc: &'static Encoding,
+    _enc: impl Into<TextDecoder>,
     warnings: &mut Vec<Warning>,
 ) -> Vec<ModelIndexEntry> {
     let mut out = Vec::new();
@@ -747,7 +742,8 @@ fn parse_model_index(
 
 /// Finds the type-66 element that ends exactly at the end of the model header stream
 /// (approach from ezdgn `find_model_header`) and decodes the fields used for mapping.
-pub(crate) fn parse_model_header(b: &[u8], enc: &'static Encoding) -> Option<ModelHeader> {
+pub(crate) fn parse_model_header(b: &[u8], enc: impl Into<TextDecoder>) -> Option<ModelHeader> {
+    let enc = enc.into();
     let rec = (0..b.len().saturating_sub(16)).step_by(4).find_map(|off| {
         if le::u32_at(b, off)? != 0 || le::u16_at(b, off + 4)? != 66 {
             return None;

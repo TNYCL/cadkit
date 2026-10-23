@@ -8,13 +8,14 @@ mod tables;
 
 use std::collections::HashMap;
 
+use cadkit_core::text::OemCodepage;
 use cadkit_core::{
-    Block, Document, Entity, EntityKind, Error, Format, LengthUnit, Model, ModelKind, Point3,
-    ReadOptions, Result, Units, Value as MValue,
+    Block, Document, Entity, EntityKind, Error, Format, Model, ModelKind, Point3, ReadOptions,
+    Result, Units, Value as MValue,
 };
 
 use self::common::{handle, model_value};
-use self::entities::{Ctx, Parsed};
+use self::entities::{Ctx, DxfEncoding, Parsed};
 use self::records::{Group, Record, RecordReader, parse_handle};
 use crate::native::{Pair, Tokenizer, Value, encoding_for_codepage};
 
@@ -63,6 +64,13 @@ fn is_paper_space(name: &str) -> bool {
         })
 }
 
+fn resolve_encoding(name: &str) -> Option<DxfEncoding> {
+    if let Some(oem) = OemCodepage::from_label(name) {
+        return Some(DxfEncoding::Oem(oem));
+    }
+    encoding_for_codepage(name).map(DxfEncoding::Whatwg)
+}
+
 /// Chooses the text encoding: UTF-8 for AC1021+, else `$DWGCODEPAGE`, else the caller's fallback,
 /// else windows-1252.
 fn pick_encoding(
@@ -70,23 +78,23 @@ fn pick_encoding(
     codepage: Option<&str>,
     fallback: Option<&str>,
     warn: &mut Vec<String>,
-) -> &'static encoding_rs::Encoding {
+) -> DxfEncoding {
     if version.is_some_and(|v| v >= "AC1021") {
-        return encoding_rs::UTF_8;
+        return DxfEncoding::Whatwg(encoding_rs::UTF_8);
     }
     if let Some(cp) = codepage {
-        match encoding_for_codepage(cp) {
+        match resolve_encoding(cp) {
             Some(e) => return e,
             None => warn.push(format!("unsupported $DWGCODEPAGE `{cp}`")),
         }
     }
     if let Some(fb) = fallback {
-        if let Some(e) = encoding_for_codepage(fb) {
+        if let Some(e) = resolve_encoding(fb) {
             return e;
         }
         warn.push(format!("unsupported fallback code page `{fb}`"));
     }
-    encoding_rs::WINDOWS_1252
+    DxfEncoding::Whatwg(encoding_rs::WINDOWS_1252)
 }
 
 /// Scans the HEADER for `$ACADVER` and `$DWGCODEPAGE` before the real decoding pass.
@@ -113,44 +121,7 @@ fn prescan(bytes: &[u8]) -> (Option<String>, Option<String>) {
 }
 
 fn length_unit(code: i64) -> Units {
-    use LengthUnit as U;
-    let (unit, m) = match code {
-        1 => (U::Inch, 0.0254),
-        2 => (U::Foot, 0.3048),
-        3 => (U::Mile, 1609.344),
-        4 => (U::Millimeter, 0.001),
-        5 => (U::Centimeter, 0.01),
-        6 => (U::Meter, 1.0),
-        7 => (U::Kilometer, 1000.0),
-        8 => (U::Microinch, 2.54e-8),
-        9 => (U::Mil, 2.54e-5),
-        10 => (U::Yard, 0.9144),
-        11 => (U::Angstrom, 1e-10),
-        12 => (U::Nanometer, 1e-9),
-        13 => (U::Micrometer, 1e-6),
-        14 => (U::Decimeter, 0.1),
-        15 => (U::Decameter, 10.0),
-        16 => (U::Hectometer, 100.0),
-        17 => (U::Gigameter, 1e9),
-        18 => (U::AstronomicalUnit, 149_597_870_700.0),
-        19 => (U::LightYear, 9.460_730_472_580_8e15),
-        20 => (U::Parsec, 3.085_677_581_491_4e16),
-        21 => (U::UsSurveyFoot, 1200.0 / 3937.0),
-        // US survey inch / yard / mile have no dedicated variant.
-        22 => (U::Custom, 100.0 / 3937.0),
-        23 => (U::Custom, 3600.0 / 3937.0),
-        24 => (U::Custom, 6_336_000.0 / 3937.0),
-        _ => {
-            return Units {
-                unit: U::Unitless,
-                meters_per_unit: None,
-            };
-        }
-    };
-    Units {
-        unit,
-        meters_per_unit: Some(m),
-    }
+    Units::from_insunits(i32::try_from(code).unwrap_or(0))
 }
 
 /// Most groups one record may hold. A pair costs about 40 bytes in memory, so 8 million caps
@@ -190,13 +161,16 @@ pub(crate) fn read(bytes: &[u8], options: &ReadOptions) -> Result<Document> {
     );
 
     let mut tok = Tokenizer::new(bytes);
-    tok.set_encoding(encoding);
+    match encoding {
+        DxfEncoding::Whatwg(enc) => tok.set_encoding(enc),
+        DxfEncoding::Oem(oem) => tok.set_oem_codepage(oem),
+    }
     tok.set_max_string_bytes(options.limits.max_string_bytes as usize);
     let max_pairs = record_pair_cap(options.limits.max_vertices, bytes.len());
     let mut rr = RecordReader::new(tok, max_pairs);
 
     let mut st = State {
-        ctx: Ctx::new(options),
+        ctx: Ctx::new(options, encoding),
         doc: Document::default(),
         is_r12: version.as_deref().is_none_or(|v| v <= "AC1009"),
         block_records: HashMap::new(),

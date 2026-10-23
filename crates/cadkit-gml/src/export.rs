@@ -269,21 +269,30 @@ pub fn from_document_with_report(
                 )?);
             }
             for a in &e.attributes {
-                object.properties.push(generic_attribute(&a.tag, &a.value)?);
+                match generic_attribute(&a.tag, &a.value) {
+                    Ok(attr) => object.properties.push(attr),
+                    Err(Error::Unsupported(_))
+                        if unsupported == UnsupportedGeometry::MetadataOnly =>
+                    {
+                        match &a.value {
+                            Value::Bool(b) => object
+                                .properties
+                                .push(generic_attribute(&a.tag, &Value::Text(b.to_string()))?),
+                            Value::List(_) => {
+                                let json = serde_json::to_string(&a.value)
+                                    .map_err(|err| Error::invalid(0, err.to_string()))?;
+                                object
+                                    .properties
+                                    .push(generic_attribute(&a.tag, &Value::Text(json))?);
+                            }
+                            Value::Null | Value::Bytes(_) => {}
+                            _ => {}
+                        }
+                    }
+                    Err(err) => return Err(err),
+                }
             }
-            // serde_json encodes non-finite numbers as null. An in-memory value
-            // roundtrip detects that loss even inside optional fields or metadata-only
-            // geometry, without decimal parsing or false float-rounding mismatches.
-            let value =
-                serde_json::to_value(e).map_err(|err| Error::invalid(0, err.to_string()))?;
-            let checked: Entity = serde_json::from_value(value)
-                .map_err(|_| Error::invalid(0, "entity cannot be preserved as JSON metadata"))?;
-            if checked != *e {
-                return Err(Error::invalid(
-                    0,
-                    "entity cannot be preserved as JSON metadata",
-                ));
-            }
+            // `validate_limits` has already verified that every float in `source` is finite.
             let metadata =
                 serde_json::to_string(e).map_err(|err| Error::invalid(0, err.to_string()))?;
             if metadata.len() as u64 > u64::from(options.limits.max_string_bytes) {

@@ -97,6 +97,47 @@ impl Units {
             _ => self.unit.meters(),
         }
     }
+
+    /// Maps a DWG/DXF `$INSUNITS` code (`0..=24`) to [`Units`], preserving US Survey inch (`22`),
+    /// yard (`23`), and mile (`24`) via [`LengthUnit::Custom`] and exact meter conversion factors.
+    pub fn from_insunits(code: i32) -> Self {
+        match code {
+            22 => Self {
+                unit: LengthUnit::Custom,
+                meters_per_unit: Some(100.0 / 3937.0),
+            },
+            23 => Self {
+                unit: LengthUnit::Custom,
+                meters_per_unit: Some(3600.0 / 3937.0),
+            },
+            24 => Self {
+                unit: LengthUnit::Custom,
+                meters_per_unit: Some(6_336_000.0 / 3937.0),
+            },
+            _ => {
+                let unit = LengthUnit::from_insunits(code);
+                Self {
+                    unit,
+                    meters_per_unit: unit.meters(),
+                }
+            }
+        }
+    }
+
+    /// Converts these units back to a DWG/DXF `$INSUNITS` code (`0..=24`), recognizing US Survey
+    /// inch (`22`), yard (`23`), and mile (`24`) when [`LengthUnit::Custom`] carries their meter factor.
+    pub fn to_insunits(&self) -> i32 {
+        if self.unit == LengthUnit::Custom {
+            match self.meters_per_unit {
+                Some(m) if (m - 100.0 / 3937.0).abs() < 1e-9 => 22,
+                Some(m) if (m - 3600.0 / 3937.0).abs() < 1e-9 => 23,
+                Some(m) if (m - 6_336_000.0 / 3937.0).abs() < 1e-6 => 24,
+                _ => 0,
+            }
+        } else {
+            self.unit.to_insunits()
+        }
+    }
 }
 
 #[cfg(test)]
@@ -116,8 +157,16 @@ mod tests {
         for code in 0..=21 {
             assert_eq!(LengthUnit::from_insunits(code).to_insunits(), code);
         }
+        for code in 0..=24 {
+            let u = Units::from_insunits(code);
+            assert_eq!(u.to_insunits(), code, "code {code} failed roundtrip");
+            if code >= 1 {
+                assert!(u.meters_per_unit().is_some());
+            }
+        }
         assert_eq!(LengthUnit::from_insunits(99), LengthUnit::Unitless);
         assert_eq!(LengthUnit::from_insunits(-1), LengthUnit::Unitless);
+        assert_eq!(Units::from_insunits(99).to_insunits(), 0);
         assert_eq!(LengthUnit::Custom.to_insunits(), 0);
     }
 

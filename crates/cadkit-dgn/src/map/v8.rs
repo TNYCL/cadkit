@@ -14,7 +14,7 @@ use crate::native::decode_v8::{self, DEP_TAG_TARGET};
 use crate::native::element::{ElementData, LevelData};
 use crate::native::linkage;
 use crate::native::v8::{self, ModelHeader, RawElement, V8File};
-use crate::text;
+use crate::text::{self, TextDecoder};
 
 /// Dependency application id linking a raster frame to its attachment (type 92 -> 94).
 const DEP_RASTER_FRAME: u16 = 0x271b;
@@ -28,19 +28,19 @@ pub(crate) fn read(bytes: &[u8], options: &ReadOptions) -> Result<Document> {
 
 fn items<'a>(
     elements: impl Iterator<Item = &'a RawElement>,
-    enc: &'static encoding_rs::Encoding,
+    enc: TextDecoder,
     options: &ReadOptions,
 ) -> Vec<Item<'a>> {
     elements
         .map(|r| Item {
-            el: decode_v8::decode(r, enc, &options.limits),
+            el: decode_v8::decode_with(r, enc, &options.limits),
             raw: &r.bytes,
             offset: r.offset as u64,
         })
         .collect()
 }
 
-fn map_file(file: &V8File, options: &ReadOptions, enc: &'static encoding_rs::Encoding) -> Document {
+fn map_file(file: &V8File, options: &ReadOptions, enc: TextDecoder) -> Document {
     let mut m = Mapper::new(options.keep_raw, options.limits.max_depth);
     let named = items(
         file.named_pages.iter().flat_map(|p| p.elements.iter()),

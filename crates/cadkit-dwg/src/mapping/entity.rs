@@ -12,8 +12,8 @@
 //!   in props.
 
 use cadkit_core::{
-    Attachment, Attribute, DimensionType, Entity, EntityKind, HAlign, HatchEdge, HatchLoop, Point3,
-    Props, VAlign, Value, Vec3, Vertex,
+    Attachment, Attribute, AttributeDisplay, DimensionType, Entity, EntityKind, HAlign, HatchEdge,
+    HatchLoop, Point3, Props, VAlign, Value, Vec3, Vertex,
 };
 
 use super::{Mapper, is_unit_z, list3, ocs_to_wcs, p3, v3};
@@ -21,7 +21,7 @@ use crate::native::{
     Dimension, DwgObject, Face, FaceKind, Hatch, HatchEdgeData, Image, MText, ObjectData, Polyline,
     PolylineKind, Text,
 };
-use cadkit_core::text::plain_text;
+use cadkit_core::text::{plain_text, plain_text_in};
 
 /// VERTEX record types.
 const VERTEX_TYPES: [u16; 5] = [0x0A, 0x0B, 0x0C, 0x0D, 0x0E];
@@ -238,7 +238,15 @@ impl Mapper<'_> {
                             a.row_spacing,
                         )
                     });
-                attributes = self.attributes(&ins.attribs, ins.attribs_are_range);
+                let parent_layer = obj
+                    .common
+                    .entity
+                    .as_ref()
+                    .and_then(|e| e.layer)
+                    .and_then(|h| self.names.layers.get(&h))
+                    .cloned();
+                attributes =
+                    self.attributes(&ins.attribs, ins.attribs_are_range, parent_layer.as_deref());
                 EntityKind::Insert {
                     block,
                     position: ocs_to_wcs(ins.extrusion, ins.position),
@@ -380,7 +388,12 @@ impl Mapper<'_> {
     }
 
     /// INSERT attributes from their ATTRIB records.
-    fn attributes(&mut self, list: &[u64], is_range: bool) -> Vec<Attribute> {
+    fn attributes(
+        &mut self,
+        list: &[u64],
+        is_range: bool,
+        parent_layer: Option<&str>,
+    ) -> Vec<Attribute> {
         let mut out = Vec::new();
         for h in self.child_handles(list, is_range, &[0x02]) {
             let Some(att) = self.file.objects.get(&h) else {
@@ -388,21 +401,54 @@ impl Mapper<'_> {
             };
             match &att.data {
                 ObjectData::Attrib(a) => {
-                    let pos = ocs_to_wcs(
-                        a.text.extrusion,
-                        [a.text.insertion[0], a.text.insertion[1], a.text.elevation],
-                    );
+                    let t = &a.text;
+                    let ins =
+                        ocs_to_wcs(t.extrusion, [t.insertion[0], t.insertion[1], t.elevation]);
+                    let align = t
+                        .alignment
+                        .map(|al| ocs_to_wcs(t.extrusion, [al[0], al[1], t.elevation]));
+                    let (h_align, v_align) = (halign(t.halign), valign(t.valign));
+                    let two_point = matches!(h_align, HAlign::Aligned | HAlign::Fit);
+                    let pos = match (h_align, v_align, align) {
+                        (HAlign::Left, VAlign::Baseline, _) | (_, _, None) => ins,
+                        _ if two_point => ins,
+                        (_, _, Some(al)) => al,
+                    };
                     // Multi-line attributes keep their text in the embedded MTEXT.
                     let value = a
                         .mtext
                         .as_ref()
-                        .map_or_else(|| a.text.value.clone(), |m| m.value.clone());
+                        .map_or_else(|| t.value.clone(), |m| m.value.clone());
+                    let parent = parent_layer.unwrap_or("0");
+                    let layer = att
+                        .common
+                        .entity
+                        .as_ref()
+                        .and_then(|e| e.layer)
+                        .and_then(|lh| self.names.layers.get(&lh))
+                        .filter(|l| !l.is_empty() && l.as_str() != parent)
+                        .cloned();
+                    let style = t
+                        .style
+                        .and_then(|sh| self.names.styles.get(&sh))
+                        .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("standard"))
+                        .cloned();
+                    let display = (t.height > 0.0).then_some(AttributeDisplay {
+                        height: t.height,
+                        width: t.height * t.width_factor,
+                        style,
+                        halign: h_align,
+                        valign: v_align,
+                        rotation: t.rotation,
+                    });
                     out.push(Attribute {
                         tag: a.tag.clone(),
                         value: Value::Text(value),
                         set: None,
                         position: Some(pos),
                         invisible: a.flags & 1 != 0,
+                        layer,
+                        display,
                         ..Default::default()
                     });
                 }
@@ -454,12 +500,16 @@ impl Mapper<'_> {
     }
 
     fn mtext_kind(&self, m: &MText) -> EntityKind {
+        let plain = match self.text_encoding {
+            Some(enc) => plain_text_in(&m.value, Some(&|b| enc.decode_byte(b))),
+            None => plain_text(&m.value),
+        };
         EntityKind::MText {
             position: p3(m.insertion),
             height: m.height,
             width: m.rect_width,
             rotation: ocs_angle(m.extrusion, m.x_axis),
-            plain: plain_text(&m.value),
+            plain,
             value: m.value.clone(),
             style: m.style.and_then(|h| self.names.styles.get(&h)).cloned(),
             attachment: attachment(m.attachment),

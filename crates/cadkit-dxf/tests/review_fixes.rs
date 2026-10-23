@@ -368,3 +368,202 @@ fn embedded_object_never_overrides_the_main_part() {
     );
     assert_eq!(v[0].attributes[1].value, Value::Text("plain".into()));
 }
+
+#[test]
+fn mtext_chunking_respects_250_bytes_after_escaping_and_preserves_surrogates() {
+    // 245 ASCII bytes + surrogate emoji (\U+D83D\U+DE00 = 14 bytes on pre-R2007) + Turkish + caret.
+    let val = format!("{}\u{1F600}^2\u{15F}{}", "a".repeat(245), "b".repeat(248));
+    let doc = model_doc(vec![Entity::new(EntityKind::MText {
+        position: p(0.0, 0.0, 0.0),
+        height: 2.5,
+        width: 50.0,
+        rotation: 0.0,
+        value: val.clone(),
+        plain: val.clone(),
+        style: None,
+        attachment: Attachment::TopLeft,
+        line_spacing: 1.0,
+        normal: Vec3::Z,
+    })]);
+    for ver in [DxfVersion::R2000, DxfVersion::R2004, DxfVersion::R2018] {
+        let dxf = cadkit_dxf::write(&doc, ver).unwrap();
+        // Inspect raw ASCII lines in MTEXT: every group 3 and group 1 line must be <= 250 bytes.
+        let lines: Vec<&str> = dxf.split("\r\n").collect();
+        let mut in_mtext = false;
+        let mut i = 0;
+        while i + 1 < lines.len() {
+            let code = lines[i].trim();
+            let text = lines[i + 1];
+            if code == "0" {
+                in_mtext = text == "MTEXT";
+            } else if in_mtext && (code == "3" || code == "1") {
+                assert!(
+                    text.len() <= 250,
+                    "{ver:?}: MTEXT chunk of {} bytes exceeds 250: {text}",
+                    text.len()
+                );
+            }
+            i += 2;
+        }
+        let back = read(dxf.as_bytes());
+        let EntityKind::MText { value: got, .. } = &back.models[0].entities[0].kind else {
+            panic!("expected MText");
+        };
+        assert_eq!(got, &val, "{ver:?}");
+    }
+}
+
+#[test]
+fn nested_bulged_polyline_hatch_edge_expands_to_arc() {
+    let doc = model_doc(vec![Entity::new(EntityKind::Hatch {
+        loops: vec![HatchLoop {
+            external: true,
+            edges: vec![
+                HatchEdge::Polyline {
+                    vertices: vec![
+                        Vertex {
+                            position: p(0.0, 0.0, 0.0),
+                            bulge: 1.0, // semicircle up to (10, 0)
+                            ..Vertex::default()
+                        },
+                        Vertex::at(p(10.0, 0.0, 0.0)),
+                    ],
+                    closed: false,
+                },
+                HatchEdge::Line {
+                    start: p(10.0, 0.0, 0.0),
+                    end: p(0.0, 0.0, 0.0),
+                },
+            ],
+        }],
+        solid: true,
+        pattern: None,
+        pattern_scale: 1.0,
+        pattern_angle: 0.0,
+        normal: Vec3::Z,
+    })]);
+    let dxf = cadkit_dxf::write(&doc, DxfVersion::R2013).unwrap();
+    let back = read(dxf.as_bytes());
+    let EntityKind::Hatch { loops, .. } = &back.models[0].entities[0].kind else {
+        panic!("expected Hatch");
+    };
+    assert_eq!(loops[0].edges.len(), 2);
+    match &loops[0].edges[0] {
+        HatchEdge::Arc {
+            center,
+            radius,
+            ccw,
+            ..
+        } => {
+            assert!(near(center.x, 5.0) && near(center.y, 0.0));
+            assert!(near(*radius, 5.0));
+            assert!(*ccw);
+        }
+        other => panic!("expected HatchEdge::Arc, got {other:?}"),
+    }
+}
+
+#[test]
+fn attribute_display_and_layer_roundtrip_and_dwg_props_bridge() {
+    let mut doc = Document::default();
+    doc.text_styles.push(TextStyle {
+        name: "ISO".into(),
+        font: Some("isocp.shx".into()),
+        width_factor: 1.0,
+        ..TextStyle::default()
+    });
+    let mut dwg_attdef = Entity::new(EntityKind::Unknown {
+        type_name: "dwg.ATTDEF".into(),
+    });
+    dwg_attdef
+        .props
+        .insert("dwg.tag".into(), Value::Text("ROOM".into()));
+    dwg_attdef
+        .props
+        .insert("dwg.default".into(), Value::Text("101".into()));
+    dwg_attdef
+        .props
+        .insert("dwg.prompt".into(), Value::Text("Room?".into()));
+    dwg_attdef
+        .props
+        .insert("dwg.height".into(), Value::Float(3.0));
+    doc.blocks.push(Block {
+        name: "TagBlk".into(),
+        entities: vec![dwg_attdef],
+        ..Block::default()
+    });
+
+    let mut ins = Entity::new(EntityKind::Insert {
+        block: "TagBlk".into(),
+        position: p(10.0, 20.0, 0.0),
+        scale: Vec3::new(1.0, 1.0, 1.0),
+        rotation: 0.0,
+        normal: Vec3::Z,
+        columns: 1,
+        rows: 1,
+        column_spacing: 0.0,
+        row_spacing: 0.0,
+    });
+    ins.layer = Some("0".into());
+    ins.attributes.push(Attribute {
+        tag: "ROOM".into(),
+        value: Value::Text("A-101".into()),
+        set: None,
+        position: Some(p(12.0, 24.0, 0.0)),
+        invisible: false,
+        layer: Some("Annotations".into()),
+        display: Some(AttributeDisplay {
+            height: 3.5,
+            width: 3.5 * 0.8,
+            style: Some("ISO".into()),
+            halign: HAlign::Center,
+            valign: VAlign::Middle,
+            rotation: 0.25,
+        }),
+        props: Props::new(),
+    });
+    doc.models.push(Model {
+        name: "Model".into(),
+        kind: ModelKind::Model,
+        entities: vec![ins],
+        ..Model::default()
+    });
+
+    let dxf = cadkit_dxf::write(&doc, DxfVersion::R2018).unwrap();
+    let back = read(dxf.as_bytes());
+    let got_att = &back.models[0].entities[0].attributes[0];
+    assert_eq!(got_att.layer.as_deref(), Some("Annotations"));
+    let disp = got_att.display.as_ref().expect("AttributeDisplay");
+    assert!(near(disp.height, 3.5));
+    assert!(near(disp.width, 3.5 * 0.8));
+    assert_eq!(disp.style.as_deref(), Some("ISO"));
+    assert_eq!(disp.halign, HAlign::Center);
+    assert_eq!(disp.valign, VAlign::Middle);
+    assert!(near(disp.rotation, 0.25));
+    assert!(
+        near(got_att.position.unwrap().x, 12.0) && near(got_att.position.unwrap().y, 24.0),
+        "{:?}",
+        got_att.position
+    );
+    // Block `dwg.ATTDEF` bridged into DXF ATTDEF.
+    assert!(back.blocks[0].entities.iter().any(
+        |e| matches!(&e.kind, EntityKind::Unknown { type_name } if type_name == "dxf.ATTDEF")
+    ));
+}
+
+#[test]
+fn oem_codepage_dos857_and_mtext_percent_codes_decode() {
+    // Pre-R2007 (`AC1015`) DXF declared with `$DWGCODEPAGE = DOS857`:
+    // raw byte 0x9E = 'Ş', and MTEXT `%%141` = 0x8D = 'ı' in CP857.
+    let mut raw = Vec::new();
+    raw.extend_from_slice(
+        b"0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1015\n9\n$DWGCODEPAGE\n3\nDOS857\n0\nENDSEC\n\
+          0\nSECTION\n2\nENTITIES\n0\nMTEXT\n8\n0\n10\n0\n20\n0\n40\n2.5\n1\nKat %%141 \x9e\n0\nENDSEC\n0\nEOF\n",
+    );
+    let doc = cadkit_dxf::read(&raw, &ReadOptions::default()).unwrap();
+    assert!(doc.warnings.is_empty(), "{:?}", doc.warnings);
+    let EntityKind::MText { plain, .. } = &doc.models[0].entities[0].kind else {
+        panic!("expected MText");
+    };
+    assert_eq!(plain, "Kat \u{131} \u{15e}");
+}

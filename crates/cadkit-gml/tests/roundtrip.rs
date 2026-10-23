@@ -484,3 +484,69 @@ fn holes_reach_svg_without_solid_fill_over_the_interior() {
     let svg = cadkit_core::svg::render(&doc, &cadkit_core::svg::SvgOptions::default());
     assert!(svg.contains("fill-rule=\"evenodd\""));
 }
+
+#[test]
+fn solid_shell_welds_vertices_within_tolerance_and_output_limit_is_limit_exceeded() {
+    // Perturb one shared cube corner on one face by 1e-9 (< default tolerance 1e-6).
+    let mut native = fixture();
+    let xml = String::from_utf8(write(&native, &ValidationOptions::default()).unwrap()).unwrap();
+    let perturbed = xml.replacen(
+        "<gml:pos>10 0 6</gml:pos>",
+        "<gml:pos>10.000000001 0 6</gml:pos>",
+        1,
+    );
+    let parsed = read_native(perturbed.as_bytes(), &ReadOptions::default()).unwrap();
+    let issues = geometry_issues(&parsed, &ValidationOptions::default()).unwrap();
+    assert!(
+        issues.is_empty(),
+        "expected sub-tolerance shell edge perturbation to weld cleanly, got {issues:?}"
+    );
+
+    // Output byte limit must surface as Error::LimitExceeded, not Error::Io.
+    let mut tight = ValidationOptions::default();
+    tight.limits.max_input_bytes = 32;
+    assert!(matches!(
+        write(&native, &tight),
+        Err(Error::LimitExceeded(_))
+    ));
+
+    // MetadataOnly export preserves Bool, Null, and List attributes without failing.
+    let mut e = cadkit_core::Entity::new(EntityKind::Point {
+        position: Point3::new(1.0, 2.0, 3.0),
+    });
+    e.attributes.push(cadkit_core::Attribute {
+        tag: "active".into(),
+        value: Value::Bool(true),
+        ..Default::default()
+    });
+    e.attributes.push(cadkit_core::Attribute {
+        tag: "empty".into(),
+        value: Value::Null,
+        ..Default::default()
+    });
+    e.attributes.push(cadkit_core::Attribute {
+        tag: "tags".into(),
+        value: Value::List(vec![Value::Int(1), Value::Text("a".into())]),
+        ..Default::default()
+    });
+    let mut src = Document::default();
+    src.models.push(cadkit_core::Model {
+        name: "Model".into(),
+        entities: vec![e],
+        ..Default::default()
+    });
+    let opts = cadkit_gml::ExportOptions {
+        srs_name: "EPSG:4979".into(),
+        lod: 1,
+        limits: cadkit_core::Limits::default(),
+    };
+    assert!(cadkit_gml::from_document(&src, &opts).is_err());
+    let (exported, _) = cadkit_gml::from_document_with_report(
+        &src,
+        &opts,
+        cadkit_gml::UnsupportedGeometry::MetadataOnly,
+    )
+    .unwrap();
+    native = exported;
+    assert!(write(&native, &ValidationOptions::default()).is_ok());
+}

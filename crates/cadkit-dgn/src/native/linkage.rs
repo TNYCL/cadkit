@@ -5,10 +5,8 @@
 //! linkage), and the `u16` at `+2` is the linkage id. A linkage whose first two bytes are
 //! `00 00` or `00 80` is an 8-byte V7 DMRS database linkage.
 
-use encoding_rs::Encoding;
-
 use crate::le;
-use crate::text::{self, StringEncoding};
+use crate::text::{self, StringEncoding, TextDecoder};
 
 /// V8 string linkage id (model names, cell names, level names, file names ...).
 pub const STRING_LINKAGE: u16 = 0x56d2;
@@ -85,7 +83,13 @@ pub struct Linkage {
 /// Splits the attribute area `attr` (starting at element offset `base`) into linkages.
 ///
 /// `v8` selects V8 rules: zero padding ends the area instead of being read as DMRS.
-pub(crate) fn parse(attr: &[u8], base: usize, v8: bool, enc: &'static Encoding) -> Vec<Linkage> {
+pub(crate) fn parse(
+    attr: &[u8],
+    base: usize,
+    v8: bool,
+    enc: impl Into<TextDecoder>,
+) -> Vec<Linkage> {
+    let enc = enc.into();
     let mut out = Vec::new();
     let mut off = 0usize;
     while off < attr.len() {
@@ -160,7 +164,7 @@ pub(crate) fn parse(attr: &[u8], base: usize, v8: bool, enc: &'static Encoding) 
     out
 }
 
-fn decode(id: u16, b: &[u8], v8: bool, enc: &'static Encoding) -> LinkageData {
+fn decode(id: u16, b: &[u8], v8: bool, enc: TextDecoder) -> LinkageData {
     match id {
         STRING_LINKAGE if v8 => {
             let (Some(string_id), Some(len)) = (le::u32_at(b, 4), le::u32_at(b, 8)) else {
@@ -254,7 +258,7 @@ pub(crate) fn dependency_root(linkages: &[Linkage], app_id: u16) -> Option<u64> 
 mod tests {
     use super::*;
 
-    fn enc() -> &'static Encoding {
+    fn enc() -> &'static encoding_rs::Encoding {
         encoding_rs::WINDOWS_1252
     }
 

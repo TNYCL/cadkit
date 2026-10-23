@@ -41,7 +41,7 @@ Private client drawings in `corpus/private/` are used only for local, structural
 
 - `cadkit-dwg`: R2007 (AC1021) LZ77 decompressor ported from ACadSharp `DwgLZ77AC21Decompressor.cs` (MIT, © DomCR); R2007 container read flow follows ACadSharp `DwgReader.cs`. Spec errata found during implementation are listed in `docs/dwg/FORMAT_NOTES.md`.
 - `cadkit-dgn`: default 256-color DGN palette ported from GDAL dgnlib `abyDefaultPCT` (MIT/X) → `src/palette.rs`; V7 element layouts, TCB, tag set/tag value layouts follow GDAL dgnlib; V7 description-length rule and shared-cell offsets from ezdgn (MIT) → `src/native/v7.rs`; V8 model-header search from ezdgn → `src/native/v8.rs`. Full source table in `docs/dgn/FORMAT_NOTES.md`.
-- `cadkit-core`: ACI color table from ACadSharp `Color.cs` (MIT), entries 250–254 corrected to the published AutoCAD greys.
+- `cadkit-core`: ACI color table from ACadSharp `Color.cs` (MIT), entries 250–254 corrected to the published AutoCAD greys; DOS/OEM single-byte high-half (`0x80..=0xFF`) character tables (`CP437`, `CP850`, `CP852`, `CP855`, `CP857`, `CP860`, `CP861`, `CP863`, `CP864`, `CP865`, `CP869`) from the Unicode Consortium Public Mapping tables (`PUBLIC/MAPPINGS/VENDORS/MICSFT/PC/`, Unicode License v3) → `src/text.rs`.
 
 ## CityGML and DGN writing additions
 
@@ -75,8 +75,7 @@ Private client drawings in `corpus/private/` are used only for local, structural
   variation between attachments, cross ids, XAttribute 170 framing). New
   attachments copy a seed attachment and rewrite only the fields that analysis
   identified; tests use invented records. No external implementation was consulted.
-- `cadkit-core`'s existing serde_json workspace dependency is now used for a
-  bounded streaming writer preflight; no new serialization format is introduced.
+- `cadkit-core` writer preflight (`validate_limits`) validates object, vertex, nesting, string, finite-float, and byte budgets directly on the in-memory `Document` AST without extra dependencies.
 - DGN V8 type-17 range writing uses own byte inspection of the existing public
   GDAL and Safe Software samples: low slots are absolute UOR bounds and high
   slots are relative spans (0.3.0 found the same extent rule for every graphic

@@ -427,21 +427,10 @@ pub fn write_v8(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<V
         .to_vec();
     full_header.extend(mh);
     replacements.insert(mh_path, Some(compressed(&full_header)?));
-    let h = container::stream(seed, "Dgn~H", options.limits.max_input_bytes)?;
-    let inflated = crate::zlib::inflate(
-        h.get(0x14..)
-            .ok_or_else(|| Error::invalid(0, "short DGN file header"))?,
-        usize::try_from(options.limits.max_decompressed_bytes).unwrap_or(usize::MAX),
-    );
-    if inflated.problem.is_some() || inflated.data.len() != 1576 {
-        return Err(Error::Unsupported(
-            "unrecognized DGN file header layout".into(),
-        ));
-    }
-    let mut data = inflated.data;
+    let mut data = seed_header.data;
     u64_at(&mut data, 0x128, max_id)?;
     // Keep the seed header's timestamp and revision fields until their layout is verified across more samples.
-    let mut h = h
+    let mut h = header_stream
         .get(..0x14)
         .ok_or_else(|| Error::invalid(0, "short DGN header"))?
         .to_vec();

@@ -10,13 +10,13 @@ use cadkit_core::{
 use crate::budget::Budget;
 use crate::map::{Item, Mapper, Xf, tree_v7, unit_from_label};
 use crate::native::element::ElementData;
-use crate::native::v7::{self, V7File, description_end};
-use crate::text;
+use crate::native::v7::{self, V7View, description_end_bytes};
+use crate::text::{self, TextDecoder};
 
 pub(crate) fn read(bytes: &[u8], options: &ReadOptions) -> Result<Document> {
     let mut budget = Budget::new(options.limits);
     let enc = text::encoding_for(options.fallback_codepage.as_deref());
-    let file = v7::read_with(bytes, &mut budget, enc)?;
+    let file = v7::scan(bytes, &mut budget, enc)?;
     Ok(map_file(&file, options, enc))
 }
 
@@ -31,7 +31,7 @@ fn is_control(item: &Item<'_>) -> bool {
         )
 }
 
-fn map_file(file: &V7File, options: &ReadOptions, enc: &'static encoding_rs::Encoding) -> Document {
+fn map_file(file: &V7View<'_>, options: &ReadOptions, enc: TextDecoder) -> Document {
     let mut m = Mapper::new(options.keep_raw, options.limits.max_depth);
     let mut warnings = file.warnings.clone();
 
@@ -40,11 +40,14 @@ fn map_file(file: &V7File, options: &ReadOptions, enc: &'static encoding_rs::Enc
         .iter()
         .map(|r| {
             let item = Item {
-                el: v7::decode(r, file.is_3d, enc, &options.limits),
-                raw: &r.bytes,
+                el: v7::decode_bytes(r.bytes, file.is_3d, enc, &options.limits),
+                raw: r.bytes,
                 offset: r.offset as u64,
             };
-            (item, description_end(r).map(|e| e as u64))
+            (
+                item,
+                description_end_bytes(r.offset, r.bytes).map(|e| e as u64),
+            )
         })
         .collect();
     let deleted = all.iter().filter(|(i, _)| i.el.header.deleted).count();
