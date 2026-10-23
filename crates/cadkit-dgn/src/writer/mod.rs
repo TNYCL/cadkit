@@ -104,7 +104,7 @@ fn compressed(bytes: &[u8]) -> Result<Vec<u8>> {
     encoder.write_all(bytes)?;
     Ok(encoder.finish()?)
 }
-fn page(records: &[Vec<u8>], version: u32, number: u32) -> Result<Vec<u8>> {
+fn page(records: &[Vec<u8>], version: u32, _number: u32) -> Result<Vec<u8>> {
     let mut data = vec![];
     for b in records {
         data.extend(0u32.to_le_bytes());
@@ -118,8 +118,6 @@ fn page(records: &[Vec<u8>], version: u32, number: u32) -> Result<Vec<u8>> {
             .map_err(|_| Error::LimitExceeded("DGN page records".into()))?,
     )?;
     u32_at(&mut out, 4, version)?;
-    u32_at(&mut out, 8, number)?;
-    u32_at(&mut out, 12, records.len() as u32)?;
     out.extend(compressed(&data)?);
     Ok(out)
 }
@@ -237,6 +235,13 @@ pub fn write_v8(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<V
         ));
     }
     let max_id = max_id.max(le::u64_at(&seed_header.data, 0x128).unwrap_or(0));
+    let mut effective_options = options.clone();
+    if effective_options.timestamp_ms == 0.0 {
+        effective_options.timestamp_ms = le::f64_at(&seed_header.data, 0x130)
+            .filter(|v| v.is_finite() && *v > 0.0)
+            .unwrap_or(0.0);
+    }
+    let options = &effective_options;
     let rasters = raster::Preserved::prepare(doc, seed, model, &read, options)?;
     let mut tables = Tables::new(&native.named_pages, max_id, &read)?;
     tables.observe_model_fonts(
@@ -358,7 +363,7 @@ pub fn write_v8(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<V
             let header = PageHeader {
                 record_count: 0,
                 format_version: template.aux_version,
-                page_number: *number,
+                page_number: 0,
                 population: 0,
             };
             replacements.insert(

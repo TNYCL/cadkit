@@ -192,7 +192,7 @@ impl Preserved {
             out.objects += retained.records.len() as u64;
             out.auxiliary.push(retained);
         }
-        out.keep_control_counter = !dropped_aux && !model.control_aux.is_empty();
+        out.keep_control_counter = options.preserve_seed_controls && !dropped_aux;
         if requested.is_empty() {
             if out.bytes > options.limits.max_decompressed_bytes
                 || out.objects >= options.limits.max_objects
@@ -296,9 +296,10 @@ impl Preserved {
     }
 }
 
-/// An auxiliary page stream: the 16-byte page header (record count, format version, page
-/// number, population = record count) and the zlib-compressed records, each a 28-byte
-/// header (magic `0xA11B`, payload length, kind, reserved, element id, flags) + payload.
+/// An auxiliary page stream: the 16-byte page header (`{record count, format version, 0, 0}`
+/// as MicroStation writes every auxiliary page) and the zlib-compressed records, each a
+/// 28-byte header (magic `0xA11B`, payload length, kind, reserved, element id, flags) +
+/// payload.
 pub(super) fn aux_page(records: &[AuxRecord], header: PageHeader) -> Result<Vec<u8>> {
     let mut payload = Vec::new();
     for a in records {
@@ -322,8 +323,6 @@ pub(super) fn aux_page(records: &[AuxRecord], header: PageHeader) -> Result<Vec<
         .map_err(|_| Error::LimitExceeded("raster auxiliary count".into()))?;
     u32_at(&mut encoded, 0, count)?;
     u32_at(&mut encoded, 4, header.format_version)?;
-    u32_at(&mut encoded, 8, header.page_number)?;
-    u32_at(&mut encoded, 12, count)?;
     encoded.extend(compressed(&payload)?);
     Ok(encoded)
 }

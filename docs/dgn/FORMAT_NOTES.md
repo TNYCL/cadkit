@@ -65,9 +65,12 @@ Standard `[MS-CFB]`: signature `D0 CF 11 E0 A1 B1 1A E1`, 512-byte header, secto
 first directory sector `0x30`, mini stream cutoff `0x38` (4096), first mini FAT sector
 `0x3C`, first DIFAT sector `0x44`, DIFAT count `0x48`, 109 header DIFAT entries at `0x4C`.
 Directory entries are 128 bytes (name UTF-16 `0x00`, name length `0x40`, type `0x42`,
-left/right/child `0x44`/`0x48`/`0x4C`, start sector `0x74`, size `0x78`; the high size
-dword is ignored for version 3). Streams below the cutoff live in the mini stream (the
-root entry's chain). All observed DGN files are version 3.
+color `0x43`, left/right/child `0x44`/`0x48`/`0x4C`, start sector `0x74`, size `0x78`;
+the high size dword is ignored for version 3). Streams below the cutoff live in the mini
+stream (the root entry's chain). All observed DGN files are version 3. MicroStation writes
+`Dgn~H` at directory entry 1, `Dgn~S` at entry 2, `Dgn-Md` at entry 3, and balances every
+storage's child tree with top-down 2-3-4 red-black insertion in directory slot order
+(524 of 567 private corpus files match bit for bit; the remaining 43 reused freed slots).
 
 Short final sector: `[MS-CFB]` files are whole sectors, but 2 of 112 private V8 files
 (written by the same application version as the other 110) end inside their last sector,
@@ -108,8 +111,8 @@ index. Pages of 16 bytes have no payload (record count 0).
 |---|---|---|
 | `0x00` | u32 | record count |
 | `0x04` | u32 | page format version (2 or 3 observed) |
-| `0x08` | u32 | page number (0 in some writers; 0 on every MicroStation dictionary page) |
-| `0x0C` | u32 | population (0 in some writers; 0 on every MicroStation dictionary page) |
+| `0x08` | u32 | page number (0 on every MicroStation page: 8,905 of 8,905 pages in the private corpus) |
+| `0x0C` | u32 | population (0 on every MicroStation page: 8,905 of 8,905 pages in the private corpus) |
 | `0x10` | zlib | records |
 
 Records follow back to back: `u32` prefix (always 0 observed), then the element. Element
