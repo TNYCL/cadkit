@@ -26,7 +26,7 @@ categories = ["parser-implementations", "graphics", "encoding", "science::geo"]
 
 [workspace.dependencies]
 cadkit-core = { path = "crates/cadkit-core", version = "0.3.7" }
-cadkit-dgn = { path = "crates/cadkit-dgn", version = "0.3.7" }
+cadkit-dgn = { path = "crates/cadkit-dgn", version = "0.3.7", default-features = false }
 cadkit-dwg = { path = "crates/cadkit-dwg", version = "0.3.7" }
 cadkit-dxf = { path = "crates/cadkit-dxf", version = "0.3.7" }
 cadkit-gml = { path = "crates/cadkit-gml", version = "0.3.7" }

@@ -257,12 +257,14 @@ fn transcode_u_escapes(ascii: &str, enc: OutEncoder) -> Vec<u8> {
         if b == b'\\' {
             if let Some(u1) = parse_u_escape(bytes, i) {
                 if (0xD800..=0xDBFF).contains(&u1) {
-                    if let Some(u2) = parse_u_escape(bytes, i + 7)
-                        && (0xDC00..=0xDFFF).contains(&u2)
+                    if let Some(u2) =
+                        parse_u_escape(bytes, i + 7).filter(|unit| (0xDC00..=0xDFFF).contains(unit))
                     {
-                        if let Some(Ok(ch)) = char::decode_utf16([u1, u2]).next()
-                            && enc.encode_into(ch, &mut out)
-                        {
+                        let encoded = char::decode_utf16([u1, u2])
+                            .next()
+                            .and_then(Result::ok)
+                            .is_some_and(|ch| enc.encode_into(ch, &mut out));
+                        if encoded {
                             i += 14;
                             continue;
                         }
@@ -272,8 +274,8 @@ fn transcode_u_escapes(ascii: &str, enc: OutEncoder) -> Vec<u8> {
                         i += 14;
                         continue;
                     }
-                } else if let Some(ch) = char::from_u32(u32::from(u1))
-                    && enc.encode_into(ch, &mut out)
+                } else if char::from_u32(u32::from(u1))
+                    .is_some_and(|ch| enc.encode_into(ch, &mut out))
                 {
                     i += 7;
                     continue;

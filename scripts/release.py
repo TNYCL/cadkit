@@ -131,7 +131,7 @@ def cmd_check(args: argparse.Namespace) -> None:
     version = workspace_version(meta)
     problems = []
     toml, _ = read_text("Cargo.toml")
-    for name, pinned in re.findall(r'^(cadkit[\w-]*) = \{ path = "[^"]+", version = "([^"]+)" \}', toml, re.M):
+    for name, pinned in re.findall(r'^(cadkit[\w-]*) = \{ path = "[^"]+", version = "([^"]+)"(?:,[^}\n]*)? \}', toml, re.M):
         if pinned != version:
             problems.append(f"[workspace.dependencies] {name} pins {pinned}, workspace is {version}")
     if args.tag is not None:
@@ -162,7 +162,7 @@ def cmd_bump(args: argparse.Namespace) -> None:
     toml, n = re.subn(r'(\[workspace\.package\][^\[]*?\nversion = ")[^"]+(")', rf"\g<1>{new}\g<2>", toml, count=1)
     if n != 1:
         fail("workspace version not found in Cargo.toml")
-    toml = re.sub(r'^(cadkit[\w-]* = \{ path = "[^"]+", version = ")[^"]+(" \})', rf"\g<1>{new}\g<2>", toml, flags=re.M)
+    toml = re.sub(r'^(cadkit[\w-]* = \{ path = "[^"]+", version = ")[^"]+("(?:,[^}\n]*)? \})', rf"\g<1>{new}\g<2>", toml, flags=re.M)
     write_text("Cargo.toml", toml, crlf)
 
     log, crlf = read_text("CHANGELOG.md")
