@@ -6,6 +6,24 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-10-23
+
+DGN CFB directory trees, page header counters, and default element timestamps match
+MicroStation V8 output.
+
+### Fixed
+
+- `write_v8` orders the CFB directory with `Dgn~H` at slot 1, `Dgn~S` at slot 2, and
+  `Dgn-Md` at slot 3 (each storage before its child streams, `^AH` before `$1` in
+  `Dgn^GA`/`Dgn^CA`), and rebalances every storage's child sibling tree in place using
+  top-down 2-3-4 red-black insertion in directory slot order. The `cfb` crate wrote
+  storages first and left sibling trees as unbalanced all-black chains.
+- All DGN `$` page streams (`Dgn^G`, `Dgn^C`, `Dgn^GA`, `Dgn^CA`, `Dgn^Nm`, `Dgn^NmA`)
+  write `(page_number, population) == (0, 0)` at bytes `8..16` of the 16-byte page header,
+  and `Dgn-Md/#000000/Dgn^CA/^AH` is preserved when `preserve_seed_controls` is enabled.
+- When `WriteOptions::timestamp_ms` is `0.0`, `write_v8` defaults element timestamps to
+  the seed's `Dgn~H` timestamp at offset `0x130`.
+
 ## [0.3.5] - 2026-10-19
 
 DGN dictionary pages keep the seed's layout, so a level table is no longer split across
