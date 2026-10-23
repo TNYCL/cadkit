@@ -405,6 +405,24 @@ fn read_section(
 
 /// Reads an R2007 file.
 pub fn read<'a>(bytes: &'a [u8], version: DwgVersion, limits: &Limits) -> Result<Container<'a>> {
+    read_impl(bytes, version, limits, false)
+}
+
+/// Reads only the R2007 file header, page/section maps, and `AcDb:Header` section.
+pub fn read_header_only<'a>(
+    bytes: &'a [u8],
+    version: DwgVersion,
+    limits: &Limits,
+) -> Result<Container<'a>> {
+    read_impl(bytes, version, limits, true)
+}
+
+fn read_impl<'a>(
+    bytes: &'a [u8],
+    version: DwgVersion,
+    limits: &Limits,
+    header_only: bool,
+) -> Result<Container<'a>> {
     let mut c = Container::new(version);
     let mut meta = ByteReader::new(bytes);
     meta.skip(0x0B)?;
@@ -478,6 +496,9 @@ pub fn read<'a>(bytes: &'a [u8], version: DwgVersion, limits: &Limits) -> Result
         ("AcDb:AcDbObjects", 3),
         ("AcDb:Template", 4),
     ] {
+        if header_only && slot != 0 {
+            continue;
+        }
         let Some(info) = sections.get(name) else {
             if slot != 4 {
                 c.warn(

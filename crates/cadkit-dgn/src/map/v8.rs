@@ -395,7 +395,7 @@ fn map_file(file: &V8File, options: &ReadOptions, enc: TextDecoder) -> Document 
 }
 
 /// Document units from a model header: the master unit definition, else its label.
-fn units_of(h: Option<&ModelHeader>) -> (Units, Option<f64>) {
+pub(crate) fn units_of(h: Option<&ModelHeader>) -> (Units, Option<f64>) {
     let Some(h) = h else {
         return (Units::default(), None);
     };

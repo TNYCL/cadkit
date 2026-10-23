@@ -1,7 +1,7 @@
 //! Clean-room reader for DWG drawings, format versions R13 through 2018
 //! (`AC1012`, `AC1014`, `AC1015`, `AC1018`, `AC1021`, `AC1024`, `AC1027`, `AC1032`).
 //!
-//! Contract used by the `cadkit` facade: [`sniff`] and [`read`]. The [`native`]
+//! Contract used by the `cadkit` facade: [`sniff`], [`inspect`] and [`read`]. The [`native`]
 //! module exposes the decoded file losslessly (header variables, classes, object
 //! map, every object with its common data, type-specific data and raw bytes).
 //!
@@ -26,13 +26,49 @@ mod object;
 mod reader;
 mod version;
 
-use cadkit_core::{Document, ReadOptions, Result};
+use cadkit_core::{Document, Format, ReadOptions, Result, Summary, Units};
 
 pub use version::DwgVersion;
 
 /// Returns true when `bytes` start with the magic of a supported DWG version.
 pub fn sniff(bytes: &[u8]) -> bool {
     bytes.get(..6).and_then(DwgVersion::from_magic).is_some()
+}
+
+/// Inspects the DWG file header and `AcDb:Header` variables without decoding object streams.
+pub fn inspect(bytes: &[u8], options: &ReadOptions) -> Result<Summary> {
+    let c = container::read_header_only(bytes, &options.limits)?;
+    let (encoding, _) = codepage::resolve(c.codepage, options.fallback_codepage.as_deref());
+    let ctx = object::DecodeContext {
+        version: c.version,
+        encoding,
+        max_string: options.limits.max_string_bytes,
+        max_vertices: options.limits.max_vertices,
+    };
+    let (units, is_3d) = match &c.header {
+        Some(section) => match header::parse(section, c.maintenance, ctx) {
+            Ok((vars, _)) => {
+                let units = vars
+                    .int("INSUNITS")
+                    .map_or_else(Units::default, |u| Units::from_insunits(u as i32));
+                let is_3d = match (vars.point3("EXTMIN"), vars.point3("EXTMAX")) {
+                    (Some([_, _, z0]), Some([_, _, z1]))
+                        if z0.is_finite() && z1.is_finite() && z0 <= z1 =>
+                    {
+                        (z0.abs() > 1e-12 || z1.abs() > 1e-12).then_some(true)
+                    }
+                    _ => None,
+                };
+                (Some(units), is_3d)
+            }
+            Err(_) => (None, None),
+        },
+        None => (None, None),
+    };
+    Ok(Summary::new(Format::Dwg, c.version.magic())
+        .with_is_3d(is_3d)
+        .with_units(units)
+        .with_codepage(Some(encoding.name().to_owned())))
 }
 
 /// Reads a whole file into the format-neutral model.
@@ -65,5 +101,7 @@ mod tests {
         assert!(read(b"AC1015", &options).is_err());
         assert!(read(b"AC1018", &options).is_err());
         assert!(read(b"AC1021", &options).is_err());
+        assert!(inspect(b"not a drawing", &options).is_err());
+        assert!(inspect(b"AC1015", &options).is_err());
     }
 }

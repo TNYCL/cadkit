@@ -19,7 +19,7 @@
 
 use std::collections::HashMap;
 
-use cadkit_core::{Error, ReadOptions, Result, Warning};
+use cadkit_core::{Error, Format, ReadOptions, Result, Summary, Warning};
 
 use crate::budget::Budget;
 use crate::cfb::{CompoundFile, EntryKind};
@@ -297,6 +297,63 @@ pub fn read(bytes: &[u8], options: &ReadOptions) -> Result<V8File> {
     let mut budget = Budget::new(options.limits);
     let enc = text::encoding_for(options.fallback_codepage.as_deref());
     read_with(bytes, &mut budget, enc)
+}
+
+/// Inspects the V8 summary stream and first model header (`Dgn~Mh`) without inflating graphic pages.
+pub(crate) fn inspect(bytes: &[u8], options: &ReadOptions) -> Result<Summary> {
+    let mut budget = Budget::new(options.limits);
+    if bytes.len() as u64 > budget.limits.max_input_bytes {
+        return Err(Error::LimitExceeded(format!(
+            "input exceeds {} bytes",
+            budget.limits.max_input_bytes
+        )));
+    }
+    let cf = CompoundFile::parse(bytes)?;
+    let paths = cf.paths();
+    if !paths.iter().any(|p| p.path.eq_ignore_ascii_case("Dgn~H")) {
+        return Err(Error::UnknownFormat);
+    }
+    let enc = text::encoding_for(options.fallback_codepage.as_deref());
+    let mut warnings = Vec::new();
+    let mut ctx = Ctx {
+        cf: &cf,
+        paths,
+        by_path: index_streams(paths),
+        numbered: HashMap::new(),
+        budget: &mut budget,
+        warnings: &mut warnings,
+        enc,
+    };
+    let summary = ctx
+        .stream("\u{5}SummaryInformation")?
+        .map(|b| parse_summary(&b))
+        .unwrap_or_default();
+    let mut storages: Vec<&str> = paths
+        .iter()
+        .filter(|p| p.kind == EntryKind::Storage)
+        .filter_map(|p| p.path.strip_prefix("Dgn-Md/"))
+        .filter(|rest| rest.starts_with('#') && !rest.contains('/'))
+        .collect();
+    storages.sort_unstable();
+    storages.dedup();
+    let mut first_header = None;
+    for storage in storages {
+        let mh_path = format!("Dgn-Md/{storage}/Dgn~Mh");
+        if let Some(raw) = ctx.stream(&mh_path)? {
+            let inflated = ctx.inflate(&mh_path, &raw, 0)?;
+            if let Some(h) = parse_model_header(&inflated, ctx.enc) {
+                first_header = Some(h);
+                break;
+            }
+        }
+    }
+    let (units, _) = crate::map::v8::units_of(first_header.as_ref());
+    let is_3d = first_header.as_ref().map(|h| h.is_3d);
+    Ok(Summary::new(Format::DgnV8, "V8")
+        .with_is_3d(is_3d)
+        .with_units(Some(units))
+        .with_codepage(Some(enc.name().to_ascii_lowercase()))
+        .with_application(summary.application))
 }
 
 pub(crate) fn read_with(bytes: &[u8], budget: &mut Budget, enc: TextDecoder) -> Result<V8File> {

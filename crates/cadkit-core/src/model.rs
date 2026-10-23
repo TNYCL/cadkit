@@ -52,6 +52,101 @@ pub struct Document {
     pub warnings: Vec<Warning>,
 }
 
+impl Document {
+    /// Creates an empty drawing document.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Returns the primary design model (`ModelKind::Model`), falling back to the first model.
+    pub fn model_space(&self) -> Option<&Model> {
+        self.models
+            .iter()
+            .find(|m| m.kind == ModelKind::Model)
+            .or_else(|| self.models.first())
+    }
+
+    /// Returns a mutable reference to the primary design model, creating `"Model"` if `models` is empty.
+    pub fn model_space_mut(&mut self) -> &mut Model {
+        if self.models.is_empty() {
+            self.models.push(Model {
+                name: "Model".to_owned(),
+                kind: ModelKind::Model,
+                ..Model::default()
+            });
+        }
+        let idx = self
+            .models
+            .iter()
+            .position(|m| m.kind == ModelKind::Model)
+            .unwrap_or(0);
+        #[allow(clippy::expect_used)]
+        self.models
+            .get_mut(idx)
+            .expect("idx is in bounds of non-empty models")
+    }
+
+    /// Iterates over paper-space layout and sheet models (`kind != ModelKind::Model`).
+    pub fn layouts(&self) -> impl Iterator<Item = &Model> {
+        self.models.iter().filter(|m| m.kind != ModelKind::Model)
+    }
+
+    /// Iterates over top-level entities across all [`Document::models`].
+    pub fn all_entities(&self) -> impl Iterator<Item = &Entity> {
+        self.models.iter().flat_map(|m| m.entities.iter())
+    }
+
+    /// Iterates over top-level entities across all models whose effective layer matches `layer`
+    /// (treating `None` on an entity as layer `"0"`).
+    pub fn entities_on_layer<'a>(
+        &'a self,
+        layer: &'a str,
+    ) -> impl Iterator<Item = &'a Entity> + 'a {
+        self.all_entities()
+            .filter(move |e| e.layer.as_deref().unwrap_or("0") == layer)
+    }
+
+    /// Looks up a layer by exact name first, then ASCII case-insensitively.
+    pub fn layer(&self, name: &str) -> Option<&Layer> {
+        self.layers.iter().find(|l| l.name == name).or_else(|| {
+            self.layers
+                .iter()
+                .find(|l| l.name.eq_ignore_ascii_case(name))
+        })
+    }
+
+    /// Looks up a block definition by exact name first, then ASCII case-insensitively.
+    pub fn block(&self, name: &str) -> Option<&Block> {
+        self.blocks.iter().find(|b| b.name == name).or_else(|| {
+            self.blocks
+                .iter()
+                .find(|b| b.name.eq_ignore_ascii_case(name))
+        })
+    }
+
+    /// Total number of entities in [`Document::models`], counting nested [`EntityKind::Group`] children.
+    pub fn entity_count(&self) -> usize {
+        fn count_slice(slice: &[Entity]) -> usize {
+            let mut total = 0usize;
+            let mut stack: Vec<&[Entity]> = vec![slice];
+            while let Some(items) = stack.pop() {
+                total = total.saturating_add(items.len());
+                for e in items {
+                    if let EntityKind::Group { children, .. } = &e.kind {
+                        if !children.is_empty() {
+                            stack.push(children);
+                        }
+                    }
+                }
+            }
+            total
+        }
+        self.models.iter().fold(0usize, |acc, m| {
+            acc.saturating_add(count_slice(&m.entities))
+        })
+    }
+}
+
 /// Origin of a [`Document`].
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct SourceInfo {
@@ -63,6 +158,67 @@ pub struct SourceInfo {
     pub application: Option<String>,
     /// Code page used for 8-bit strings, e.g. `"windows-1254"`.
     pub codepage: Option<String>,
+}
+
+/// Lightweight header summary returned by header-only `inspect` routines without decoding entity streams.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct Summary {
+    /// File format family.
+    pub format: Format,
+    /// Format version as written in the file, e.g. `"AC1032"`, `"V8"`, `"V7"`, `"2.0"`.
+    pub version: String,
+    /// Whether the primary model is 3D, when recorded in the header.
+    pub is_3d: Option<bool>,
+    /// Drawing coordinate units, when recorded in the header.
+    pub units: Option<Units>,
+    /// Code page or encoding name recorded or implied by the header.
+    pub codepage: Option<String>,
+    /// Producing application if recorded in the header.
+    pub application: Option<String>,
+}
+
+impl Summary {
+    /// Creates a new header summary for `format` and `version`.
+    #[must_use]
+    pub fn new(format: Format, version: impl Into<String>) -> Self {
+        Self {
+            format,
+            version: version.into(),
+            is_3d: None,
+            units: None,
+            codepage: None,
+            application: None,
+        }
+    }
+
+    /// Sets [`Self::is_3d`].
+    #[must_use]
+    pub fn with_is_3d(mut self, is_3d: Option<bool>) -> Self {
+        self.is_3d = is_3d;
+        self
+    }
+
+    /// Sets [`Self::units`].
+    #[must_use]
+    pub fn with_units(mut self, units: Option<Units>) -> Self {
+        self.units = units;
+        self
+    }
+
+    /// Sets [`Self::codepage`].
+    #[must_use]
+    pub fn with_codepage(mut self, codepage: Option<String>) -> Self {
+        self.codepage = codepage;
+        self
+    }
+
+    /// Sets [`Self::application`].
+    #[must_use]
+    pub fn with_application(mut self, application: Option<String>) -> Self {
+        self.application = application;
+        self
+    }
 }
 
 /// File format family.
@@ -275,6 +431,142 @@ impl Entity {
             props: Props::new(),
             raw: None,
         }
+    }
+
+    /// Constructs a [`EntityKind::Point`] entity.
+    pub fn point(position: Point3) -> Self {
+        Self::new(EntityKind::Point { position })
+    }
+
+    /// Constructs a [`EntityKind::Line`] entity.
+    pub fn line(start: Point3, end: Point3) -> Self {
+        Self::new(EntityKind::Line { start, end })
+    }
+
+    /// Constructs a straight-segment [`EntityKind::Polyline`] in the world XY plane (`normal = +Z`).
+    pub fn polyline(points: impl IntoIterator<Item = Point3>, closed: bool) -> Self {
+        Self::new(EntityKind::Polyline {
+            vertices: points.into_iter().map(Vertex::at).collect(),
+            closed,
+            normal: Vec3::Z,
+        })
+    }
+
+    /// Constructs a [`EntityKind::Circle`] in the world XY plane (`normal = +Z`).
+    pub fn circle(center: Point3, radius: f64) -> Self {
+        Self::new(EntityKind::Circle {
+            center,
+            radius,
+            normal: Vec3::Z,
+        })
+    }
+
+    /// Constructs a counter-clockwise [`EntityKind::Arc`] in the world XY plane (`normal = +Z`).
+    pub fn arc(center: Point3, radius: f64, start_angle: f64, end_angle: f64) -> Self {
+        Self::new(EntityKind::Arc {
+            center,
+            radius,
+            start_angle,
+            end_angle,
+            normal: Vec3::Z,
+        })
+    }
+
+    /// Constructs a left-baseline [`EntityKind::Text`] entity in the world XY plane (`normal = +Z`).
+    pub fn text(position: Point3, height: f64, value: impl Into<String>) -> Self {
+        Self::new(EntityKind::Text {
+            position,
+            end_point: None,
+            height,
+            rotation: 0.0,
+            width_factor: 1.0,
+            oblique: 0.0,
+            value: value.into(),
+            style: None,
+            halign: HAlign::Left,
+            valign: VAlign::Baseline,
+            normal: Vec3::Z,
+        })
+    }
+
+    /// Constructs a top-left [`EntityKind::MText`] entity from plain UTF-8 text.
+    pub fn mtext(position: Point3, height: f64, plain: impl Into<String>) -> Self {
+        let plain = plain.into();
+        let value = plain.replace('\n', "\\P");
+        Self::new(EntityKind::MText {
+            position,
+            height,
+            width: 0.0,
+            rotation: 0.0,
+            value,
+            plain,
+            style: None,
+            attachment: Attachment::TopLeft,
+            line_spacing: 1.0,
+            normal: Vec3::Z,
+        })
+    }
+
+    /// Constructs a unit-scale [`EntityKind::Insert`] block reference at `position`.
+    pub fn insert(block: impl Into<String>, position: Point3) -> Self {
+        Self::new(EntityKind::Insert {
+            block: block.into(),
+            position,
+            scale: Vec3::ONE,
+            rotation: 0.0,
+            normal: Vec3::Z,
+            columns: 1,
+            rows: 1,
+            column_spacing: 0.0,
+            row_spacing: 0.0,
+        })
+    }
+
+    /// Assigns the entity's layer name.
+    pub fn on_layer(mut self, layer: impl Into<String>) -> Self {
+        self.layer = Some(layer.into());
+        self
+    }
+
+    /// Assigns the entity's [`Color`].
+    pub fn with_color(mut self, color: Color) -> Self {
+        self.color = color;
+        self
+    }
+
+    /// Assigns the entity's linetype name.
+    pub fn with_linetype(mut self, linetype: impl Into<String>) -> Self {
+        self.linetype = Some(linetype.into());
+        self
+    }
+
+    /// Assigns the entity's [`Lineweight`].
+    pub fn with_lineweight(mut self, lineweight: Lineweight) -> Self {
+        self.lineweight = lineweight;
+        self
+    }
+
+    /// Sets [`Entity::visible`].
+    pub fn with_visible(mut self, visible: bool) -> Self {
+        self.visible = visible;
+        self
+    }
+
+    /// Inserts a key-value entry into [`Entity::props`].
+    pub fn with_prop(mut self, key: impl Into<String>, value: impl Into<Value>) -> Self {
+        self.props.insert(key.into(), value.into());
+        self
+    }
+
+    /// Appends a non-graphic [`Attribute`] tag/value pair to [`Entity::attributes`].
+    pub fn with_attribute(mut self, tag: impl Into<String>, value: impl Into<Value>) -> Self {
+        self.attributes.push(Attribute {
+            tag: tag.into(),
+            value: value.into(),
+            invisible: true,
+            ..Attribute::default()
+        });
+        self
     }
 }
 
@@ -706,6 +998,18 @@ pub enum Color {
     },
 }
 
+impl Color {
+    /// Shorthand for `Color::Aci { index }`.
+    pub const fn aci(index: u8) -> Self {
+        Self::Aci { index }
+    }
+
+    /// Shorthand for `Color::Rgb { r, g, b }`.
+    pub const fn rgb(r: u8, g: u8, b: u8) -> Self {
+        Self::Rgb { r, g, b }
+    }
+}
+
 /// Line weight.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value", rename_all = "snake_case")]
@@ -784,6 +1088,62 @@ pub enum Value {
     Bytes(Vec<u8>),
 }
 
+impl Value {
+    /// True when `self` is [`Value::Null`].
+    pub const fn is_null(&self) -> bool {
+        matches!(self, Self::Null)
+    }
+
+    /// Returns the boolean when `self` is [`Value::Bool`].
+    pub const fn as_bool(&self) -> Option<bool> {
+        match self {
+            Self::Bool(v) => Some(*v),
+            _ => None,
+        }
+    }
+
+    /// Returns the integer when `self` is [`Value::Int`].
+    pub const fn as_i64(&self) -> Option<i64> {
+        match self {
+            Self::Int(v) => Some(*v),
+            _ => None,
+        }
+    }
+
+    /// Returns a floating-point number for [`Value::Float`] or lossless/cast [`Value::Int`].
+    pub const fn as_f64(&self) -> Option<f64> {
+        match self {
+            Self::Float(v) => Some(*v),
+            Self::Int(v) => Some(*v as f64),
+            _ => None,
+        }
+    }
+
+    /// Returns the string slice when `self` is [`Value::Text`].
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            Self::Text(s) => Some(s.as_str()),
+            _ => None,
+        }
+    }
+
+    /// Returns the slice when `self` is [`Value::List`].
+    pub fn as_list(&self) -> Option<&[Value]> {
+        match self {
+            Self::List(items) => Some(items.as_slice()),
+            _ => None,
+        }
+    }
+
+    /// Returns the byte slice when `self` is [`Value::Bytes`].
+    pub fn as_bytes(&self) -> Option<&[u8]> {
+        match self {
+            Self::Bytes(bytes) => Some(bytes.as_slice()),
+            _ => None,
+        }
+    }
+}
+
 impl From<bool> for Value {
     fn from(v: bool) -> Self {
         Value::Bool(v)
@@ -794,14 +1154,39 @@ impl From<i64> for Value {
         Value::Int(v)
     }
 }
+impl From<i32> for Value {
+    fn from(v: i32) -> Self {
+        Value::Int(i64::from(v))
+    }
+}
+impl From<i16> for Value {
+    fn from(v: i16) -> Self {
+        Value::Int(i64::from(v))
+    }
+}
 impl From<u32> for Value {
     fn from(v: u32) -> Self {
+        Value::Int(i64::from(v))
+    }
+}
+impl From<u16> for Value {
+    fn from(v: u16) -> Self {
+        Value::Int(i64::from(v))
+    }
+}
+impl From<u8> for Value {
+    fn from(v: u8) -> Self {
         Value::Int(i64::from(v))
     }
 }
 impl From<f64> for Value {
     fn from(v: f64) -> Self {
         Value::Float(v)
+    }
+}
+impl From<f32> for Value {
+    fn from(v: f32) -> Self {
+        Value::Float(f64::from(v))
     }
 }
 impl From<String> for Value {
@@ -812,6 +1197,16 @@ impl From<String> for Value {
 impl From<&str> for Value {
     fn from(v: &str) -> Self {
         Value::Text(v.to_owned())
+    }
+}
+impl From<Vec<u8>> for Value {
+    fn from(v: Vec<u8>) -> Self {
+        Value::Bytes(v)
+    }
+}
+impl From<Vec<Value>> for Value {
+    fn from(v: Vec<Value>) -> Self {
+        Value::List(v)
     }
 }
 

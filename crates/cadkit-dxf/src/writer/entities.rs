@@ -969,9 +969,13 @@ impl Writer<'_> {
                 return;
             }
             EntityKind::Unknown { type_name } => {
-                if (type_name == "dxf.ATTDEF" || type_name == "dwg.ATTDEF")
-                    && self.attdef(out, e, &a)
-                {
+                let wrote = match type_name.as_str() {
+                    "dxf.ATTDEF" | "dwg.ATTDEF" => self.attdef(out, e, &a),
+                    "dxf.RAY" | "dwg.RAY" => self.ray_or_xline(out, e, &a, true),
+                    "dxf.XLINE" | "dwg.XLINE" => self.ray_or_xline(out, e, &a, false),
+                    _ => false,
+                };
+                if wrote {
                     self.xdata(out, &e.props, group);
                 } else {
                     self.skip(type_name, "no DXF writer for this record");
@@ -1195,6 +1199,10 @@ impl Writer<'_> {
         if self.r12 {
             let mut pts = if have_ctrl {
                 spline_points(d, &knot_vec, ctrl, weights, 8 * ctrl.len().max(8))
+            } else if let Some((ideg, iknots, ictrl)) =
+                cadkit_core::geom_ops::interpolate_fit_points(fit, closed)
+            {
+                spline_points(ideg as usize, &iknots, &ictrl, &[], 8 * ictrl.len().max(8))
             } else {
                 Vec::new()
             };
@@ -1715,6 +1723,36 @@ impl Writer<'_> {
         out.text(3, prompt);
         out.text(2, tag);
         out.int(70, flags);
+        true
+    }
+
+    fn ray_or_xline(&mut self, out: &mut Out, e: &Entity, a: &Attr, is_ray: bool) -> bool {
+        if self.r12 {
+            return false;
+        }
+        let Some(base) =
+            prop_point(&e.props, "dxf.point").or_else(|| prop_point(&e.props, "dwg.point"))
+        else {
+            return false;
+        };
+        let Some(dir) =
+            prop_point(&e.props, "dxf.direction").or_else(|| prop_point(&e.props, "dwg.direction"))
+        else {
+            return false;
+        };
+        if !(base.x.is_finite() && base.y.is_finite() && base.z.is_finite()) {
+            return false;
+        }
+        let Some(unit) = Vec3::new(dir.x, dir.y, dir.z).normalized() else {
+            return false;
+        };
+        if is_ray {
+            self.head(out, "RAY", a, "AcDbRay");
+        } else {
+            self.head(out, "XLINE", a, "AcDbXline");
+        }
+        out.point(10, base);
+        out.point(11, Point3::new(unit.x, unit.y, unit.z));
         true
     }
 

@@ -289,6 +289,32 @@ pub(crate) fn convert(ctx: &mut Ctx, rec: &Record, children: &[Record]) -> Resul
                     ctx.unknown.insert(name.clone(), (idx, 1));
                 }
             }
+            match other {
+                "RAY" | "XLINE" => {
+                    props.insert("dxf.point".into(), point_value(g.point_or_zero(10)));
+                    props.insert("dxf.direction".into(), point_value(g.point_or_zero(11)));
+                }
+                "WIPEOUT" => {
+                    props.insert(
+                        "dxf.insertion_point".into(),
+                        point_value(g.point_or_zero(10)),
+                    );
+                    if let Some(u) = g.point(11) {
+                        props.insert("dxf.u_vector".into(), point_value(u));
+                    }
+                    if let Some(v) = g.point(12) {
+                        props.insert("dxf.v_vector".into(), point_value(v));
+                    }
+                    let clip = collect_points(g.0, 14, ctx)?;
+                    if !clip.is_empty() {
+                        props.insert(
+                            "dxf.clip_vertices".into(),
+                            MValue::List(clip.into_iter().map(point_value).collect()),
+                        );
+                    }
+                }
+                _ => {}
+            }
             props.insert("dxf.codes".into(), codes_value(rec.body()));
             EntityKind::Unknown {
                 type_name: format!("dxf.{name}"),

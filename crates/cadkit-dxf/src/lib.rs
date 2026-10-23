@@ -13,7 +13,7 @@ mod ocs;
 mod reader;
 mod writer;
 
-use cadkit_core::{Document, ReadOptions, Result, Warning};
+use cadkit_core::{Document, ReadOptions, Result, Summary, Warning};
 
 /// DXF output version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -59,6 +59,11 @@ pub fn sniff(bytes: &[u8]) -> bool {
     native::sniff(bytes)
 }
 
+/// Inspects the DXF `HEADER` section without decoding tables, blocks, or entities.
+pub fn inspect(bytes: &[u8], options: &ReadOptions) -> Result<Summary> {
+    reader::inspect(bytes, options)
+}
+
 /// Reads a DXF file into the format-neutral model.
 ///
 /// Fails only when no useful document can be produced (not DXF, limits exceeded, or no
@@ -68,7 +73,45 @@ pub fn read(bytes: &[u8], options: &ReadOptions) -> Result<Document> {
     reader::read(bytes, options)
 }
 
-/// Writes `doc` as ASCII DXF.
+/// Options for DXF output.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct WriteOptions {
+    /// Target DXF release (`R2018` by default).
+    pub version: DxfVersion,
+    /// Optional legacy `$DWGCODEPAGE`, WHATWG, or OEM encoding label (for example
+    /// `"ANSI_1254"`, `"windows-1254"`, `"DOS857"`, or `"cp857"`) for pre-R2007 output.
+    /// Characters representable in that 8-bit encoding are emitted directly as raw bytes;
+    /// unrepresentable characters remain `\U+XXXX` escapes.
+    pub codepage: Option<String>,
+}
+
+impl WriteOptions {
+    /// Creates DXF output options for `version`.
+    #[must_use]
+    pub fn new(version: DxfVersion) -> Self {
+        Self {
+            version,
+            codepage: None,
+        }
+    }
+
+    /// Sets the target DXF release.
+    #[must_use]
+    pub fn with_version(mut self, version: DxfVersion) -> Self {
+        self.version = version;
+        self
+    }
+
+    /// Sets an explicit legacy `$DWGCODEPAGE` / WHATWG / OEM output encoding for pre-R2007 DXF.
+    #[must_use]
+    pub fn with_codepage(mut self, codepage: Option<String>) -> Self {
+        self.codepage = codepage;
+        self
+    }
+}
+
+/// Writes `doc` as ASCII/UTF-8 DXF text.
 pub fn write(doc: &Document, version: DxfVersion) -> Result<String> {
     writer::write(doc, version).map(|(text, _)| text)
 }
@@ -77,4 +120,17 @@ pub fn write(doc: &Document, version: DxfVersion) -> Result<String> {
 /// represented (skipped unknown entities, undefined block references, ...).
 pub fn write_with_report(doc: &Document, version: DxfVersion) -> Result<(String, Vec<Warning>)> {
     writer::write(doc, version)
+}
+
+/// Writes `doc` as DXF bytes using `options` (honoring legacy 8-bit `codepage` on pre-R2007 versions).
+pub fn write_bytes(doc: &Document, options: &WriteOptions) -> Result<Vec<u8>> {
+    writer::write_bytes(doc, options).map(|(bytes, _)| bytes)
+}
+
+/// Like [`write_bytes()`], returning both the encoded DXF bytes and conversion warnings.
+pub fn write_bytes_with_report(
+    doc: &Document,
+    options: &WriteOptions,
+) -> Result<(Vec<u8>, Vec<Warning>)> {
+    writer::write_bytes(doc, options)
 }

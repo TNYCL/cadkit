@@ -11,13 +11,27 @@ authors.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[features]
+default = ["dwg", "dgn", "dxf", "gml", "svg", "json"]
+dwg = ["dep:cadkit-dwg"]
+dgn = ["dgn-read", "cadkit-dgn/write"]
+dgn-read = ["dep:cadkit-dgn"]
+dxf = ["dep:cadkit-dxf"]
+gml = ["dep:cadkit-gml"]
+svg = []
+json = ["dep:serde_json"]
+
 [dependencies]
 cadkit-core.workspace = true
-cadkit-dgn.workspace = true
-cadkit-dwg.workspace = true
-cadkit-dxf.workspace = true
-cadkit-gml.workspace = true
-serde_json.workspace = true
+cadkit-dgn = { workspace = true, optional = true, default-features = false }
+cadkit-dwg = { workspace = true, optional = true }
+cadkit-dxf = { workspace = true, optional = true }
+cadkit-gml = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 
 [lints]
 workspace = true
+
+[[example]]
+name = "interchange"
+required-features = ["dgn", "gml"]

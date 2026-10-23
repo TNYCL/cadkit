@@ -78,6 +78,38 @@ impl OemCodepage {
         }
     }
 
+    /// Canonical DXF `$DWGCODEPAGE` name (e.g. `"DOS857"`).
+    pub fn dxf_name(self) -> &'static str {
+        match self {
+            Self::Cp437 => "DOS437",
+            Self::Cp850 => "DOS850",
+            Self::Cp852 => "DOS852",
+            Self::Cp855 => "DOS855",
+            Self::Cp857 => "DOS857",
+            Self::Cp860 => "DOS860",
+            Self::Cp861 => "DOS861",
+            Self::Cp863 => "DOS863",
+            Self::Cp864 => "DOS864",
+            Self::Cp865 => "DOS865",
+            Self::Cp869 => "DOS869",
+        }
+    }
+
+    /// Encodes a Unicode character into this single-byte OEM code page when representable.
+    pub fn encode_char(self, ch: char) -> Option<u8> {
+        if ch.is_ascii() {
+            return Some(ch as u8);
+        }
+        if ch == '\u{FFFD}' {
+            return None;
+        }
+        let code = u16::try_from(u32::from(ch)).ok()?;
+        self.table()
+            .iter()
+            .position(|&entry| entry == code)
+            .map(|idx| (idx as u8) + 0x80)
+    }
+
     fn table(self) -> &'static [u16; 128] {
         match self {
             Self::Cp437 => &CP437,

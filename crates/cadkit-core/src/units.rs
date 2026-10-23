@@ -86,6 +86,70 @@ impl LengthUnit {
             Self::UsSurveyFoot => 21,
         }
     }
+
+    /// Canonical lowercase snake_case name of this unit.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Unitless => "unitless",
+            Self::Inch => "inch",
+            Self::Foot => "foot",
+            Self::Mile => "mile",
+            Self::Millimeter => "millimeter",
+            Self::Centimeter => "centimeter",
+            Self::Meter => "meter",
+            Self::Kilometer => "kilometer",
+            Self::Microinch => "microinch",
+            Self::Mil => "mil",
+            Self::Yard => "yard",
+            Self::Angstrom => "angstrom",
+            Self::Nanometer => "nanometer",
+            Self::Micrometer => "micrometer",
+            Self::Decimeter => "decimeter",
+            Self::Decameter => "decameter",
+            Self::Hectometer => "hectometer",
+            Self::Gigameter => "gigameter",
+            Self::AstronomicalUnit => "astronomical_unit",
+            Self::LightYear => "light_year",
+            Self::Parsec => "parsec",
+            Self::UsSurveyFoot => "us_survey_foot",
+            Self::Custom => "custom",
+        }
+    }
+
+    /// Parses a common unit symbol or name (case-insensitive, e.g. `"mm"`, `"meter"`, `"ft"`).
+    pub fn from_name(name: &str) -> Option<Self> {
+        let lower = name.trim().to_ascii_lowercase();
+        Some(match lower.as_str() {
+            "unitless" | "none" => Self::Unitless,
+            "in" | "inch" | "inches" => Self::Inch,
+            "ft" | "foot" | "feet" => Self::Foot,
+            "mi" | "mile" | "miles" => Self::Mile,
+            "mm" | "millimeter" | "millimeters" | "millimetre" | "millimetres" => Self::Millimeter,
+            "cm" | "centimeter" | "centimeters" | "centimetre" | "centimetres" => Self::Centimeter,
+            "m" | "meter" | "meters" | "metre" | "metres" => Self::Meter,
+            "km" | "kilometer" | "kilometers" | "kilometre" | "kilometres" => Self::Kilometer,
+            "uin" | "microinch" | "microinches" => Self::Microinch,
+            "mil" | "mils" => Self::Mil,
+            "yd" | "yard" | "yards" => Self::Yard,
+            "angstrom" | "angstroms" => Self::Angstrom,
+            "nm" | "nanometer" | "nanometers" | "nanometre" | "nanometres" => Self::Nanometer,
+            "um" | "micrometer" | "micrometers" | "micrometre" | "micrometres" | "micron" => {
+                Self::Micrometer
+            }
+            "dm" | "decimeter" | "decimeters" | "decimetre" | "decimetres" => Self::Decimeter,
+            "dam" | "decameter" | "decameters" | "decametre" | "decametres" => Self::Decameter,
+            "hm" | "hectometer" | "hectometers" | "hectometre" | "hectometres" => Self::Hectometer,
+            "gm" | "gigameter" | "gigameters" | "gigametre" | "gigametres" => Self::Gigameter,
+            "au" | "astronomical_unit" | "astronomical-unit" => Self::AstronomicalUnit,
+            "ly" | "light_year" | "light-year" => Self::LightYear,
+            "pc" | "parsec" | "parsecs" => Self::Parsec,
+            "us_ft" | "us-ft" | "us_survey_foot" | "us-survey-foot" | "survey_foot" => {
+                Self::UsSurveyFoot
+            }
+            "custom" => Self::Custom,
+            _ => return None,
+        })
+    }
 }
 
 impl Units {

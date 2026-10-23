@@ -9,7 +9,7 @@ pub mod tkgm;
 pub mod validate;
 mod xml;
 
-use cadkit_core::{Document, ReadOptions, Result};
+use cadkit_core::{Document, Error, Format, ReadOptions, Result, Summary};
 pub use export::{
     ExportIssue, ExportOptions, ExportReport, UnsupportedGeometry, from_document,
     from_document_with_report,
@@ -34,6 +34,124 @@ pub fn sniff(bytes: &[u8]) -> bool {
         }
     }
     false
+}
+
+/// Inspects the CityGML root element and `boundedBy` envelope without parsing thematic objects.
+pub fn inspect(bytes: &[u8], options: &ReadOptions) -> Result<Summary> {
+    use quick_xml::{NsReader, events::Event, name::ResolveResult};
+    if bytes.len() as u64 > options.limits.max_input_bytes {
+        return Err(Error::LimitExceeded("CityGML input bytes".into()));
+    }
+    let head = bytes.get(..bytes.len().min(65536)).unwrap_or(&[]);
+    let mut reader = NsReader::from_reader(head);
+    let mut saw_root = false;
+    let mut in_bounded_by = false;
+    let mut srs_name: Option<String> = None;
+    let mut srs_dim: Option<String> = None;
+
+    let capture_srs = |e: &quick_xml::events::BytesStart<'_>,
+                       srs_name: &mut Option<String>,
+                       srs_dim: &mut Option<String>| {
+        for attr in e.attributes().flatten() {
+            let local = attr.key.local_name();
+            let slot = if local.as_ref() == b"srsName" && srs_name.is_none() {
+                Some(&mut *srs_name)
+            } else if local.as_ref() == b"srsDimension" && srs_dim.is_none() {
+                Some(&mut *srs_dim)
+            } else {
+                None
+            };
+            let Some(target) = slot else { continue };
+            let Ok(raw) = std::str::from_utf8(attr.value.as_ref()) else {
+                continue;
+            };
+            let Ok(val) = quick_xml::escape::unescape(raw) else {
+                continue;
+            };
+            let trimmed = val.trim();
+            if !trimmed.is_empty() {
+                *target = Some(trimmed.to_owned());
+            }
+        }
+    };
+
+    for _ in 0..256 {
+        match reader.read_resolved_event() {
+            Ok((res, Event::Start(e))) => {
+                if !saw_root {
+                    let ResolveResult::Bound(ns) = res else {
+                        return Err(Error::UnknownFormat);
+                    };
+                    if ns.as_ref() == native::CORE.as_bytes()
+                        && e.local_name().as_ref() == b"CityModel"
+                    {
+                        saw_root = true;
+                        capture_srs(&e, &mut srs_name, &mut srs_dim);
+                    } else {
+                        return Err(Error::UnknownFormat);
+                    }
+                } else {
+                    if let ResolveResult::Bound(ns) = res {
+                        if ns.as_ref() == native::GML.as_bytes()
+                            && e.local_name().as_ref() == b"boundedBy"
+                        {
+                            in_bounded_by = true;
+                        }
+                    }
+                    capture_srs(&e, &mut srs_name, &mut srs_dim);
+                    if srs_name.is_some() {
+                        break;
+                    }
+                }
+            }
+            Ok((res, Event::Empty(e))) => {
+                if !saw_root {
+                    let ResolveResult::Bound(ns) = res else {
+                        return Err(Error::UnknownFormat);
+                    };
+                    if ns.as_ref() == native::CORE.as_bytes()
+                        && e.local_name().as_ref() == b"CityModel"
+                    {
+                        saw_root = true;
+                        capture_srs(&e, &mut srs_name, &mut srs_dim);
+                        break;
+                    }
+                    return Err(Error::UnknownFormat);
+                }
+                capture_srs(&e, &mut srs_name, &mut srs_dim);
+                if srs_name.is_some() {
+                    break;
+                }
+            }
+            Ok((ResolveResult::Bound(ns), Event::End(e))) => {
+                if in_bounded_by
+                    && ns.as_ref() == native::GML.as_bytes()
+                    && e.local_name().as_ref() == b"boundedBy"
+                    && srs_name.is_some()
+                {
+                    break;
+                }
+            }
+            Ok((_, Event::Decl(_) | Event::Comment(_) | Event::Text(_))) => {}
+            Ok((_, Event::Eof)) => break,
+            Ok(_) if saw_root => {}
+            _ => return Err(Error::UnknownFormat),
+        }
+    }
+
+    if !saw_root {
+        return Err(Error::UnknownFormat);
+    }
+
+    let is_3d = match srs_dim.as_deref() {
+        Some("2") => Some(false),
+        _ => Some(true),
+    };
+    let units = srs_name.as_deref().and_then(mapping::infer_srs_units);
+    Ok(Summary::new(Format::CityGml, "2.0")
+        .with_is_3d(is_3d)
+        .with_units(units)
+        .with_codepage(Some("UTF-8".into())))
 }
 
 /// Parses CityGML into its native XML tree while validating IDs, references, and numeric data.

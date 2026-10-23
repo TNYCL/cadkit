@@ -465,6 +465,24 @@ fn read_data_page(
 
 /// Reads an R2004/R2010/R2013/R2018 file.
 pub fn read<'a>(bytes: &'a [u8], version: DwgVersion, limits: &Limits) -> Result<Container<'a>> {
+    read_impl(bytes, version, limits, false)
+}
+
+/// Reads only the file header, page/section maps, and `AcDb:Header` section.
+pub fn read_header_only<'a>(
+    bytes: &'a [u8],
+    version: DwgVersion,
+    limits: &Limits,
+) -> Result<Container<'a>> {
+    read_impl(bytes, version, limits, true)
+}
+
+fn read_impl<'a>(
+    bytes: &'a [u8],
+    version: DwgVersion,
+    limits: &Limits,
+    header_only: bool,
+) -> Result<Container<'a>> {
     let mut c = Container::new(version);
     let fh = read_file_header(bytes, &mut c).map_err(context("R2004 file header"))?;
     let mut budget = Budget::new(limits);
@@ -515,6 +533,9 @@ pub fn read<'a>(bytes: &'a [u8], version: DwgVersion, limits: &Limits) -> Result
         ("AcDb:AcDbObjects", 3),
         ("AcDb:Template", 4),
     ] {
+        if header_only && slot != 0 {
+            continue;
+        }
         let Some(info) = sections.get(name) else {
             if slot != 4 {
                 c.warn(

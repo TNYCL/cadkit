@@ -7,12 +7,17 @@ mod polyline;
 mod raster;
 mod raster_builtin;
 mod raster_template;
+mod seed_prepare;
 mod tables;
 mod text;
 
+pub use seed_prepare::{DimensionPolicy, SeedPrepareOptions, V8Seed};
+
+#[cfg(test)]
+use crate::native::v8::RawElement;
 use crate::{
     le,
-    native::v8::{self, AuxRecord, ModelHeader, PageHeader, RawElement, V8Model},
+    native::v8::{self, AuxRecord, ModelHeader, PageHeader, V8Model},
 };
 use cadkit_core::{
     Attribute, Document, Entity, EntityKind, Error, GroupKind, Limits, Point3, ReadOptions, Result,
@@ -62,6 +67,58 @@ impl Default for WriteOptions {
             preserve_seed_rasters: true,
             preserve_seed_controls: true,
         }
+    }
+}
+
+impl WriteOptions {
+    /// Sets resource limits for reading the seed and encoding output records.
+    #[must_use]
+    pub fn with_limits(mut self, limits: Limits) -> Self {
+        self.limits = limits;
+        self
+    }
+
+    /// Sets the 8-bit Windows codepage label (`"windows-1250"`..=`"windows-1258"`), or
+    /// `None` for UTF-16LE.
+    #[must_use]
+    pub fn with_codepage(mut self, codepage: Option<impl Into<String>>) -> Self {
+        self.codepage = codepage.map(Into::into);
+        self
+    }
+
+    /// Sets the modification timestamp in milliseconds since the Unix epoch.
+    #[must_use]
+    pub fn with_timestamp_ms(mut self, timestamp_ms: f64) -> Self {
+        self.timestamp_ms = timestamp_ms;
+        self
+    }
+
+    /// Sets whether non-empty seed models may have their graphic and control pages cleared.
+    #[must_use]
+    pub fn with_clear_seed_model(mut self, clear: bool) -> Self {
+        self.clear_seed_model = clear;
+        self
+    }
+
+    /// Sets the planarity tolerance (in drawing units) for polygons with interior holes.
+    #[must_use]
+    pub fn with_planarity_tolerance(mut self, tolerance: f64) -> Self {
+        self.planarity_tolerance = tolerance;
+        self
+    }
+
+    /// Sets whether unchanged raster attachments from the seed are preserved.
+    #[must_use]
+    pub fn with_preserve_seed_rasters(mut self, preserve: bool) -> Self {
+        self.preserve_seed_rasters = preserve;
+        self
+    }
+
+    /// Sets whether non-graphic seed control records are preserved byte for byte.
+    #[must_use]
+    pub fn with_preserve_seed_controls(mut self, preserve: bool) -> Self {
+        self.preserve_seed_controls = preserve;
+        self
     }
 }
 
@@ -122,9 +179,7 @@ fn page(records: &[Vec<u8>], version: u32, _number: u32) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-/// Writes the single design model of a neutral document into a matching DGN V8 seed.
-/// Source units and 2D/3D dimension must match the seed's master units and dimension; Z coordinates and attributes are never silently dropped.
-pub fn write_v8(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<Vec<u8>> {
+fn validate_doc_and_options(doc: &Document, options: &WriteOptions) -> Result<()> {
     cadkit_core::export::validate_limits(doc, &options.limits)?;
     if doc
         .units
@@ -147,28 +202,43 @@ pub fn write_v8(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<V
             "DGN writer requires exactly one source model".into(),
         ));
     }
+    Ok(())
+}
+
+/// Writes the single design model of a neutral document into a matching DGN V8 seed.
+/// Source units and 2D/3D dimension must match the seed's master units and dimension; Z coordinates and attributes are never silently dropped.
+pub fn write_v8(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<Vec<u8>> {
+    validate_doc_and_options(doc, options)?;
     let read = ReadOptions {
         limits: options.limits,
         fallback_codepage: options.codepage.clone(),
         keep_raw: true,
     };
-    let native = v8::read(seed, &read)?;
-    if native.models.len() != 1 {
-        return Err(Error::Unsupported(
-            "DGN writer requires a single-model seed".into(),
-        ));
+    let parsed_seed = V8Seed::parse(seed, &read)?;
+    write_v8_with_seed(doc, &parsed_seed, options)
+}
+
+/// Writes the single design model of `doc` into a pre-parsed [`V8Seed`], avoiding repeated
+/// CFB and zlib decompression of the seed when exporting multiple documents.
+pub fn write_v8_with_seed(
+    doc: &Document,
+    seed: &V8Seed,
+    options: &WriteOptions,
+) -> Result<Vec<u8>> {
+    validate_doc_and_options(doc, options)?;
+    if seed.bytes.len() as u64 > options.limits.max_input_bytes {
+        return Err(Error::LimitExceeded("DGN seed input bytes".into()));
     }
-    let model = native
-        .models
-        .first()
-        .ok_or_else(|| Error::invalid(0, "missing seed model"))?;
-    let header = model
-        .header
-        .as_ref()
+    let read = ReadOptions {
+        limits: options.limits,
+        fallback_codepage: options.codepage.clone(),
+        keep_raw: true,
+    };
+    let native = &seed.native;
+    let model = seed.model()?;
+    let header = seed
+        .model_header()
         .ok_or_else(|| Error::invalid(0, "missing seed model header"))?;
-    if !header.uor_per_master.is_finite() || header.uor_per_master <= 0.0 {
-        return Err(Error::invalid(0, "invalid seed UOR scale"));
-    }
     let source = doc
         .models
         .first()
@@ -189,60 +259,18 @@ pub fn write_v8(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<V
             ));
         }
     }
-    if model
-        .graphic_pages
-        .iter()
-        .chain(model.control_pages.iter())
-        .any(|p| !p.complete)
-        || native.named_pages.iter().any(|p| !p.complete)
-    {
-        return Err(Error::invalid(
-            0,
-            "incomplete seed pages cannot be used for writing",
-        ));
-    }
-    let nonempty = model
-        .graphic_pages
-        .iter()
-        .chain(model.control_pages.iter())
-        .any(|p| !p.elements.is_empty())
-        || !model.graphic_aux.is_empty()
-        || !model.control_aux.is_empty();
-    if nonempty && !options.clear_seed_model {
+    if seed.nonempty && !options.clear_seed_model {
         return Err(Error::Unsupported(
             "nonempty seed requires clear_seed_model=true".into(),
         ));
     }
-    let max_id = native
-        .named_pages
-        .iter()
-        .chain(model.graphic_pages.iter())
-        .chain(model.control_pages.iter())
-        .flat_map(|p| &p.elements)
-        .filter_map(RawElement::id)
-        .max()
-        .unwrap_or(0);
-    let header_stream = container::stream(seed, "Dgn~H", options.limits.max_input_bytes)?;
-    let seed_header = crate::zlib::inflate(
-        header_stream
-            .get(0x14..)
-            .ok_or_else(|| Error::invalid(0, "short DGN file header"))?,
-        usize::try_from(options.limits.max_decompressed_bytes).unwrap_or(usize::MAX),
-    );
-    if seed_header.problem.is_some() || seed_header.data.len() != 1576 {
-        return Err(Error::Unsupported(
-            "unrecognized DGN file header layout".into(),
-        ));
-    }
-    let max_id = max_id.max(le::u64_at(&seed_header.data, 0x128).unwrap_or(0));
+    let max_id = seed.max_id;
     let mut effective_options = options.clone();
     if effective_options.timestamp_ms == 0.0 {
-        effective_options.timestamp_ms = le::f64_at(&seed_header.data, 0x130)
-            .filter(|v| v.is_finite() && *v > 0.0)
-            .unwrap_or(0.0);
+        effective_options.timestamp_ms = seed.seed_timestamp_ms;
     }
     let options = &effective_options;
-    let rasters = raster::Preserved::prepare(doc, seed, model, &read, options)?;
+    let rasters = raster::Preserved::prepare(doc, &seed.bytes, model, &read, options)?;
     let mut tables = Tables::new(&native.named_pages, max_id, &read)?;
     tables.observe_model_fonts(
         model
@@ -287,20 +315,6 @@ pub fn write_v8(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<V
         .max()
         .unwrap_or(max_id)
         .max(max_id);
-    let decoded: BTreeSet<&str> = model
-        .graphic_pages
-        .iter()
-        .chain(&model.control_pages)
-        .chain(&native.named_pages)
-        .map(|p| p.path.as_str())
-        .chain(
-            model
-                .graphic_aux
-                .iter()
-                .chain(&model.control_aux)
-                .map(|p| p.path.as_str()),
-        )
-        .collect();
     let mut replacements = BTreeMap::new();
     for stream in &native.streams {
         let model_stream = stream
@@ -315,23 +329,9 @@ pub fn write_v8(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<V
             || stream
                 .path
                 .starts_with(&format!("Dgn-Md/{}/Dgn^CA/", model.storage));
-        if model_stream || stream.path.starts_with("Dgn^Nm/") {
-            // A page the reader could not decode was neither checked for content nor
-            // carried into the named tables; dropping it would lose seed data silently.
-            let page = stream.path.rsplit('/').next().is_some_and(|n| {
-                n.strip_prefix('$')
-                    .is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))
-            });
-            if page && !decoded.contains(stream.path.as_str()) {
-                return Err(Error::invalid(
-                    0,
-                    format!("seed page {} could not be decoded", stream.path),
-                ));
-            }
-            // Dictionary pages are kept and only rewritten where they change (`named`).
-            if model_stream {
-                replacements.insert(stream.path.clone(), None);
-            }
+        // Dictionary pages are kept and only rewritten where they change (`named`).
+        if model_stream {
+            replacements.insert(stream.path.clone(), None);
         }
     }
     let version = graphic_page_version(model);
@@ -411,32 +411,16 @@ pub fn write_v8(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<V
     for (i, n) in low.into_iter().chain(high).enumerate() {
         put(&mut mh, 0x90 + i * 8, &n.to_le_bytes())?;
     }
-    let mh_path = format!("Dgn-Md/{}/Dgn~Mh", model.storage);
-    let mh_source = container::stream(seed, &mh_path, options.limits.max_input_bytes)?;
-    let inflated_header = crate::zlib::inflate(
-        &mh_source,
-        usize::try_from(options.limits.max_decompressed_bytes).unwrap_or(usize::MAX),
-    );
-    if inflated_header.problem.is_some() {
-        return Err(Error::invalid(0, "incomplete model header stream"));
-    }
-    let mut full_header = inflated_header
-        .data
-        .strip_suffix(header.raw.as_slice())
-        .ok_or_else(|| Error::invalid(0, "model header suffix mismatch"))?
-        .to_vec();
+    let mut full_header = seed.mh_prefix.clone();
     full_header.extend(mh);
-    replacements.insert(mh_path, Some(compressed(&full_header)?));
-    let mut data = seed_header.data;
+    replacements.insert(seed.mh_path.clone(), Some(compressed(&full_header)?));
+    let mut data = seed.header_data.clone();
     u64_at(&mut data, 0x128, max_id)?;
     // Keep the seed header's timestamp and revision fields until their layout is verified across more samples.
-    let mut h = header_stream
-        .get(..0x14)
-        .ok_or_else(|| Error::invalid(0, "short DGN header"))?
-        .to_vec();
+    let mut h = seed.header_prefix.to_vec();
     h.extend(compressed(&data)?);
     replacements.insert("Dgn~H".into(), Some(h));
-    container::rewrite(seed, &replacements, &read)
+    container::rewrite(&seed.bytes, &replacements, &read)
 }
 
 #[cfg(test)]
@@ -1016,6 +1000,52 @@ impl State<'_> {
                 links.extend(self.codepage_link()?);
                 b
             }
+            EntityKind::Spline {
+                degree,
+                knots,
+                control_points,
+                weights,
+                fit_points,
+                closed,
+            } => {
+                let sampled = if !control_points.is_empty() {
+                    cadkit_core::geom_ops::nurbs_flatten(
+                        *degree,
+                        knots,
+                        control_points,
+                        weights,
+                        16,
+                    )
+                } else if !fit_points.is_empty() {
+                    match cadkit_core::geom_ops::interpolate_fit_points(fit_points, *closed) {
+                        Some((deg, k, ctrl)) => {
+                            cadkit_core::geom_ops::nurbs_flatten(deg, &k, &ctrl, &[], 16)
+                        }
+                        None => fit_points.clone(),
+                    }
+                } else {
+                    return Err(Error::invalid(0, "empty spline cannot be written to DGN"));
+                };
+                if let [only] = sampled.as_slice() {
+                    let p = coordinate(*only, self.model)?;
+                    let mut b = self.header(
+                        3 | flags,
+                        0x68 + psize * 2,
+                        id,
+                        level,
+                        self.options.timestamp_ms,
+                        e,
+                        three,
+                    )?;
+                    point(&mut b, 0x68, p, three)?;
+                    point(&mut b, 0x68 + psize, p, three)?;
+                    range(&mut b, &[p, p])?;
+                    b
+                } else {
+                    let close_shape = *closed && sampled.len() >= 3;
+                    self.points(e, id, level, flags, &sampled, close_shape)?
+                }
+            }
             other => {
                 return Err(Error::Unsupported(format!(
                     "DGN V8 writer: {} requires explicit conversion",
@@ -1488,6 +1518,14 @@ fn first_vertex(e: &Entity) -> Option<Point3> {
         EntityKind::Circle { center, .. }
         | EntityKind::Arc { center, .. }
         | EntityKind::Ellipse { center, .. } => Some(*center),
+        EntityKind::Spline {
+            control_points,
+            fit_points,
+            ..
+        } => control_points
+            .first()
+            .or_else(|| fit_points.first())
+            .copied(),
         _ => None,
     }
 }

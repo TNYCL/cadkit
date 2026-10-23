@@ -56,12 +56,37 @@ impl Vec3 {
     pub fn minus(self, o: Vec3) -> Vec3 {
         Vec3::new(self.x - o.x, self.y - o.y, self.z - o.z)
     }
+
+    /// True when all components are finite.
+    pub fn is_finite(self) -> bool {
+        self.x.is_finite() && self.y.is_finite() && self.z.is_finite()
+    }
 }
 
 impl Point3 {
     /// Vector from `self` to `other`.
     pub fn vector_to(self, other: Point3) -> Vec3 {
         Vec3::new(other.x - self.x, other.y - self.y, other.z - self.z)
+    }
+
+    /// Euclidean distance between `self` and `other`.
+    pub fn distance_to(self, other: Point3) -> f64 {
+        self.vector_to(other).length()
+    }
+
+    /// Linearly interpolates between `self` (`t = 0`) and `other` (`t = 1`).
+    pub fn lerp(self, other: Point3, t: f64) -> Point3 {
+        let s = 1.0 - t;
+        Point3::new(
+            self.x * s + other.x * t,
+            self.y * s + other.y * t,
+            self.z * s + other.z * t,
+        )
+    }
+
+    /// Midpoint halfway between `self` and `other`.
+    pub fn midpoint(self, other: Point3) -> Point3 {
+        self.lerp(other, 0.5)
     }
 
     /// The point moved by `v`.
@@ -79,6 +104,15 @@ impl BBox {
     /// A degenerate box containing exactly `p`.
     pub fn from_point(p: Point3) -> Self {
         Self { min: p, max: p }
+    }
+
+    /// Smallest box containing all finite points in `points`, or `None` when empty.
+    pub fn from_points(points: impl IntoIterator<Item = Point3>) -> Option<Self> {
+        let mut bb = None;
+        for p in points {
+            extend_bbox(&mut bb, p);
+        }
+        bb
     }
 
     /// Grows the box to contain `p`. Non-finite points are ignored.
@@ -104,6 +138,13 @@ impl BBox {
         self.extend(other.max);
     }
 
+    /// Returns a new box containing both `self` and `other`.
+    pub fn merged(&self, other: &BBox) -> BBox {
+        let mut out = *self;
+        out.union(other);
+        out
+    }
+
     /// Extent along X.
     pub fn width(&self) -> f64 {
         self.max.x - self.min.x
@@ -112,6 +153,61 @@ impl BBox {
     /// Extent along Y.
     pub fn height(&self) -> f64 {
         self.max.y - self.min.y
+    }
+
+    /// Extent along Z.
+    pub fn depth(&self) -> f64 {
+        self.max.z - self.min.z
+    }
+
+    /// Extents `(width, height, depth)` as a [`Vec3`].
+    pub fn size(&self) -> Vec3 {
+        Vec3::new(self.width(), self.height(), self.depth())
+    }
+
+    /// Geometric center of the bounding box.
+    pub fn center(&self) -> Point3 {
+        self.min.midpoint(self.max)
+    }
+
+    /// True when the box lies on `z = 0` within `1e-9`.
+    pub fn is_2d(&self) -> bool {
+        self.min.z.abs() <= 1e-9 && self.max.z.abs() <= 1e-9
+    }
+
+    /// True when `p` lies inside or on the boundary of `self`.
+    pub fn contains(&self, p: Point3) -> bool {
+        p.is_finite()
+            && p.x >= self.min.x
+            && p.x <= self.max.x
+            && p.y >= self.min.y
+            && p.y <= self.max.y
+            && p.z >= self.min.z
+            && p.z <= self.max.z
+    }
+
+    /// True when `self` and `other` overlap or touch on every axis.
+    pub fn intersects(&self, other: &BBox) -> bool {
+        self.min.x <= other.max.x
+            && self.max.x >= other.min.x
+            && self.min.y <= other.max.y
+            && self.max.y >= other.min.y
+            && self.min.z <= other.max.z
+            && self.max.z >= other.min.z
+    }
+
+    /// Returns the box padded uniformly by `margin` along each axis.
+    pub fn expanded(&self, margin: f64) -> BBox {
+        if !margin.is_finite() {
+            return *self;
+        }
+        let d = Vec3::new(margin, margin, margin);
+        let a = self.min - d;
+        let b = self.max + d;
+        BBox {
+            min: Point3::new(a.x.min(b.x), a.y.min(b.y), a.z.min(b.z)),
+            max: Point3::new(a.x.max(b.x), a.y.max(b.y), a.z.max(b.z)),
+        }
     }
 }
 
@@ -200,6 +296,35 @@ impl Transform {
             z: Vec3::new(0.0, 0.0, sz),
             t: Vec3::new(0.0, 0.0, 0.0),
         }
+    }
+
+    /// Uniform scaling about the origin along all three axes.
+    pub fn uniform_scale(factor: f64) -> Self {
+        Self::scaling(factor, factor, factor)
+    }
+
+    /// Constructs a transform from a row-major 3x4 affine matrix
+    /// `[[xx, yx, zx, tx], [xy, yy, zy, ty], [xz, yz, zz, tz]]`.
+    pub const fn from_matrix(rows: [[f64; 4]; 3]) -> Self {
+        let [r0, r1, r2] = rows;
+        let [xx, yx, zx, tx] = r0;
+        let [xy, yy, zy, ty] = r1;
+        let [xz, yz, zz, tz] = r2;
+        Self {
+            x: Vec3::new(xx, xy, xz),
+            y: Vec3::new(yx, yy, yz),
+            z: Vec3::new(zx, zy, zz),
+            t: Vec3::new(tx, ty, tz),
+        }
+    }
+
+    /// Exports the transform as a row-major 3x4 affine matrix.
+    pub const fn to_matrix(&self) -> [[f64; 4]; 3] {
+        [
+            [self.x.x, self.y.x, self.z.x, self.t.x],
+            [self.x.y, self.y.y, self.z.y, self.t.y],
+            [self.x.z, self.y.z, self.z.z, self.t.z],
+        ]
     }
 
     /// Rotation about the Z axis, counter-clockwise by `angle` radians.
@@ -708,6 +833,125 @@ pub fn nurbs_flatten(
     out
 }
 
+/// Interpolates `fit_points` into an explicit non-rational clamped B-spline
+/// `(degree, knots, control_points)` using chord-length Bessel/Hermite cubic spans.
+///
+/// Every distinct input fit point lies on the resulting B-spline curve at its chord parameter.
+/// Returns `None` if fewer than two distinct finite points are present.
+pub fn interpolate_fit_points(
+    fit_points: &[Point3],
+    closed: bool,
+) -> Option<(u32, Vec<f64>, Vec<Point3>)> {
+    let mut pts: Vec<Point3> = Vec::with_capacity(fit_points.len() + usize::from(closed));
+    for &p in fit_points {
+        if !p.is_finite() {
+            return None;
+        }
+        if pts.last().is_none_or(|prev| prev.distance_to(p) > 1e-12) {
+            pts.push(p);
+        }
+    }
+    if pts.len() < 2 {
+        return None;
+    }
+    let is_loop = if closed {
+        if let (Some(&first), Some(&last)) = (pts.first(), pts.last()) {
+            if first.distance_to(last) > 1e-12 {
+                pts.push(first);
+            }
+        }
+        pts.len() >= 4
+    } else {
+        false
+    };
+    if pts.len() == 2 {
+        return Some((1, vec![0.0, 0.0, 1.0, 1.0], pts));
+    }
+
+    let m = pts.len();
+    let spans = m - 1;
+    let mut u = Vec::with_capacity(m);
+    u.push(0.0);
+    for w in pts.windows(2) {
+        let (Some(&a), Some(&b)) = (w.first(), w.get(1)) else {
+            continue;
+        };
+        let prev = u.last().copied().unwrap_or(0.0);
+        u.push(prev + a.distance_to(b).max(1e-12));
+    }
+    let total = u.last().copied().unwrap_or(1.0).max(1e-12);
+    for v in &mut u {
+        *v /= total;
+    }
+
+    // Chord-weighted Bessel tangents dP/du at each fit point.
+    let secant = |i: usize| -> Option<(f64, Vec3)> {
+        let p0 = *pts.get(i)?;
+        let p1 = *pts.get(i + 1)?;
+        let du = (*u.get(i + 1)? - *u.get(i)?).max(1e-12);
+        Some((du, (p1 - p0).scaled(1.0 / du)))
+    };
+
+    let mut tangents = Vec::with_capacity(m);
+    for i in 0..m {
+        let t = if i == 0 {
+            if is_loop {
+                let (h_prev, d_prev) = secant(spans - 1)?;
+                let (h_next, d_next) = secant(0)?;
+                d_prev
+                    .scaled(h_next)
+                    .plus(d_next.scaled(h_prev))
+                    .scaled(1.0 / (h_prev + h_next))
+            } else {
+                let (h0, d0) = secant(0)?;
+                let (h1, d1) = secant(1)?;
+                d0.scaled((2.0 * h0 + h1) / (h0 + h1))
+                    .minus(d1.scaled(h0 / (h0 + h1)))
+            }
+        } else if i == spans {
+            if is_loop {
+                tangents.first().copied().unwrap_or(Vec3::ZERO)
+            } else {
+                let (hm2, dm2) = secant(spans - 2)?;
+                let (hm1, dm1) = secant(spans - 1)?;
+                dm1.scaled((2.0 * hm1 + hm2) / (hm1 + hm2))
+                    .minus(dm2.scaled(hm1 / (hm1 + hm2)))
+            }
+        } else {
+            let (h_prev, d_prev) = secant(i - 1)?;
+            let (h_next, d_next) = secant(i)?;
+            d_prev
+                .scaled(h_next)
+                .plus(d_next.scaled(h_prev))
+                .scaled(1.0 / (h_prev + h_next))
+        };
+        tangents.push(t);
+    }
+
+    let mut control = Vec::with_capacity(3 * spans + 1);
+    control.push(*pts.first()?);
+    for i in 0..spans {
+        let p0 = *pts.get(i)?;
+        let p1 = *pts.get(i + 1)?;
+        let t0 = *tangents.get(i)?;
+        let t1 = *tangents.get(i + 1)?;
+        let du = *u.get(i + 1)? - *u.get(i)?;
+        control.push(p0 + t0.scaled(du / 3.0));
+        control.push(p1 - t1.scaled(du / 3.0));
+        control.push(p1);
+    }
+
+    let mut knots = Vec::with_capacity(3 * spans + 5);
+    knots.extend([0.0; 4]);
+    for i in 1..spans {
+        if let Some(&uk) = u.get(i) {
+            knots.extend([uk; 3]);
+        }
+    }
+    knots.extend([1.0; 4]);
+    Some((3, knots, control))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1035,5 +1279,81 @@ mod tests {
         // Bad weights are ignored.
         let pts = nurbs_flatten(2, &[], &c, &[1.0, -1.0, 1.0], 4);
         assert!(pts.iter().all(|p| p.is_finite()));
+    }
+
+    #[test]
+    fn point_vec_operators_and_bbox_queries() {
+        let p = Point3::from([1.0, 2.0, 3.0]);
+        let v = Vec3::from((4.0, -2.0, 1.0));
+        assert_eq!(p + v, Point3::new(5.0, 0.0, 4.0));
+        assert_eq!((p + v) - p, v);
+        assert_eq!(2.0 * v, v * 2.0);
+        assert_eq!(-v, Vec3::new(-4.0, 2.0, -1.0));
+        assert_eq!(
+            p.midpoint(Point3::new(3.0, 4.0, 5.0)),
+            Point3::new(2.0, 3.0, 4.0)
+        );
+
+        let bb = BBox::from_points([Point3::xy(0.0, 0.0), Point3::xy(10.0, 20.0)]).unwrap();
+        assert!(bb.is_2d());
+        assert_eq!(bb.center(), Point3::xy(5.0, 10.0));
+        assert_eq!(bb.size(), Vec3::new(10.0, 20.0, 0.0));
+        assert!(bb.contains(Point3::xy(5.0, 5.0)));
+        assert!(!bb.contains(Point3::xy(11.0, 5.0)));
+        let padded = bb.expanded(2.0);
+        assert_eq!(padded.width(), 14.0);
+        assert!(bb.intersects(&padded));
+
+        let tf = Transform::from_matrix([
+            [2.0, 0.0, 0.0, 5.0],
+            [0.0, 3.0, 0.0, -1.0],
+            [0.0, 0.0, 1.0, 7.0],
+        ]);
+        assert_eq!(
+            tf.apply_point(Point3::new(1.0, 2.0, 3.0)),
+            Point3::new(7.0, 5.0, 10.0)
+        );
+        assert_eq!(Transform::from_matrix(tf.to_matrix()), tf);
+    }
+
+    #[test]
+    fn fit_point_interpolation_passes_through_every_fit_point() {
+        let fit = [
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(2.0, 3.0, 1.0),
+            Point3::new(5.0, 1.0, 2.0),
+            Point3::new(8.0, 4.0, 0.0),
+        ];
+        let (deg, knots, ctrl) = interpolate_fit_points(&fit, false).unwrap();
+        assert_eq!(deg, 3);
+        assert_eq!(knots.len(), ctrl.len() + 4);
+        assert!(pclose(
+            nurbs_eval(3, &knots, &ctrl, &[], 0.0).unwrap(),
+            fit[0]
+        ));
+        assert!(pclose(
+            nurbs_eval(3, &knots, &ctrl, &[], knots[4]).unwrap(),
+            fit[1]
+        ));
+        assert!(pclose(
+            nurbs_eval(3, &knots, &ctrl, &[], knots[7]).unwrap(),
+            fit[2]
+        ));
+        assert!(pclose(
+            nurbs_eval(3, &knots, &ctrl, &[], 1.0).unwrap(),
+            fit[3]
+        ));
+
+        // Closed fit-point loop wraps smoothly back to fit[0].
+        let (cdeg, cknots, cctrl) = interpolate_fit_points(&fit, true).unwrap();
+        assert_eq!(cdeg, 3);
+        assert!(pclose(
+            nurbs_eval(3, &cknots, &cctrl, &[], 0.0).unwrap(),
+            fit[0]
+        ));
+        assert!(pclose(
+            nurbs_eval(3, &cknots, &cctrl, &[], 1.0).unwrap(),
+            fit[0]
+        ));
     }
 }

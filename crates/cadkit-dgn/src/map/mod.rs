@@ -281,6 +281,9 @@ impl Mapper {
     }
 
     pub(crate) fn color(&self, index: u32) -> Color {
+        if index == 0xffff_fffe {
+            return Color::ByBlock;
+        }
         match palette::lookup(&self.palette, index) {
             Some([r, g, b]) => Color::Rgb { r, g, b },
             None => Color::ByLayer,
@@ -364,7 +367,7 @@ impl Mapper {
                 Linetype {
                     name: style_name(*s),
                     description: None,
-                    pattern: Vec::new(),
+                    pattern: style_pattern(*s),
                     props,
                 }
             })
@@ -386,6 +389,8 @@ impl Mapper {
             p.insert("dgn.weight".into(), Value::Int(i64::from(h.weight)));
             if h.weight <= 31 {
                 e.lineweight = Lineweight::Millimeters(weight_mm(h.weight));
+            } else if h.weight == 0xffff_fffe {
+                e.lineweight = Lineweight::ByBlock;
             }
             p.insert("dgn.style".into(), Value::Int(i64::from(h.style)));
             if h.style < 0x7fff_ff00 {
@@ -1018,6 +1023,21 @@ fn style_name(s: u32) -> String {
     STYLE_NAMES
         .get(s as usize)
         .map_or_else(|| format!("DGN_STYLE_{s}"), |n| (*n).to_owned())
+}
+
+/// Dash-gap pattern (positive = dash, zero = dot, negative = gap) for built-in DGN
+/// line styles `1..=7`; style `0` (`DGN_SOLID`) and custom styles have an empty pattern.
+fn style_pattern(s: u32) -> Vec<f64> {
+    match s {
+        1 => vec![0.0, -1.5],
+        2 => vec![3.0, -1.5],
+        3 => vec![6.0, -1.5],
+        4 => vec![4.5, -1.5, 0.0, -1.5],
+        5 => vec![1.5, -1.5],
+        6 => vec![4.5, -1.5, 0.0, -1.5, 0.0, -1.5],
+        7 => vec![6.0, -1.5, 1.5, -1.5],
+        _ => Vec::new(),
+    }
 }
 
 pub(crate) fn tag_value(v: &TagValue) -> Value {
@@ -1695,5 +1715,45 @@ mod tests {
         );
         assert_eq!(unit_from_label("mu"), None);
         assert!(close(weight_mm(0), 0.1));
+    }
+
+    #[test]
+    fn bycell_symbology_and_builtin_style_patterns() {
+        let mut m = Mapper::new(false, 64);
+        assert_eq!(m.color(0xffff_fffe), Color::ByBlock);
+        assert_eq!(m.color(0xffff_ffff), Color::ByLayer);
+        let mut hdr = ElementHeader {
+            type_code: 3,
+            has_display_header: true,
+            color: 0xffff_fffe,
+            weight: 0xffff_fffe,
+            style: 2,
+            ..ElementHeader::default()
+        };
+        let e = m.base(
+            &item(hdr.clone(), ElementData::Unknown),
+            EntityKind::Unknown {
+                type_name: "test".into(),
+            },
+        );
+        assert_eq!(e.color, Color::ByBlock);
+        assert_eq!(e.lineweight, Lineweight::ByBlock);
+        hdr.style = 0;
+        let _ = m.base(
+            &item(hdr, ElementData::Unknown),
+            EntityKind::Unknown {
+                type_name: "test".into(),
+            },
+        );
+        let lts = m.linetypes();
+        assert_eq!(lts.len(), 2);
+        assert!(
+            lts.iter()
+                .any(|l| l.name == "DGN_SOLID" && l.pattern.is_empty())
+        );
+        assert!(
+            lts.iter()
+                .any(|l| l.name == "DGN_MEDIUM_DASH" && l.pattern == vec![3.0, -1.5])
+        );
     }
 }

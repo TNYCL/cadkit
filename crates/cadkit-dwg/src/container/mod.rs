@@ -175,6 +175,26 @@ pub fn read<'a>(bytes: &'a [u8], limits: &Limits) -> Result<Container<'a>> {
     }
 }
 
+/// Reads only the file header and `AcDb:Header` section without decompressing object pages.
+pub fn read_header_only<'a>(bytes: &'a [u8], limits: &Limits) -> Result<Container<'a>> {
+    if bytes.len() as u64 > limits.max_input_bytes {
+        return Err(Error::LimitExceeded(format!(
+            "input of {} bytes",
+            bytes.len()
+        )));
+    }
+    let magic = bytes.get(..6).ok_or(Error::Truncated {
+        offset: 0,
+        needed: 6,
+    })?;
+    let version = DwgVersion::from_magic(magic).ok_or(Error::UnknownFormat)?;
+    match version {
+        DwgVersion::R13 | DwgVersion::R14 | DwgVersion::R2000 => r13::read(bytes, version),
+        DwgVersion::R2007 => r2007::read_header_only(bytes, version, limits),
+        _ => r2004::read_header_only(bytes, version, limits),
+    }
+}
+
 /// Adds what was being read to a container error (limit errors pass unchanged).
 pub(crate) fn context(what: &'static str) -> impl Fn(Error) -> Error {
     move |e| match e {

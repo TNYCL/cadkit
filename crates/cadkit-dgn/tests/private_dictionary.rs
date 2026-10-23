@@ -3,6 +3,7 @@
 //! dictionary (`Dgn^Nm`) pages, and no table or complex element spans pages. Skips
 //! silently when the corpus is absent and asserts only counts and structural invariants
 //! (AGENTS.md section 3): no names, values, paths or coordinates.
+#![cfg(feature = "write")]
 #![allow(
     clippy::indexing_slicing,
     clippy::unwrap_used,

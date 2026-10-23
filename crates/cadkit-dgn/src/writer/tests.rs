@@ -390,3 +390,157 @@ fn text_and_clockwise_wrapped_arc_use_neutral_conventions() {
         }
     }
 }
+
+#[test]
+fn spline_control_and_fit_points_export_and_read_back() {
+    let ctrl_spline = Entity::new(EntityKind::Spline {
+        degree: 3,
+        knots: vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+        control_points: vec![
+            Point3::xy(0.0, 0.0),
+            Point3::xy(1.0, 2.0),
+            Point3::xy(3.0, 2.0),
+            Point3::xy(4.0, 0.0),
+        ],
+        weights: Vec::new(),
+        fit_points: Vec::new(),
+        closed: false,
+    });
+    let fit_spline = Entity::new(EntityKind::Spline {
+        degree: 3,
+        knots: Vec::new(),
+        control_points: Vec::new(),
+        weights: Vec::new(),
+        fit_points: vec![
+            Point3::xy(0.0, 5.0),
+            Point3::xy(2.0, 7.0),
+            Point3::xy(4.0, 5.0),
+        ],
+        closed: true,
+    });
+    let d = document(false, vec![ctrl_spline, fit_spline]);
+    let s = V8Seed::from_bytes(&seed(false)).unwrap();
+    let bytes = write_v8_with_seed(&d, &s, &WriteOptions::default()).unwrap();
+    let direct = write_v8(&d, &seed(false), &WriteOptions::default()).unwrap();
+    let reopened = crate::read(&bytes, &ReadOptions::default()).unwrap();
+    let reopened_direct = crate::read(&direct, &ReadOptions::default()).unwrap();
+    assert_eq!(reopened, reopened_direct);
+    assert_eq!(reopened.models[0].entities.len(), 2);
+    assert!(matches!(
+        &reopened.models[0].entities[0].kind,
+        EntityKind::Polyline { closed: false, vertices, .. } if vertices.len() >= 4
+    ));
+    assert!(matches!(
+        &reopened.models[0].entities[1].kind,
+        EntityKind::Polyline { closed: true, vertices, .. } if vertices.len() >= 3
+    ));
+}
+
+#[test]
+fn v8_seed_prepare_document_converts_cross_format_features() {
+    let seed_3d = V8Seed::from_bytes(&seed(true)).unwrap();
+    assert!(seed_3d.is_3d());
+    assert_eq!(seed_3d.units().unit, cadkit_core::LengthUnit::Meter);
+    assert!(!seed_3d.is_nonempty());
+
+    let mut block_line = Entity::new(EntityKind::Line {
+        start: Point3::xy(0.0, 0.0),
+        end: Point3::xy(1000.0, 0.0),
+    });
+    block_line.color = cadkit_core::Color::ByBlock;
+    block_line.lineweight = cadkit_core::Lineweight::ByBlock;
+
+    let insert = Entity::insert("DOOR", Point3::xy(2000.0, 3000.0))
+        .with_color(cadkit_core::Color::Rgb {
+            r: 250,
+            g: 12,
+            b: 18,
+        })
+        .with_lineweight(cadkit_core::Lineweight::Millimeters(0.5))
+        .with_linetype("DASHED");
+
+    let mtext = Entity::new(EntityKind::MText {
+        position: Point3::xy(500.0, 500.0),
+        height: 250.0,
+        width: 2000.0,
+        rotation: 0.0,
+        value: "\\A1;Room 101\\PFloor 1".into(),
+        plain: "Room 101\nFloor 1".into(),
+        style: Some("STANDARD".into()),
+        attachment: cadkit_core::Attachment::MiddleCenter,
+        line_spacing: 1.0,
+        normal: Vec3::Z,
+    });
+
+    let leader = Entity::new(EntityKind::Leader {
+        vertices: vec![Point3::xy(0.0, 0.0), Point3::xy(500.0, 500.0)],
+        arrowhead: true,
+    });
+
+    let mut cross_doc = Document {
+        units: cadkit_core::Units {
+            unit: cadkit_core::LengthUnit::Millimeter,
+            meters_per_unit: Some(0.001),
+        },
+        blocks: vec![cadkit_core::Block {
+            name: "DOOR".into(),
+            base_point: Point3::ORIGIN,
+            entities: vec![block_line],
+            ..Default::default()
+        }],
+        models: vec![
+            cadkit_core::Model {
+                name: "Model".into(),
+                kind: cadkit_core::ModelKind::Model,
+                is_3d: false,
+                entities: vec![insert, mtext, leader],
+                ..Default::default()
+            },
+            cadkit_core::Model {
+                name: "Layout1".into(),
+                kind: cadkit_core::ModelKind::Layout,
+                is_3d: false,
+                entities: Vec::new(),
+                ..Default::default()
+            },
+        ],
+        ..Document::default()
+    };
+
+    let prepared = seed_3d
+        .prepare_document(&cross_doc, &SeedPrepareOptions::default())
+        .unwrap();
+    assert_eq!(prepared.models.len(), 1);
+    assert!(prepared.models[0].is_3d);
+    assert_eq!(prepared.units.unit, cadkit_core::LengthUnit::Meter);
+
+    let out_bytes = write_v8_with_seed(&prepared, &seed_3d, &WriteOptions::default()).unwrap();
+    let reopened = crate::read(&out_bytes, &ReadOptions::default()).unwrap();
+    assert_eq!(reopened.models[0].entities.len(), 3);
+    if let EntityKind::Line { start, end } = reopened.models[0].entities[0].kind {
+        assert!((start.x - 2.0).abs() < 1e-8 && (start.y - 3.0).abs() < 1e-8);
+        assert!((end.x - 3.0).abs() < 1e-8 && (end.y - 3.0).abs() < 1e-8);
+    } else {
+        panic!("expected exploded line");
+    }
+
+    // 3D -> 2D projection policy check.
+    cross_doc.models[0].is_3d = true;
+    cross_doc.models[0].entities = vec![Entity::new(EntityKind::Line {
+        start: Point3::new(0.0, 0.0, 500.0),
+        end: Point3::new(1000.0, 0.0, 500.0),
+    })];
+    let seed_2d = V8Seed::from_bytes(&seed(false)).unwrap();
+    assert!(
+        seed_2d
+            .prepare_document(&cross_doc, &SeedPrepareOptions::default())
+            .is_err()
+    );
+    let projected = seed_2d
+        .prepare_document(
+            &cross_doc,
+            &SeedPrepareOptions::default().with_dimension_policy(DimensionPolicy::ProjectToSeed),
+        )
+        .unwrap();
+    assert!(write_v8_with_seed(&projected, &seed_2d, &WriteOptions::default()).is_ok());
+}
