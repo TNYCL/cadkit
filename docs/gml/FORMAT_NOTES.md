@@ -82,9 +82,10 @@ provides optional, read-only local structural/field preflight checks on native
   an explicit value, since planarity in mixed degree/metre coordinates is not meaningful.
 - Solid checks follow shared polygon references and OrientableSurface reversal,
   require paired opposing edges and nonzero signed volume with exterior/interior
-  orientation. Edge matching uses exact coordinate equality (signed zero is
-  normalized); differently subdivided or almost-equal edges require explicit
-  repair before validation.
+  orientation. Edge matching welds vertices within `ValidationOptions::tolerance`;
+  differently subdivided edges still require explicit repair. Spatial-grid neighbor
+  arithmetic is checked even when very large finite coordinates saturate an integer
+  cell key; the existing geometry work budget also bounds crowded buckets.
 - These checks do not prove a solid has no intersecting faces, that separate
   cavities are contained, or that buildings satisfy an external delivery profile.
 - `geometry_issues` collects offset/code/message diagnostics separately from
