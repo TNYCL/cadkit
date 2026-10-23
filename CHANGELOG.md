@@ -28,6 +28,7 @@ coverage and explicit export controls. Existing 0.3.x option-struct layouts are 
 
 ### Fixed
 
+- GML shell diagnostics handle extreme finite coordinates without integer-overflow panics.
 - Reader/export bounds, encoding, geometry and cross-format fidelity edge cases, backed by
   synthetic regressions. Reader/export paths also avoid several temporary allocations.
 - Circular viewer picking uses analytic XY distance; display-hidden layers are excluded

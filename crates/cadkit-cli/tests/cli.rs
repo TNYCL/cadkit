@@ -468,7 +468,23 @@ fn completions_for_all_shells() {
         if shell == "bash" {
             use std::io::Write;
             use std::process::Stdio;
-            let mut child = Command::new("bash")
+            // Windows PATH may resolve bash.exe to the WSL launcher; use Git's Bash.
+            let bash = if cfg!(windows) {
+                let git = Command::new("git")
+                    .arg("--exec-path")
+                    .output()
+                    .expect("Git path");
+                assert!(git.status.success());
+                let exec_path = text(&git.stdout);
+                Path::new(exec_path.trim())
+                    .ancestors()
+                    .map(|path| path.join("bin/bash.exe"))
+                    .find(|path| path.is_file())
+                    .expect("Git for Windows Bash")
+            } else {
+                PathBuf::from("bash")
+            };
+            let mut child = Command::new(bash)
                 .arg("-n")
                 .stdin(Stdio::piped())
                 .spawn()
