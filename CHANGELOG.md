@@ -6,6 +6,24 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-23
+
+### Added
+
+- Independent `cadkit-geom` crate with analytic curves, polygon booleans and source
+  provenance, calibration, trim/offset, and certified NURBS evaluation,
+  tessellation and nearest-point search.
+- Optional `schemars` feature, unconditional serde support, explicit numerical
+  budgets, English API documentation and synthetic extreme-input regressions.
+
+### Changed
+
+- Raise the workspace MSRV from Rust 1.85 to 1.88 for the pinned `i_overlay` 9.0.0
+  geometry dependency.
+- Update existing workspace code to the lint spelling enabled by Rust 1.88
+  (let chains, fixed-size chunk iteration and divisibility checks), without
+  changing the format or binding contracts.
+
 ## [0.3.7] - 2026-10-23
 
 
@@ -274,7 +292,8 @@ Fixed during development, before this first release:
 - No automatic TKGM/CityMax building inference or receiving-system acceptance.
 - DWG R13 (AC1012) is untested; entity coverage of all readers is still growing.
 
-[Unreleased]: https://github.com/TNYCL/cadkit/compare/v0.3.7...HEAD
+[Unreleased]: https://github.com/TNYCL/cadkit/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/TNYCL/cadkit/compare/v0.3.7...v0.4.0
 [0.3.7]: https://github.com/TNYCL/cadkit/compare/v0.3.6...v0.3.7
 [0.3.6]: https://github.com/TNYCL/cadkit/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/TNYCL/cadkit/compare/v0.3.4...v0.3.5

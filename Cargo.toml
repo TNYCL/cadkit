@@ -16,7 +16,7 @@ default-members = [
 exclude = ["fuzz"]
 
 [workspace.package]
-version = "0.3.7"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
@@ -26,16 +26,16 @@ keywords = ["cad", "dwg", "dgn", "dxf", "citygml"]
 categories = ["parser-implementations", "graphics", "encoding", "science::geo"]
 
 [workspace.dependencies]
-cadkit-geom = { path = "crates/cadkit-geom", version = "0.3.7" }
+cadkit-geom = { path = "crates/cadkit-geom", version = "0.4.0" }
 i_overlay = "=9.0.0"
 robust = "=1.2.0"
 schemars = "1.2.2"
-cadkit-core = { path = "crates/cadkit-core", version = "0.3.7" }
-cadkit-dgn = { path = "crates/cadkit-dgn", version = "0.3.7", default-features = false }
-cadkit-dwg = { path = "crates/cadkit-dwg", version = "0.3.7" }
-cadkit-dxf = { path = "crates/cadkit-dxf", version = "0.3.7" }
-cadkit-gml = { path = "crates/cadkit-gml", version = "0.3.7" }
-cadkit = { path = "crates/cadkit", version = "0.3.7" }
+cadkit-core = { path = "crates/cadkit-core", version = "0.4.0" }
+cadkit-dgn = { path = "crates/cadkit-dgn", version = "0.4.0", default-features = false }
+cadkit-dwg = { path = "crates/cadkit-dwg", version = "0.4.0" }
+cadkit-dxf = { path = "crates/cadkit-dxf", version = "0.4.0" }
+cadkit-gml = { path = "crates/cadkit-gml", version = "0.4.0" }
+cadkit = { path = "crates/cadkit", version = "0.4.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
