@@ -12,12 +12,13 @@ mod out;
 
 use std::collections::{BTreeSet, HashMap};
 
+use cadkit_core::text::OemCodepage;
 use cadkit_core::{
-    Color, Document, Entity, EntityKind, Lineweight, ModelKind, Point3, Result, Warning,
+    Color, Document, Entity, EntityKind, Error, Lineweight, ModelKind, Point3, Result, Warning,
 };
 
 use self::out::Out;
-use crate::DxfVersion;
+use crate::{DxfVersion, WriteOptions};
 
 /// Case-insensitive name registry that remembers the canonical spelling.
 #[derive(Default)]
@@ -135,9 +136,170 @@ pub(crate) struct Writer<'a> {
     pub continuous: String,
     /// Handle of the `Normal` plot style placeholder (R2000+; 0 until allocated).
     pub plotstyle: u64,
+    /// Explicit `$DWGCODEPAGE` override for legacy 8-bit DXF output.
+    pub dwg_codepage: Option<&'static str>,
+}
+
+#[derive(Clone, Copy)]
+enum OutEncoder {
+    Oem(OemCodepage),
+    Whatwg(&'static encoding_rs::Encoding),
+}
+
+impl OutEncoder {
+    fn encode_into(self, ch: char, out: &mut Vec<u8>) -> bool {
+        match self {
+            Self::Oem(oem) => {
+                let Some(b) = oem.encode_char(ch) else {
+                    return false;
+                };
+                out.push(b);
+                true
+            }
+            Self::Whatwg(enc) => {
+                let mut tmp = [0u8; 4];
+                let s = ch.encode_utf8(&mut tmp);
+                let (bytes, _, had_errors) = enc.encode(s);
+                if had_errors {
+                    return false;
+                }
+                out.extend_from_slice(&bytes);
+                true
+            }
+        }
+    }
+}
+
+fn resolve_out_codepage(label: &str) -> Result<(&'static str, OutEncoder)> {
+    if let Some(oem) = OemCodepage::from_label(label) {
+        return Ok((oem.dxf_name(), OutEncoder::Oem(oem)));
+    }
+    let Some(enc) = crate::native::encoding_for_codepage(label) else {
+        return Err(Error::Unsupported(format!(
+            "unsupported DXF output code page `{label}`"
+        )));
+    };
+    let dxf_name = if enc == encoding_rs::WINDOWS_1250 {
+        "ANSI_1250"
+    } else if enc == encoding_rs::WINDOWS_1251 {
+        "ANSI_1251"
+    } else if enc == encoding_rs::WINDOWS_1252 {
+        "ANSI_1252"
+    } else if enc == encoding_rs::WINDOWS_1253 {
+        "ANSI_1253"
+    } else if enc == encoding_rs::WINDOWS_1254 {
+        "ANSI_1254"
+    } else if enc == encoding_rs::WINDOWS_1255 {
+        "ANSI_1255"
+    } else if enc == encoding_rs::WINDOWS_1256 {
+        "ANSI_1256"
+    } else if enc == encoding_rs::WINDOWS_1257 {
+        "ANSI_1257"
+    } else if enc == encoding_rs::WINDOWS_1258 {
+        "ANSI_1258"
+    } else if enc == encoding_rs::WINDOWS_874 {
+        "ANSI_874"
+    } else if enc == encoding_rs::SHIFT_JIS {
+        "ANSI_932"
+    } else if enc == encoding_rs::GBK || enc == encoding_rs::GB18030 {
+        "ANSI_936"
+    } else if enc == encoding_rs::EUC_KR {
+        "ANSI_949"
+    } else if enc == encoding_rs::BIG5 {
+        "ANSI_950"
+    } else if enc == encoding_rs::IBM866 {
+        "DOS866"
+    } else if enc == encoding_rs::MACINTOSH {
+        "MACINTOSH"
+    } else if enc == encoding_rs::ISO_8859_2 {
+        "ISO8859-2"
+    } else if enc == encoding_rs::ISO_8859_3 {
+        "ISO8859-3"
+    } else if enc == encoding_rs::ISO_8859_4 {
+        "ISO8859-4"
+    } else if enc == encoding_rs::ISO_8859_5 {
+        "ISO8859-5"
+    } else if enc == encoding_rs::ISO_8859_6 {
+        "ISO8859-6"
+    } else if enc == encoding_rs::ISO_8859_7 {
+        "ISO8859-7"
+    } else if enc == encoding_rs::ISO_8859_8 {
+        "ISO8859-8"
+    } else if enc == encoding_rs::UTF_8 {
+        return Err(Error::Unsupported(
+            "UTF-8 DXF output requires R2007 or newer".into(),
+        ));
+    } else {
+        return Err(Error::Unsupported(format!(
+            "code page `{label}` has no `$DWGCODEPAGE` equivalent"
+        )));
+    };
+    Ok((dxf_name, OutEncoder::Whatwg(enc)))
+}
+
+fn parse_u_escape(bytes: &[u8], at: usize) -> Option<u16> {
+    let slice = bytes.get(at..at.checked_add(7)?)?;
+    if slice.first() != Some(&b'\\')
+        || !matches!(slice.get(1), Some(b'U' | b'u'))
+        || slice.get(2) != Some(&b'+')
+    {
+        return None;
+    }
+    let hex = std::str::from_utf8(slice.get(3..7)?).ok()?;
+    u16::from_str_radix(hex, 16).ok()
+}
+
+fn transcode_u_escapes(ascii: &str, enc: OutEncoder) -> Vec<u8> {
+    let bytes = ascii.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0usize;
+    while let Some(&b) = bytes.get(i) {
+        if b == b'\\' {
+            if let Some(u1) = parse_u_escape(bytes, i) {
+                if (0xD800..=0xDBFF).contains(&u1) {
+                    if let Some(u2) = parse_u_escape(bytes, i + 7)
+                        && (0xDC00..=0xDFFF).contains(&u2)
+                    {
+                        if let Some(Ok(ch)) = char::decode_utf16([u1, u2]).next()
+                            && enc.encode_into(ch, &mut out)
+                        {
+                            i += 14;
+                            continue;
+                        }
+                        if let Some(raw) = bytes.get(i..i + 14) {
+                            out.extend_from_slice(raw);
+                        }
+                        i += 14;
+                        continue;
+                    }
+                } else if let Some(ch) = char::from_u32(u32::from(u1))
+                    && enc.encode_into(ch, &mut out)
+                {
+                    i += 7;
+                    continue;
+                }
+                if let Some(raw) = bytes.get(i..i + 7) {
+                    out.extend_from_slice(raw);
+                }
+                i += 7;
+                continue;
+            }
+        }
+        out.push(b);
+        i += 1;
+    }
+    out
 }
 
 pub(crate) fn write(doc: &Document, ver: DxfVersion) -> Result<(String, Vec<Warning>)> {
+    write_with_codepage(doc, ver, None)
+}
+
+fn write_with_codepage(
+    doc: &Document,
+    ver: DxfVersion,
+    dwg_codepage: Option<&'static str>,
+) -> Result<(String, Vec<Warning>)> {
     let mut w = Writer {
         doc,
         ver,
@@ -158,6 +320,7 @@ pub(crate) fn write(doc: &Document, ver: DxfVersion) -> Result<(String, Vec<Warn
         images: Vec::new(),
         viewport_id: 1,
         plotstyle: 0,
+        dwg_codepage,
         continuous: if ver == DxfVersion::R12 {
             "CONTINUOUS"
         } else {
@@ -167,6 +330,43 @@ pub(crate) fn write(doc: &Document, ver: DxfVersion) -> Result<(String, Vec<Warn
     };
     let text = w.run();
     Ok((text, w.warnings))
+}
+
+pub(crate) fn write_bytes(
+    doc: &Document,
+    options: &WriteOptions,
+) -> Result<(Vec<u8>, Vec<Warning>)> {
+    let ge2007 = matches!(
+        options.version,
+        DxfVersion::R2007 | DxfVersion::R2010 | DxfVersion::R2013 | DxfVersion::R2018
+    );
+    match options
+        .codepage
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        None => {
+            let (text, warnings) = write(doc, options.version)?;
+            Ok((text.into_bytes(), warnings))
+        }
+        Some(cp) if ge2007 => {
+            if cp.eq_ignore_ascii_case("utf-8") || cp.eq_ignore_ascii_case("utf8") {
+                let (text, warnings) = write(doc, options.version)?;
+                Ok((text.into_bytes(), warnings))
+            } else {
+                Err(Error::Unsupported(format!(
+                    "DXF {:?} always uses UTF-8; choose R12/R2000/R2004 for legacy code page `{cp}`",
+                    options.version
+                )))
+            }
+        }
+        Some(cp) => {
+            let (dxf_cp, enc) = resolve_out_codepage(cp)?;
+            let (ascii, warnings) = write_with_codepage(doc, options.version, Some(dxf_cp))?;
+            Ok((transcode_u_escapes(&ascii, enc), warnings))
+        }
+    }
 }
 
 impl Writer<'_> {
@@ -567,7 +767,10 @@ impl Writer<'_> {
         out.word(2, "HEADER");
         out.word(9, "$ACADVER");
         out.word(1, self.ver.acadver());
-        if !self.r12 {
+        if let Some(cp) = self.dwg_codepage {
+            out.word(9, "$DWGCODEPAGE");
+            out.word(3, cp);
+        } else if !self.r12 {
             out.word(9, "$DWGCODEPAGE");
             out.word(3, "ANSI_1252");
         }

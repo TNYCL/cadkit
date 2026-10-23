@@ -220,6 +220,7 @@ fn private_raster_frames_fit_their_ranges() {
 /// A private seed with raster attachments takes a new attachment cloned from its own
 /// group: the new records have the corpus record signature, and the attachment reads back
 /// with the placement, pixel size and path of the attachment it was copied from.
+#[cfg(feature = "write")]
 #[test]
 fn private_seed_takes_a_new_raster_attachment() {
     let read = ReadOptions::default();
@@ -347,6 +348,7 @@ fn private_seed_takes_a_new_raster_attachment() {
 /// A private seed without raster attachments takes a new attachment from the built-in
 /// group: it reads back with the placement, pixel size, path and resolution it was written
 /// with, and the output holds a complete group.
+#[cfg(feature = "write")]
 #[test]
 fn private_seed_without_rasters_takes_the_builtin_group() {
     let read = ReadOptions::default();

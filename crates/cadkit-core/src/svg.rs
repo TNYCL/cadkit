@@ -6,8 +6,13 @@
 //!   drawing units; `width` comes from [`SvgOptions::width_px`] and `height` follows the
 //!   aspect ratio.
 //! - Every element carries `vector-effect="non-scaling-stroke"`, so [`SvgOptions::stroke_px`]
-//!   is a screen width regardless of the zoom. Lineweights, linetypes (dashes) and
-//!   polyline widths are ignored.
+//!   is a screen width regardless of the zoom. Explicit [`Lineweight::Millimeters`] values scale
+//!   the stroke proportionally around the CAD `0.25 mm` baseline, and [`Linetype`] dash patterns
+//!   emit screen-space `stroke-dasharray` attributes. Polyline vertex widths are ignored.
+//! - Non-solid [`EntityKind::Hatch`] entities emit `<defs><pattern>` line fills, [`EntityKind::Leader`]
+//!   entities with `arrowhead = true` render tip arrowheads, constrained [`EntityKind::MText`] boxes
+//!   word-wrap by width, oblique [`EntityKind::Text`] entities apply `skewX`, and visible entity
+//!   [`Attribute`](crate::model::Attribute) values with display geometry render as `<text>`.
 //! - One `<g data-layer="...">` per layer, in order of first use. Hidden / frozen layers and
 //!   invisible entities are skipped; block references are expanded (see [`Document::walk`]),
 //!   with `ByBlock` colors and layer `"0"` resolved through the inserting entity.
@@ -28,19 +33,24 @@
 //! - Output is deterministic: no hash-order or time dependence, numbers use a fixed
 //!   precision derived from the drawing extent with trailing zeros removed.
 
+use std::borrow::Cow;
+use std::collections::HashMap;
 use std::f64::consts::{PI, TAU};
 
 use crate::geom::{Point3, Vec3};
 use crate::geom_ops::{EllipseArc, Transform, ccw_sweep, conjugate_to_axes};
-use crate::model::Value;
-use crate::model::{Document, Entity, EntityKind, HAlign, HatchEdge, VAlign, Vertex};
+use crate::model::{
+    Block, Color, Document, Entity, EntityKind, HAlign, HatchEdge, Layer, Linetype, Lineweight,
+    VAlign, Value, Vertex,
+};
 use crate::ops::{
     BBoxOptions, DEFAULT_MAX_WORK, DEFAULT_WALK_DEPTH, WalkContext, WalkOptions, attachment_anchor,
     circle_arc, full_ellipse_arc, mtext_line_height, mtext_text_lines, segment_arc, spline_points,
 };
 
 /// SVG rendering options.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct SvgOptions {
     /// Index into [`Document::models`] to render.
     pub model: usize,
@@ -62,6 +72,79 @@ pub struct SvgOptions {
     pub max_work: u64,
     /// Stop emitting geometry once this many bytes of SVG body have been produced.
     pub max_output_bytes: usize,
+}
+
+impl SvgOptions {
+    /// Creates default SVG options (white background, `1600px` wide, `1px` stroke).
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Selects the model index in [`Document::models`].
+    pub fn with_model(mut self, model: usize) -> Self {
+        self.model = model;
+        self
+    }
+
+    /// Sets [`SvgOptions::width_px`].
+    pub fn with_width_px(mut self, width_px: f64) -> Self {
+        self.width_px = width_px;
+        self
+    }
+
+    /// Sets [`SvgOptions::stroke_px`].
+    pub fn with_stroke_px(mut self, stroke_px: f64) -> Self {
+        self.stroke_px = stroke_px;
+        self
+    }
+
+    /// Sets a CSS background color (or `None` for transparent).
+    pub fn with_background(mut self, background: Option<impl Into<String>>) -> Self {
+        self.background = background.map(Into::into);
+        self
+    }
+
+    /// Convenience preset for a transparent background (`background = None`).
+    pub fn transparent(mut self) -> Self {
+        self.background = None;
+        self
+    }
+
+    /// Convenience preset for a dark CAD viewport background (`#12161c`).
+    pub fn dark(mut self) -> Self {
+        self.background = Some("#12161c".to_owned());
+        self
+    }
+
+    /// Toggles text rendering.
+    pub fn with_text(mut self, text: bool) -> Self {
+        self.text = text;
+        self
+    }
+
+    /// Toggles block-reference (`Insert`) expansion.
+    pub fn with_expand_blocks(mut self, expand_blocks: bool) -> Self {
+        self.expand_blocks = expand_blocks;
+        self
+    }
+
+    /// Toggles raster image frame rendering.
+    pub fn with_images(mut self, images: bool) -> Self {
+        self.images = images;
+        self
+    }
+
+    /// Sets [`SvgOptions::max_work`].
+    pub fn with_max_work(mut self, max_work: u64) -> Self {
+        self.max_work = max_work;
+        self
+    }
+
+    /// Sets [`SvgOptions::max_output_bytes`].
+    pub fn with_max_output_bytes(mut self, max_output_bytes: usize) -> Self {
+        self.max_output_bytes = max_output_bytes;
+        self
+    }
 }
 
 impl Default for SvgOptions {
@@ -126,8 +209,32 @@ fn background_rgb(bg: Option<&str>) -> (u8, u8, u8) {
     };
     match b.as_str() {
         "black" => return (0, 0, 0),
-        "white" => return (255, 255, 255),
+        "white" | "transparent" | "none" => return (255, 255, 255),
+        "gray" | "grey" => return (128, 128, 128),
+        "dimgray" | "dimgrey" => return (105, 105, 105),
+        "darkgray" | "darkgrey" => return (169, 169, 169),
+        "silver" => return (192, 192, 192),
+        "lightgray" | "lightgrey" => return (211, 211, 211),
+        "navy" => return (0, 0, 128),
+        "midnightblue" => return (25, 25, 112),
+        "darkslategray" | "darkslategrey" => return (47, 79, 79),
         _ => {}
+    }
+    if let Some(inner) = b
+        .strip_prefix("rgb(")
+        .or_else(|| b.strip_prefix("rgba("))
+        .and_then(|s| s.strip_suffix(')'))
+    {
+        let parts: Vec<u8> = inner
+            .split([',', ' ', '/'])
+            .filter(|s| !s.is_empty())
+            .take(3)
+            .filter_map(|s| s.parse::<f64>().ok())
+            .map(|v| v.round().clamp(0.0, 255.0) as u8)
+            .collect();
+        if let [r, g, bl] = parts.as_slice() {
+            return (*r, *g, *bl);
+        }
     }
     let Some(h) = b.strip_prefix('#') else {
         return (255, 255, 255);
@@ -365,22 +472,249 @@ impl Layers {
     }
 }
 
+fn wrap_mtext_lines(lines: Vec<String>, width: f64, height: f64) -> Vec<String> {
+    if !(width.is_finite() && width > 0.0 && height.is_finite() && height > 0.0) {
+        return lines;
+    }
+    let max_chars = ((width / (0.6 * height)).floor() as usize).max(1);
+    let mut wrapped = Vec::with_capacity(lines.len());
+    for line in lines {
+        if line.chars().count() <= max_chars {
+            wrapped.push(line);
+            continue;
+        }
+        let mut current = String::new();
+        let mut cur_len = 0usize;
+        for word in line.split_whitespace() {
+            let wlen = word.chars().count();
+            if cur_len == 0 {
+                current.push_str(word);
+                cur_len = wlen;
+            } else if cur_len + 1 + wlen <= max_chars {
+                current.push(' ');
+                current.push_str(word);
+                cur_len += 1 + wlen;
+            } else {
+                wrapped.push(std::mem::take(&mut current));
+                current.push_str(word);
+                cur_len = wlen;
+            }
+        }
+        if !current.is_empty() || line.is_empty() {
+            wrapped.push(current);
+        }
+    }
+    wrapped
+}
+
+fn dash_array_px(pattern: &[f64], px_per_unit: f64, stroke_px: f64) -> Option<String> {
+    if pattern.is_empty() || !pattern.iter().any(|&v| v.is_finite() && v < -1e-12) {
+        return None;
+    }
+    let unit_cycle: f64 = pattern
+        .iter()
+        .copied()
+        .filter(|v| v.is_finite())
+        .map(f64::abs)
+        .sum();
+    if unit_cycle <= 1e-12 {
+        return None;
+    }
+    let raw_cycle_px = unit_cycle * px_per_unit;
+    let min_cycle = 6.0 * stroke_px;
+    let max_cycle = 160.0 * stroke_px;
+    let scale = if raw_cycle_px.is_finite() && raw_cycle_px > 0.0 {
+        raw_cycle_px.clamp(min_cycle, max_cycle) / unit_cycle
+    } else {
+        12.0 * stroke_px / unit_cycle
+    };
+
+    let mut pairs: Vec<f64> = Vec::with_capacity(pattern.len() + 2);
+    let mut expect_dash = true;
+    for &seg in pattern {
+        if !seg.is_finite() {
+            continue;
+        }
+        if seg >= -1e-12 {
+            let len = if seg <= 1e-12 {
+                stroke_px.max(0.5)
+            } else {
+                (seg * scale).max(stroke_px)
+            };
+            if expect_dash {
+                pairs.push(len);
+                expect_dash = false;
+            } else {
+                pairs.push(stroke_px);
+                pairs.push(len);
+            }
+        } else {
+            let gap = ((-seg) * scale).max(stroke_px);
+            if !expect_dash {
+                pairs.push(gap);
+                expect_dash = true;
+            } else if let Some(last) = pairs.last_mut() {
+                *last += gap;
+            } else {
+                pairs.push(0.0);
+                pairs.push(gap);
+            }
+        }
+    }
+    if pairs.len() < 2 {
+        return None;
+    }
+    let formatted: Vec<String> = pairs.into_iter().map(|v| fmt_num(v, 2)).collect();
+    Some(formatted.join(" "))
+}
+
 struct Renderer<'a> {
     doc: &'a Document,
     opts: &'a SvgOptions,
     fmt: Fmt,
     view: Transform,
     cross: f64,
+    extent: f64,
+    px_per_unit: f64,
+    stroke_px: f64,
     layers: Layers,
+    defs: Vec<String>,
+    hatch_cache: HashMap<String, String>,
+    layer_map: HashMap<&'a str, &'a Layer>,
+    linetype_map: HashMap<String, &'a Linetype>,
+    block_map: HashMap<&'a str, &'a Block>,
     background: (u8, u8, u8),
 }
 
-impl Renderer<'_> {
-    fn stroke(color: (u8, u8, u8)) -> String {
+impl<'a> Renderer<'a> {
+    fn stroke_base(color: (u8, u8, u8)) -> String {
         format!(
             " stroke=\"{}\" vector-effect=\"non-scaling-stroke\"",
             hex(color)
         )
+    }
+
+    fn resolved_stroke_width(&self, e: &Entity, ctx: &WalkContext<'_>) -> Option<f64> {
+        let mm = match e.lineweight {
+            Lineweight::Millimeters(mm) => Some(mm),
+            Lineweight::ByLayer => {
+                let lname = ctx.layer_name(e);
+                match self.layer_map.get(lname).map(|l| l.lineweight) {
+                    Some(Lineweight::Millimeters(mm)) => Some(mm),
+                    _ => None,
+                }
+            }
+            Lineweight::ByBlock | Lineweight::Default => None,
+        }?;
+        if !(mm.is_finite() && mm >= 0.0) {
+            return None;
+        }
+        let w = if mm <= 1e-6 {
+            0.5 * self.stroke_px
+        } else {
+            (self.stroke_px * (mm / 0.25)).clamp(0.4 * self.stroke_px, 6.0 * self.stroke_px)
+        };
+        if (w - self.stroke_px).abs() > 1e-3 {
+            Some(w)
+        } else {
+            None
+        }
+    }
+
+    fn resolved_dasharray(&self, e: &Entity, ctx: &WalkContext<'_>) -> Option<String> {
+        let raw_name = match e.linetype.as_deref() {
+            Some(name) if !name.is_empty() && !name.eq_ignore_ascii_case("BYLAYER") => Some(name),
+            _ => self
+                .layer_map
+                .get(ctx.layer_name(e))
+                .and_then(|l| l.linetype.as_deref()),
+        }?;
+        if raw_name.eq_ignore_ascii_case("CONTINUOUS") || raw_name.eq_ignore_ascii_case("BYBLOCK") {
+            return None;
+        }
+        let lt = self.linetype_map.get(&raw_name.to_ascii_lowercase())?;
+        dash_array_px(&lt.pattern, self.px_per_unit, self.stroke_px)
+    }
+
+    fn stroke_attrs(&self, e: &Entity, ctx: &WalkContext<'_>, color: (u8, u8, u8)) -> String {
+        let mut s = Self::stroke_base(color);
+        if let Some(w) = self.resolved_stroke_width(e, ctx) {
+            s.push_str(&format!(" stroke-width=\"{}\"", fmt_num(w, 3)));
+        }
+        if let Some(dash) = self.resolved_dasharray(e, ctx) {
+            s.push_str(&format!(" stroke-dasharray=\"{dash}\""));
+        }
+        s
+    }
+
+    fn hatch_pattern_id(
+        &mut self,
+        pattern: Option<&str>,
+        pattern_scale: f64,
+        pattern_angle: f64,
+        color: (u8, u8, u8),
+    ) -> String {
+        let pat_upper = pattern.unwrap_or("ANSI31").to_ascii_uppercase();
+        let base_angle = if pat_upper.contains("31")
+            || pat_upper.contains("32")
+            || pat_upper.contains("33")
+            || pat_upper.contains("37")
+            || pat_upper.contains("SLASH")
+        {
+            PI / 4.0
+        } else {
+            0.0
+        };
+        let cross_hatch = pat_upper.contains("37")
+            || pat_upper.contains("NET")
+            || pat_upper.contains("CROSS")
+            || pat_upper.contains("SQUARE");
+        let total_deg = -(base_angle
+            + if pattern_angle.is_finite() {
+                pattern_angle
+            } else {
+                0.0
+            })
+        .to_degrees();
+        let scale = if pattern_scale.is_finite() && pattern_scale > 0.0 {
+            pattern_scale
+        } else {
+            1.0
+        };
+        let min_step = (self.extent * 0.008).max(1e-6);
+        let max_step = (self.extent * 0.08).max(min_step);
+        let step = (3.175 * scale).clamp(min_step, max_step);
+        let step_s = self.fmt.num(step);
+        let deg_s = fmt_num(total_deg, 2);
+        let c_hex = hex(color);
+        let sw_s = fmt_num((self.stroke_px * 0.75).max(0.5), 3);
+
+        let key = format!("{c_hex}:{step_s}:{deg_s}:{cross_hatch}");
+        if let Some(existing) = self.hatch_cache.get(&key) {
+            return existing.clone();
+        }
+        let id = format!("cadkit-hatch-{}", self.defs.len() + 1);
+        let rot_attr = if total_deg.abs() > 1e-3 {
+            format!(" patternTransform=\"rotate({deg_s})\"")
+        } else {
+            String::new()
+        };
+        let mut def = format!(
+            "<pattern id=\"{id}\" patternUnits=\"userSpaceOnUse\" width=\"{step_s}\" height=\"{step_s}\"{rot_attr}>"
+        );
+        def.push_str(&format!(
+            "<line x1=\"0\" y1=\"0\" x2=\"{step_s}\" y2=\"0\" stroke=\"{c_hex}\" stroke-width=\"{sw_s}\" vector-effect=\"non-scaling-stroke\"/>"
+        ));
+        if cross_hatch {
+            def.push_str(&format!(
+                "<line x1=\"0\" y1=\"0\" x2=\"0\" y2=\"{step_s}\" stroke=\"{c_hex}\" stroke-width=\"{sw_s}\" vector-effect=\"non-scaling-stroke\"/>"
+            ));
+        }
+        def.push_str("</pattern>\n");
+        self.layers.bytes += def.len();
+        self.defs.push(def);
+        self.hatch_cache.insert(key, id.clone());
+        id
     }
 
     fn emit_path(&mut self, layer: &str, d: &str, extra: &str) {
@@ -391,9 +725,162 @@ impl Renderer<'_> {
         self.layers.push(layer, &line);
     }
 
-    fn stroke_path(&mut self, layer: &str, pb: &PathBuilder<'_>, color: (u8, u8, u8)) {
-        let extra = Self::stroke(color);
+    fn stroke_path(
+        &mut self,
+        layer: &str,
+        pb: &PathBuilder<'_>,
+        e: &Entity,
+        ctx: &WalkContext<'_>,
+        color: (u8, u8, u8),
+    ) {
+        let extra = self.stroke_attrs(e, ctx, color);
         self.emit_path(layer, &pb.d, &extra);
+    }
+
+    fn layer_hidden(&self, name: &str) -> bool {
+        self.layer_map
+            .get(name)
+            .is_some_and(|l| !l.visible || l.frozen)
+    }
+
+    fn render_attributes(&mut self, e: &Entity, ctx: &WalkContext<'_>) {
+        if !self.opts.text || e.attributes.is_empty() {
+            return;
+        }
+        let tf = self.view.compose(&ctx.transform);
+        let owner_color = with_contrast(e.resolved_color_in(self.doc, ctx), self.background);
+        for attr in &e.attributes {
+            if attr.invisible {
+                continue;
+            }
+            let (Some(pos), Some(disp)) = (attr.position, attr.display.as_ref()) else {
+                continue;
+            };
+            if !(disp.height.is_finite() && disp.height > 0.0) {
+                continue;
+            }
+            let text_val: Cow<'_, str> = match &attr.value {
+                Value::Text(s) if !s.is_empty() => Cow::Borrowed(s.as_str()),
+                Value::Int(n) => Cow::Owned(n.to_string()),
+                Value::Float(f) if f.is_finite() => Cow::Owned(fmt_num(*f, 6)),
+                Value::Bool(b) => Cow::Borrowed(if *b { "true" } else { "false" }),
+                _ => continue,
+            };
+            let attr_layer = attr.layer.as_deref().unwrap_or_else(|| ctx.layer_name(e));
+            if self.layer_hidden(attr_layer) {
+                continue;
+            }
+            let attr_color = if attr.layer.is_some() && e.color == Color::ByLayer {
+                let lc = self
+                    .layer_map
+                    .get(attr_layer)
+                    .map(|l| l.color)
+                    .unwrap_or(Color::ByLayer);
+                let mut probe = Entity::new(EntityKind::Point { position: pos });
+                probe.layer = Some(attr_layer.to_owned());
+                probe.color = lc;
+                with_contrast(probe.resolved_color(self.doc), self.background)
+            } else {
+                owner_color
+            };
+            self.text(
+                attr_layer,
+                attr_color,
+                &tf,
+                pos,
+                disp.height,
+                disp.rotation,
+                0.0,
+                Vec3::Z,
+                TextBody::Single(&text_val),
+                disp.halign,
+                disp.valign,
+            );
+        }
+    }
+
+    fn render_expanded_insert_attributes(
+        &mut self,
+        list: &'a [Entity],
+        ctx: &WalkContext<'a>,
+        stack: &mut Vec<&'a str>,
+        cap: usize,
+    ) {
+        for e in list {
+            if self.layers.bytes > cap {
+                return;
+            }
+            let layer = ctx.layer_name(e);
+            if !e.visible || self.layer_hidden(layer) {
+                continue;
+            }
+            match &e.kind {
+                EntityKind::Insert {
+                    block,
+                    position,
+                    scale,
+                    rotation,
+                    normal,
+                    columns,
+                    rows,
+                    column_spacing,
+                    row_spacing,
+                } => {
+                    let Some(def) = self.block_map.get(block.as_str()).copied() else {
+                        continue;
+                    };
+                    if ctx.depth >= DEFAULT_WALK_DEPTH || stack.contains(&def.name.as_str()) {
+                        continue;
+                    }
+                    // This Insert was expanded by `walk_while`, so `render_entity` did not see it.
+                    self.render_attributes(e, ctx);
+                    let child_layer: Option<&'a str> = match e.layer.as_deref() {
+                        None | Some("0") => ctx.inherited_layer,
+                        Some(l) => Some(l),
+                    };
+                    let block_color = Some(e.resolved_color_in(self.doc, ctx));
+                    stack.push(def.name.as_str());
+                    for r in 0..(*rows).max(1) {
+                        for c in 0..(*columns).max(1) {
+                            if self.layers.bytes > cap {
+                                break;
+                            }
+                            let offset = Vec3::new(
+                                f64::from(c) * *column_spacing,
+                                f64::from(r) * *row_spacing,
+                                0.0,
+                            );
+                            let local = Transform::from_insert_offset(
+                                *position,
+                                *scale,
+                                *rotation,
+                                *normal,
+                                def.base_point,
+                                offset,
+                            );
+                            let mut child = ctx.clone();
+                            child.transform = ctx.transform.compose(&local);
+                            child.depth = ctx.depth + 1;
+                            child.inherited_layer = child_layer;
+                            child.block_color = block_color;
+                            self.render_expanded_insert_attributes(
+                                &def.entities,
+                                &child,
+                                stack,
+                                cap,
+                            );
+                        }
+                    }
+                    stack.pop();
+                }
+                EntityKind::Group { children, .. } if ctx.depth < DEFAULT_WALK_DEPTH => {
+                    let mut child = ctx.clone();
+                    child.depth = ctx.depth + 1;
+                    self.render_expanded_insert_attributes(children, &child, stack, cap);
+                }
+                _ => {}
+            }
+        }
     }
 
     fn render_entity(&mut self, e: &Entity, ctx: &WalkContext<'_>) {
@@ -406,13 +893,13 @@ impl Renderer<'_> {
             EntityKind::Point { position } => {
                 let p = tf.apply_point(*position);
                 self.cross_path(&mut pb, (p.x, p.y));
-                self.stroke_path(&layer, &pb, color);
+                self.stroke_path(&layer, &pb, e, ctx, color);
             }
             EntityKind::Line { start, end } => {
                 let (a, b) = (tf.apply_point(*start), tf.apply_point(*end));
                 pb.move_to((a.x, a.y));
                 pb.line_to((b.x, b.y));
-                self.stroke_path(&layer, &pb, color);
+                self.stroke_path(&layer, &pb, e, ctx, color);
             }
             EntityKind::Polyline {
                 vertices,
@@ -420,7 +907,7 @@ impl Renderer<'_> {
                 normal,
             } => {
                 pb.bulge_polyline(vertices, *closed, *normal, &tf);
-                self.stroke_path(&layer, &pb, color);
+                self.stroke_path(&layer, &pb, e, ctx, color);
             }
             EntityKind::Circle {
                 center,
@@ -430,7 +917,7 @@ impl Renderer<'_> {
                 let arc = circle_arc(*center, *radius, 0.0, 0.0, *normal, &tf);
                 pb.arc(&arc);
                 pb.close();
-                self.stroke_path(&layer, &pb, color);
+                self.stroke_path(&layer, &pb, e, ctx, color);
             }
             EntityKind::Arc {
                 center,
@@ -444,7 +931,7 @@ impl Renderer<'_> {
                 if arc.sweep().abs() >= TAU - 1e-9 {
                     pb.close();
                 }
-                self.stroke_path(&layer, &pb, color);
+                self.stroke_path(&layer, &pb, e, ctx, color);
             }
             EntityKind::Ellipse {
                 center,
@@ -467,7 +954,7 @@ impl Renderer<'_> {
                 if arc.sweep().abs() >= TAU - 1e-9 {
                     pb.close();
                 }
-                self.stroke_path(&layer, &pb, color);
+                self.stroke_path(&layer, &pb, e, ctx, color);
             }
             EntityKind::Spline {
                 degree,
@@ -477,10 +964,18 @@ impl Renderer<'_> {
                 fit_points,
                 closed,
             } => {
-                let pts = spline_points(*degree, knots, control_points, weights, fit_points, &tf);
+                let pts = spline_points(
+                    *degree,
+                    knots,
+                    control_points,
+                    weights,
+                    fit_points,
+                    *closed,
+                    &tf,
+                );
                 let v: Vec<(f64, f64)> = pts.iter().map(|p| (p.x, p.y)).collect();
                 pb.polyline(&v, *closed && v.len() > 2);
-                self.stroke_path(&layer, &pb, color);
+                self.stroke_path(&layer, &pb, e, ctx, color);
             }
             EntityKind::Text {
                 position,
@@ -510,6 +1005,7 @@ impl Renderer<'_> {
                 position,
                 height,
                 rotation,
+                oblique,
                 value,
                 halign,
                 valign,
@@ -524,6 +1020,7 @@ impl Renderer<'_> {
                         *position,
                         *height,
                         *rotation,
+                        *oblique,
                         *normal,
                         TextBody::Single(value),
                         *halign,
@@ -534,6 +1031,7 @@ impl Renderer<'_> {
             EntityKind::MText {
                 position,
                 height,
+                width,
                 rotation,
                 value,
                 plain,
@@ -554,7 +1052,7 @@ impl Renderer<'_> {
                         0 => VAlign::Middle,
                         _ => VAlign::Bottom,
                     };
-                    let lines = mtext_text_lines(value, plain);
+                    let lines = wrap_mtext_lines(mtext_text_lines(value, plain), *width, *height);
                     let lh = mtext_line_height(*height, *line_spacing);
                     self.text(
                         &layer,
@@ -563,6 +1061,7 @@ impl Renderer<'_> {
                         *position,
                         *height,
                         *rotation,
+                        0.0,
                         *normal,
                         TextBody::Multi(&lines, lh),
                         halign,
@@ -574,13 +1073,15 @@ impl Renderer<'_> {
                 // Reached only when the block is missing, cyclic, too deep or expansion is off.
                 let p = tf.apply_point(*position);
                 self.cross_path(&mut pb, (p.x, p.y));
-                self.stroke_path(&layer, &pb, color);
+                self.stroke_path(&layer, &pb, e, ctx, color);
             }
             EntityKind::Hatch {
                 loops,
                 solid,
+                pattern,
+                pattern_scale,
+                pattern_angle,
                 normal,
-                ..
             } => {
                 for l in loops {
                     hatch_loop(&mut pb, &l.edges, *normal, &tf);
@@ -591,7 +1092,16 @@ impl Renderer<'_> {
                         hex(color)
                     )
                 } else {
-                    format!(" fill-rule=\"evenodd\"{}", Self::stroke(color))
+                    let pid = self.hatch_pattern_id(
+                        pattern.as_deref(),
+                        *pattern_scale,
+                        *pattern_angle,
+                        color,
+                    );
+                    format!(
+                        " fill=\"url(#{pid})\" fill-rule=\"evenodd\"{}",
+                        self.stroke_attrs(e, ctx, color)
+                    )
                 };
                 self.emit_path(&layer, &pb.d, &extra);
             }
@@ -603,7 +1113,7 @@ impl Renderer<'_> {
                     .collect();
                 if v.len() >= 2 {
                     pb.polyline(&v, false);
-                    self.stroke_path(&layer, &pb, color);
+                    self.stroke_path(&layer, &pb, e, ctx, color);
                 }
             }
             EntityKind::Face { points, filled } => {
@@ -616,10 +1126,11 @@ impl Renderer<'_> {
                 }
                 if v.len() >= 3 {
                     pb.polyline(&v, true);
+                    let stroke = self.stroke_attrs(e, ctx, color);
                     let extra = if *filled {
-                        format!(" fill=\"{}\"{}", hex(color), Self::stroke(color))
+                        format!(" fill=\"{}\"{stroke}", hex(color))
                     } else {
-                        Self::stroke(color)
+                        stroke
                     };
                     self.emit_path(&layer, &pb.d, &extra);
                 }
@@ -636,17 +1147,17 @@ impl Renderer<'_> {
                         .collect();
                     pb.polyline(&points, true);
                 }
+                let stroke = self.stroke_attrs(e, ctx, color);
                 self.emit_path(
                     &layer,
                     &pb.d,
-                    &format!(
-                        " fill=\"{}\" fill-rule=\"evenodd\"{}",
-                        hex(color),
-                        Self::stroke(color)
-                    ),
+                    &format!(" fill=\"{}\" fill-rule=\"evenodd\"{stroke}", hex(color)),
                 );
             }
-            EntityKind::Leader { vertices, .. } => {
+            EntityKind::Leader {
+                vertices,
+                arrowhead,
+            } => {
                 let v: Vec<(f64, f64)> = vertices
                     .iter()
                     .map(|p| tf.apply_point(*p))
@@ -654,7 +1165,24 @@ impl Renderer<'_> {
                     .collect();
                 if v.len() >= 2 {
                     pb.polyline(&v, false);
-                    self.stroke_path(&layer, &pb, color);
+                    if *arrowhead {
+                        if let (Some(&tip), Some(&from)) = (v.first(), v.get(1)) {
+                            let (dx, dy) = (from.0 - tip.0, from.1 - tip.1);
+                            let seg_len = dx.hypot(dy);
+                            if seg_len > 1e-9 {
+                                let alen = (self.cross * 2.5).min(seg_len * 0.45);
+                                let (ux, uy) = (dx / seg_len, dy / seg_len);
+                                let (px, py) = (-uy, ux);
+                                let hw = alen * 0.35;
+                                let w1 = (tip.0 + ux * alen + px * hw, tip.1 + uy * alen + py * hw);
+                                let w2 = (tip.0 + ux * alen - px * hw, tip.1 + uy * alen - py * hw);
+                                pb.move_to(w1);
+                                pb.line_to(tip);
+                                pb.line_to(w2);
+                            }
+                        }
+                    }
+                    self.stroke_path(&layer, &pb, e, ctx, color);
                 }
             }
             EntityKind::Image {
@@ -691,7 +1219,10 @@ impl Renderer<'_> {
                 } else {
                     ""
                 };
-                let extra = format!("{}{faint} stroke-dasharray=\"4 3\"", Self::stroke(color));
+                let extra = format!(
+                    "{}{faint} stroke-dasharray=\"4 3\"",
+                    Self::stroke_base(color)
+                );
                 if !pb.d.is_empty() {
                     self.layers
                         .push_image(&format!("<path d=\"{}\"{extra}/>\n", pb.d));
@@ -716,11 +1247,12 @@ impl Renderer<'_> {
                         pb.close();
                     }
                 }
-                self.stroke_path(&layer, &pb, color);
+                self.stroke_path(&layer, &pb, e, ctx, color);
             }
             EntityKind::Viewport { .. } | EntityKind::Group { .. } | EntityKind::Unknown { .. } => {
             }
         }
+        self.render_attributes(e, ctx);
     }
 
     fn cross_path(&self, pb: &mut PathBuilder<'_>, p: (f64, f64)) {
@@ -801,6 +1333,7 @@ impl Renderer<'_> {
         position: Point3,
         height: f64,
         rotation: f64,
+        oblique: f64,
         normal: Vec3,
         body: TextBody<'_>,
         halign: HAlign,
@@ -830,12 +1363,33 @@ impl Renderer<'_> {
             _ => None,
         };
         let (x, y) = (self.fmt.num(p.x), self.fmt.num(p.y));
+        let skew_deg = if oblique.is_finite() && oblique.abs() > 1e-6 {
+            Some((-oblique.to_degrees()).clamp(-75.0, 75.0))
+        } else {
+            None
+        };
         let mut el = format!("<text x=\"{x}\" y=\"{y}\"");
-        if angle.abs() > 1e-6 {
-            el.push_str(&format!(
-                " transform=\"rotate({} {x} {y})\"",
-                fmt_num(angle, 3)
-            ));
+        match (angle.abs() > 1e-6, skew_deg) {
+            (true, None) => {
+                el.push_str(&format!(
+                    " transform=\"rotate({} {x} {y})\"",
+                    fmt_num(angle, 3)
+                ));
+            }
+            (has_rot, Some(sk)) => {
+                let nx = self.fmt.num(-p.x);
+                let ny = self.fmt.num(-p.y);
+                let rot_part = if has_rot {
+                    format!("rotate({} {x} {y}) ", fmt_num(angle, 3))
+                } else {
+                    String::new()
+                };
+                el.push_str(&format!(
+                    " transform=\"{rot_part}translate({x} {y}) skewX({}) translate({nx} {ny})\"",
+                    fmt_num(sk, 3)
+                ));
+            }
+            (false, None) => {}
         }
         el.push_str(&format!(
             " font-size=\"{}\" text-anchor=\"{anchor}\"",
@@ -928,7 +1482,7 @@ fn hatch_loop(pb: &mut PathBuilder<'_>, edges: &[HatchEdge], normal: Vec3, t: &T
                 control_points,
                 weights,
             } => {
-                for (i, p) in spline_points(*degree, knots, control_points, weights, &[], t)
+                for (i, p) in spline_points(*degree, knots, control_points, weights, &[], false, t)
                     .iter()
                     .enumerate()
                 {
@@ -1023,15 +1577,40 @@ pub fn render(doc: &Document, options: &SvgOptions) -> String {
     let vw = bb.width() + 2.0 * margin;
     let vh = bb.height() + 2.0 * margin;
     let height = (width * vh / vw).max(1.0);
-    let fmt = Fmt::for_extent(vw.max(vh));
+    let view_extent = vw.max(vh);
+    let px_per_unit = if vw > 1e-12 { width / vw } else { 1.0 };
+    let fmt = Fmt::for_extent(view_extent);
+
+    let mut layer_map = HashMap::with_capacity(doc.layers.len());
+    for l in &doc.layers {
+        layer_map.entry(l.name.as_str()).or_insert(l);
+    }
+    let mut linetype_map = HashMap::with_capacity(doc.linetypes.len());
+    for lt in &doc.linetypes {
+        linetype_map
+            .entry(lt.name.to_ascii_lowercase())
+            .or_insert(lt);
+    }
+    let mut block_map = HashMap::with_capacity(doc.blocks.len());
+    for b in &doc.blocks {
+        block_map.entry(b.name.as_str()).or_insert(b);
+    }
 
     let mut r = Renderer {
         doc,
         opts: options,
         fmt: Fmt { dec: fmt.dec },
         view: Transform::scaling(1.0, -1.0, 1.0),
-        cross: vw.max(vh) * 0.004,
+        cross: view_extent * 0.004,
+        extent: view_extent,
+        px_per_unit,
+        stroke_px: stroke,
         layers: Layers::default(),
+        defs: Vec::new(),
+        hatch_cache: HashMap::new(),
+        layer_map,
+        linetype_map,
+        block_map,
         background: background_rgb(options.background.as_deref()),
     };
     let walk_opts = WalkOptions {
@@ -1047,7 +1626,16 @@ pub fn render(doc: &Document, options: &SvgOptions) -> String {
         r.render_entity(e, ctx);
         true
     });
-    let truncated = stats.truncated;
+    let mut truncated = stats.truncated;
+    if !truncated && options.expand_blocks && options.text && !doc.blocks.is_empty() {
+        if let Some(m) = doc.models.get(options.model) {
+            let mut stack = Vec::new();
+            r.render_expanded_insert_attributes(&m.entities, &WalkContext::root(), &mut stack, cap);
+            if r.layers.bytes > cap {
+                truncated = true;
+            }
+        }
+    }
 
     let mut out = format!(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{}\" height=\"{}\" viewBox=\"{} {} {} {}\"{}>\n",
@@ -1075,6 +1663,13 @@ pub fn render(doc: &Document, options: &SvgOptions) -> String {
             fmt.num(vh),
             escape(b)
         ));
+    }
+    if !r.defs.is_empty() {
+        out.push_str("<defs>\n");
+        for def in &r.defs {
+            out.push_str(def);
+        }
+        out.push_str("</defs>\n");
     }
     for (name, body) in &r.layers.items {
         out.push_str(&format!(
@@ -1738,5 +2333,126 @@ mod tests {
             line(0.0, 0.0, 1.0, 1.0),
         ]);
         assert!(!s.contains("NaN") && !s.contains("inf"), "{s}");
+    }
+
+    #[test]
+    fn lineweight_linetype_and_hatch_patterns_render() {
+        let mut dashed = line(0.0, 0.0, 20.0, 0.0)
+            .with_linetype("DASHED")
+            .with_lineweight(Lineweight::Millimeters(0.5));
+        dashed.layer = Some("WALLS".into());
+
+        let hatch = Entity::new(EntityKind::Hatch {
+            loops: vec![HatchLoop {
+                edges: vec![
+                    HatchEdge::Line {
+                        start: Point3::xy(0.0, 2.0),
+                        end: Point3::xy(10.0, 2.0),
+                    },
+                    HatchEdge::Line {
+                        start: Point3::xy(10.0, 2.0),
+                        end: Point3::xy(10.0, 8.0),
+                    },
+                    HatchEdge::Line {
+                        start: Point3::xy(10.0, 8.0),
+                        end: Point3::xy(0.0, 8.0),
+                    },
+                    HatchEdge::Line {
+                        start: Point3::xy(0.0, 8.0),
+                        end: Point3::xy(0.0, 2.0),
+                    },
+                ],
+                external: true,
+            }],
+            solid: false,
+            pattern: Some("ANSI37".into()),
+            pattern_scale: 1.0,
+            pattern_angle: 0.0,
+            normal: Vec3::Z,
+        });
+
+        let mut d = doc(vec![dashed, hatch]);
+        d.linetypes.push(Linetype {
+            name: "DASHED".into(),
+            description: None,
+            pattern: vec![1.0, -0.5],
+            props: Default::default(),
+        });
+
+        let opts = SvgOptions::new().dark().with_width_px(800.0);
+        let s = render(&d, &opts);
+        assert!(s.contains("stroke-width=\"2\""), "{s}");
+        assert!(s.contains("stroke-dasharray=\""), "{s}");
+        assert!(
+            s.contains("<defs>") && s.contains("<pattern id=\"cadkit-hatch-1\""),
+            "{s}"
+        );
+        assert!(s.contains("fill=\"url(#cadkit-hatch-1)\""), "{s}");
+        // Cross-hatch ANSI37 emits two orthogonal lines inside the pattern tile.
+        assert_eq!(s.matches("<line ").count(), 2, "{s}");
+    }
+
+    #[test]
+    fn oblique_text_wrapped_mtext_leader_arrow_and_insert_attributes() {
+        let oblique_text = Entity::new(EntityKind::Text {
+            position: Point3::xy(0.0, 0.0),
+            end_point: None,
+            height: 2.0,
+            rotation: 0.0,
+            width_factor: 1.0,
+            oblique: 0.25,
+            value: "SLANT".into(),
+            style: None,
+            halign: HAlign::Left,
+            valign: VAlign::Baseline,
+            normal: Vec3::Z,
+        });
+        let wrapped_mtext = Entity::new(EntityKind::MText {
+            position: Point3::xy(0.0, 10.0),
+            height: 1.0,
+            width: 6.0,
+            rotation: 0.0,
+            value: "alpha beta gamma delta".into(),
+            plain: "alpha beta gamma delta".into(),
+            style: None,
+            attachment: Attachment::TopLeft,
+            line_spacing: 1.0,
+            normal: Vec3::Z,
+        });
+        let leader = Entity::new(EntityKind::Leader {
+            vertices: vec![Point3::xy(0.0, 0.0), Point3::xy(10.0, 0.0)],
+            arrowhead: true,
+        });
+        let mut ins = Entity::insert("TAGBLK", Point3::xy(5.0, 5.0));
+        ins.attributes.push(crate::model::Attribute {
+            tag: "ROOM".into(),
+            value: Value::from("A-101"),
+            position: Some(Point3::xy(6.0, 6.0)),
+            invisible: false,
+            display: Some(crate::model::AttributeDisplay {
+                height: 1.5,
+                width: 1.5,
+                style: None,
+                halign: HAlign::Left,
+                valign: VAlign::Baseline,
+                rotation: 0.0,
+            }),
+            ..Default::default()
+        });
+
+        let mut d = doc(vec![oblique_text, wrapped_mtext, leader, ins]);
+        d.blocks.push(Block {
+            name: "TAGBLK".into(),
+            entities: vec![line(0.0, 0.0, 2.0, 0.0)],
+            ..Block::default()
+        });
+
+        let s = render(&d, &SvgOptions::default());
+        assert!(s.contains("skewX("), "{s}");
+        assert!(s.matches("<tspan").count() >= 2, "{s}");
+        assert!(s.contains(">A-101</text>"), "{s}");
+        // Leader has 1 move_to for the shaft + 1 move_to for the arrowhead wings.
+        assert!(s.contains("M0 0L10 0M"), "{s}");
+        assert_eq!(background_rgb(Some("rgb(18, 22, 28)")), (18, 22, 28));
     }
 }

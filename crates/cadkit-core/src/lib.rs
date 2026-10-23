@@ -6,6 +6,7 @@
 
 pub mod aci;
 pub mod bytes;
+pub mod doc_ops;
 pub mod error;
 pub mod export;
 pub mod geom;
@@ -18,7 +19,9 @@ pub mod svg;
 pub mod text;
 pub mod units;
 
+pub use doc_ops::PurgeStats;
 pub use error::{Error, Result};
 pub use geom::{BBox, Point3, Vec3};
+pub use geom_ops::Transform;
 pub use model::*;
 pub use options::{Limits, ReadOptions};

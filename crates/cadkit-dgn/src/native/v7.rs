@@ -7,7 +7,9 @@
 //! stored as two little-endian words, high word first; doubles are VAX D-float.
 //! Layouts follow GDAL dgnlib (`dgnread.cpp`, MIT/X); see `docs/dgn/FORMAT_NOTES.md`.
 
-use cadkit_core::{Error, Limits, ReadOptions, Result, Warning};
+use cadkit_core::{
+    Error, Format, LengthUnit, Limits, ReadOptions, Result, Summary, Units, Warning,
+};
 use encoding_rs::Encoding;
 
 use crate::budget::Budget;
@@ -170,6 +172,57 @@ pub(crate) fn scan<'a>(
         end_offset: off,
         warnings,
     })
+}
+
+/// Inspects a V7 header up to the first type-9 TCB record without decoding graphic records.
+pub(crate) fn inspect(bytes: &[u8], options: &ReadOptions) -> Result<Summary> {
+    if !sniff(bytes) {
+        return Err(Error::UnknownFormat);
+    }
+    let mut budget = Budget::new(options.limits);
+    if bytes.len() as u64 > budget.limits.max_input_bytes {
+        return Err(Error::LimitExceeded(format!(
+            "input exceeds {} bytes",
+            budget.limits.max_input_bytes
+        )));
+    }
+    let enc = text::encoding_for(options.fallback_codepage.as_deref());
+    let mut tcb = None;
+    let mut off = 0usize;
+    while let Some(head) = le::bytes(bytes, off, 4) {
+        if head.starts_with(&[0xff, 0xff]) {
+            break;
+        }
+        let words = usize::from(le::u16_at(head, 2).unwrap_or(0));
+        let len = 4 + 2 * words;
+        let Some(rec) = le::bytes(bytes, off, len) else {
+            break;
+        };
+        budget.charge_objects(1)?;
+        if u16::from(le::u8_at(rec, 1).unwrap_or(0) & 0x7f) == 9 {
+            tcb = parse_tcb(rec, enc);
+            break;
+        }
+        off += len;
+    }
+    let is_3d = bytes.first() == Some(&0xC8) || tcb.as_ref().is_some_and(|t| t.is_3d);
+    let units = match tcb
+        .as_ref()
+        .and_then(|t| crate::map::unit_from_label(&t.master_label))
+    {
+        Some((unit, meters)) => Units {
+            unit,
+            meters_per_unit: Some(meters),
+        },
+        None => Units {
+            unit: LengthUnit::Unitless,
+            meters_per_unit: None,
+        },
+    };
+    Ok(Summary::new(Format::DgnV7, "V7")
+        .with_is_3d(Some(is_3d))
+        .with_units(Some(units))
+        .with_codepage(Some(enc.name().to_ascii_lowercase())))
 }
 
 /// Design file header (GDAL `DGNParseTCB`).

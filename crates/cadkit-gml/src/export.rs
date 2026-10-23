@@ -16,6 +16,39 @@ pub struct ExportOptions {
     pub limits: cadkit_core::Limits,
 }
 
+impl ExportOptions {
+    /// Creates CityGML export options for `srs_name` and `lod` (`0..=4`) with default limits.
+    #[must_use]
+    pub fn new(srs_name: impl Into<String>, lod: u8) -> Self {
+        Self {
+            srs_name: srs_name.into(),
+            lod,
+            limits: cadkit_core::Limits::default(),
+        }
+    }
+
+    /// Replaces the CRS identifier written to `srsName`.
+    #[must_use]
+    pub fn with_srs_name(mut self, srs_name: impl Into<String>) -> Self {
+        self.srs_name = srs_name.into();
+        self
+    }
+
+    /// Replaces the target Level of Detail (`0..=4`).
+    #[must_use]
+    pub fn with_lod(mut self, lod: u8) -> Self {
+        self.lod = lod;
+        self
+    }
+
+    /// Replaces the resource limits enforced during export.
+    #[must_use]
+    pub fn with_limits(mut self, limits: cadkit_core::Limits) -> Self {
+        self.limits = limits;
+        self
+    }
+}
+
 /// Handling of geometry without a supported, exact GML representation.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -214,6 +247,13 @@ fn geometry(kind: &EntityKind) -> Result<Element> {
             radius,
             normal,
         } => crate::curves::circle(*center, *radius, *normal),
+        EntityKind::Arc {
+            center,
+            radius,
+            start_angle,
+            end_angle,
+            normal,
+        } => crate::curves::arc(*center, *radius, *start_angle, *end_angle, *normal),
         other => Err(Error::Unsupported(format!(
             "CityGML export for {} requires explicit geometry/semantic mapping",
             other.type_name()

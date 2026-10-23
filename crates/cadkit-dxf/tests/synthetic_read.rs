@@ -788,3 +788,77 @@ fn ascii_flavours() {
     let doc = read_text("0 SECTION\n2 ENTITIES\n0 POINT\n10 1\n20 2\n");
     assert_eq!(doc.models[0].entities.len(), 1);
 }
+
+#[test]
+fn ray_xline_and_wipeout_extract_props_and_ray_xline_roundtrip() {
+    let dxf = "\
+0 SECTION
+2 ENTITIES
+0 RAY
+8 CONSTRUCTION
+10 1.0
+20 2.0
+30 0.0
+11 3.0
+21 4.0
+31 0.0
+0 XLINE
+8 CONSTRUCTION
+10 -5.0
+20 0.0
+30 1.0
+11 0.0
+21 1.0
+31 0.0
+0 WIPEOUT
+8 MASK
+10 10.0
+20 20.0
+30 0.0
+11 5.0
+21 0.0
+31 0.0
+12 0.0
+22 5.0
+32 0.0
+14 -0.5
+24 -0.5
+14 0.5
+24 0.5
+0 ENDSEC
+0 EOF
+";
+    let doc = read_text(dxf);
+    let ents = &doc.models[0].entities;
+    assert_eq!(ents.len(), 3);
+    assert!(ents[0].props.contains_key("dxf.point"));
+    assert!(ents[0].props.contains_key("dxf.direction"));
+    assert!(ents[1].props.contains_key("dxf.point"));
+    assert!(ents[2].props.contains_key("dxf.insertion_point"));
+    assert!(ents[2].props.contains_key("dxf.clip_vertices"));
+
+    // Writing to R2013 emits genuine RAY and XLINE entities (while skipping WIPEOUT with a warning).
+    let (out, warnings) =
+        cadkit_dxf::write_with_report(&doc, cadkit_dxf::DxfVersion::R2013).unwrap();
+    assert!(out.contains("\r\nRAY\r\n") && out.contains("\r\nAcDbRay\r\n"));
+    assert!(out.contains("\r\nXLINE\r\n") && out.contains("\r\nAcDbXline\r\n"));
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].message.contains("WIPEOUT"));
+
+    let back = cadkit_dxf::read(out.as_bytes(), &ReadOptions::default()).unwrap();
+    assert_eq!(back.models[0].entities.len(), 2);
+    assert_eq!(
+        back.models[0].entities[0].kind,
+        EntityKind::Unknown {
+            type_name: "dxf.RAY".into()
+        }
+    );
+    // Direction (3, 4, 0) was normalized to unit vector (0.6, 0.8, 0).
+    let dir = back.models[0].entities[0]
+        .props
+        .get("dxf.direction")
+        .and_then(|v| v.as_list())
+        .unwrap();
+    assert!((dir[0].as_f64().unwrap() - 0.6).abs() < 1e-9);
+    assert!((dir[1].as_f64().unwrap() - 0.8).abs() < 1e-9);
+}

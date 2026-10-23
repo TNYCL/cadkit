@@ -66,7 +66,7 @@ pub(super) struct Tables {
     pub levels: BTreeMap<String, u32>,
     pub sets: BTreeMap<Option<String>, (u64, TagSetData)>,
     pub last_id: u64,
-    referenced_fonts: BTreeSet<u32>,
+    pub referenced_fonts: BTreeSet<u32>,
     max_level: u32,
     level_template: Option<Vec<u8>>,
     /// High 16 bits of the type word of new level entries: those of the seed's entries.

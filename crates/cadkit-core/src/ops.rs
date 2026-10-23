@@ -7,7 +7,8 @@ use std::rc::Rc;
 use crate::aci;
 use crate::geom::{BBox, Point3, Vec3};
 use crate::geom_ops::{
-    EllipseArc, Transform, bulge_to_arc, ellipse_arc, extend_bbox, nurbs_flatten,
+    EllipseArc, Transform, bulge_to_arc, ellipse_arc, extend_bbox, interpolate_fit_points,
+    nurbs_flatten,
 };
 use crate::model::{
     Attachment, Block, Color, Document, Entity, EntityKind, HAlign, HatchEdge, Layer, VAlign,
@@ -569,19 +570,24 @@ pub(crate) fn segment_arc(
 /// Samples per knot span when splines are flattened.
 pub(crate) const SPLINE_SAMPLES: usize = 16;
 
-/// A spline as a polyline in model space: sampled NURBS, else fit points, else control points.
+/// A spline as a polyline in model space: sampled NURBS, else interpolated fit points, else control points.
 pub(crate) fn spline_points(
     degree: u32,
     knots: &[f64],
     control: &[Point3],
     weights: &[f64],
     fit: &[Point3],
+    closed: bool,
     tf: &Transform,
 ) -> Vec<Point3> {
     let pts = if control.len() >= 2 {
         nurbs_flatten(degree, knots, control, weights, SPLINE_SAMPLES)
     } else if fit.len() >= 2 {
-        fit.to_vec()
+        if let Some((deg, iknots, ictrl)) = interpolate_fit_points(fit, closed) {
+            nurbs_flatten(deg, &iknots, &ictrl, &[], SPLINE_SAMPLES)
+        } else {
+            fit.to_vec()
+        }
     } else {
         control.to_vec()
     };
@@ -721,7 +727,7 @@ fn extend_hatch_edge(bb: &mut Option<BBox>, edge: &HatchEdge, normal: Vec3, tf: 
             control_points,
             weights,
         } => {
-            for p in spline_points(*degree, knots, control_points, weights, &[], tf) {
+            for p in spline_points(*degree, knots, control_points, weights, &[], false, tf) {
                 extend_bbox(bb, p);
             }
         }
@@ -805,9 +811,17 @@ fn entity_extents(e: &Entity, tf: &Transform, bb: &mut Option<BBox>) {
             control_points,
             weights,
             fit_points,
-            ..
+            closed,
         } => {
-            for p in spline_points(*degree, knots, control_points, weights, fit_points, tf) {
+            for p in spline_points(
+                *degree,
+                knots,
+                control_points,
+                weights,
+                fit_points,
+                *closed,
+                tf,
+            ) {
                 extend_bbox(bb, p);
             }
         }

@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use cadkit_core::text::OemCodepage;
 use cadkit_core::{
     Block, Document, Entity, EntityKind, Error, Format, Model, ModelKind, Point3, ReadOptions,
-    Result, Units, Value as MValue,
+    Result, Summary, Units, Value as MValue,
 };
 
 use self::common::{handle, model_value};
@@ -122,6 +122,122 @@ fn prescan(bytes: &[u8]) -> (Option<String>, Option<String>) {
 
 fn length_unit(code: i64) -> Units {
     Units::from_insunits(i32::try_from(code).unwrap_or(0))
+}
+
+/// Inspects the DXF `HEADER` section without decoding `TABLES`, `BLOCKS`, or `ENTITIES`.
+pub(crate) fn inspect(bytes: &[u8], options: &ReadOptions) -> Result<Summary> {
+    if bytes.len() as u64 > options.limits.max_input_bytes {
+        return Err(Error::LimitExceeded(format!(
+            "input of {} bytes exceeds the limit of {}",
+            bytes.len(),
+            options.limits.max_input_bytes
+        )));
+    }
+    if !crate::native::sniff(bytes) {
+        return Err(Error::UnknownFormat);
+    }
+    let mut tok = Tokenizer::new(bytes);
+    tok.set_decode_escapes(false);
+    tok.set_max_string_bytes(options.limits.max_string_bytes as usize);
+
+    let mut saw_section = false;
+    let mut awaiting_section_name = false;
+    let mut in_header = false;
+    let mut comment: Option<String> = None;
+    let mut version: Option<String> = None;
+    let mut codepage: Option<String> = None;
+    let mut insunits: Option<i64> = None;
+    let mut extmin_z: Option<f64> = None;
+    let mut extmax_z: Option<f64> = None;
+    let mut var = String::new();
+
+    for _ in 0..200_000 {
+        let pair = match tok.next_pair() {
+            Ok(Some(p)) => p,
+            Ok(None) => break,
+            Err(e @ Error::LimitExceeded(_)) => return Err(e),
+            Err(e) => {
+                if !saw_section {
+                    return Err(e);
+                }
+                break;
+            }
+        };
+        if pair.code == 999 {
+            if comment.is_none() {
+                if let Value::Str(s) = pair.value {
+                    comment = Some(s);
+                }
+            }
+            continue;
+        }
+        if pair.code == 0 {
+            var.clear();
+            if let Value::Str(s) = &pair.value {
+                if s.eq_ignore_ascii_case("SECTION") {
+                    saw_section = true;
+                    awaiting_section_name = true;
+                    continue;
+                }
+                awaiting_section_name = false;
+                if s.eq_ignore_ascii_case("ENDSEC") && in_header {
+                    break;
+                }
+                if s.eq_ignore_ascii_case("EOF") {
+                    break;
+                }
+            }
+            continue;
+        }
+        if awaiting_section_name {
+            if pair.code == 2 {
+                awaiting_section_name = false;
+                if pair
+                    .value
+                    .as_str()
+                    .is_some_and(|s| s.trim().eq_ignore_ascii_case("HEADER"))
+                {
+                    in_header = true;
+                } else {
+                    break;
+                }
+            }
+            continue;
+        }
+        if in_header {
+            match (pair.code, &pair.value) {
+                (9, Value::Str(s)) => var = s.trim().to_ascii_uppercase(),
+                (1, Value::Str(s)) if var == "$ACADVER" => version = Some(s.trim().to_owned()),
+                (3, Value::Str(s)) if var == "$DWGCODEPAGE" => {
+                    codepage = Some(s.trim().to_owned());
+                }
+                (70, v) if var == "$INSUNITS" => insunits = v.as_i64(),
+                (30, v) if var == "$EXTMIN" => extmin_z = v.as_f64(),
+                (30, v) if var == "$EXTMAX" => extmax_z = v.as_f64(),
+                _ => {}
+            }
+        }
+    }
+
+    if !saw_section {
+        return Err(Error::UnknownFormat);
+    }
+
+    let is_3d = match (extmin_z, extmax_z) {
+        (Some(z0), Some(z1)) if z0.is_finite() && z1.is_finite() && z0 <= z1 => {
+            (z0.abs() > 1e-12 || z1.abs() > 1e-12).then_some(true)
+        }
+        _ => None,
+    };
+    let units = insunits
+        .map(length_unit)
+        .or_else(|| in_header.then(Units::default));
+
+    Ok(Summary::new(Format::Dxf, version.unwrap_or_default())
+        .with_is_3d(is_3d)
+        .with_units(units)
+        .with_codepage(codepage)
+        .with_application(comment))
 }
 
 /// Most groups one record may hold. A pair costs about 40 bytes in memory, so 8 million caps

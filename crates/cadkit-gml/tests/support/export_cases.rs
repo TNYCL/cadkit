@@ -313,3 +313,142 @@ fn new_and_edited_native_model_preserves_semantic_links_and_typed_ids() {
     assert!(text.contains("00001234567890"));
     assert!(text.contains("Bağımsız bölüm – Çığ"));
 }
+
+#[test]
+fn exact_arcs_roundtrip_minor_major_and_tilted_and_validate_xsd() {
+    for (start, end, normal) in [
+        (0.25, 1.75, Vec3::Z),
+        (0.5, 5.2, Vec3::Z), // major arc (> 180 deg)
+        (1.0, 3.8, Vec3::new(0.0, 0.0, -1.0)),
+        (0.2, 2.6, Vec3::new(1.0, 2.0, 3.0).normalized().unwrap()),
+    ] {
+        let center = Point3::new(400_000.0, 4_500_000.0, 12.0);
+        let radius = 4.5;
+        let doc = document(vec![
+            Entity::new(EntityKind::Arc {
+                center,
+                radius,
+                start_angle: start,
+                end_angle: end,
+                normal,
+            })
+            .on_layer("CURB_ARC"),
+        ]);
+        let bytes =
+            write_document(&doc, &ExportOptions::new("urn:ogc:def:crs:EPSG::5254", 2)).unwrap();
+        validate_xsd_if_cached(&bytes);
+        let after = read(&bytes, &ReadOptions::default()).unwrap();
+        assert_eq!(after.units.unit, cadkit_core::LengthUnit::Meter);
+        assert!(after.layers.iter().any(|l| l.name == "CURB_ARC"));
+        let mut found = 0;
+        after.walk(0, 64, |e, _| {
+            if let EntityKind::Arc {
+                center: c,
+                radius: r,
+                start_angle: sa,
+                end_angle: ea,
+                normal: n,
+            } = e.kind
+            {
+                assert!(center.distance_to(c) < 1e-7);
+                assert!((r - radius).abs() < 1e-7);
+                assert!(n.minus(normal).length() < 1e-7);
+                let want_sweep = cadkit_core::geom_ops::ccw_sweep(start, end);
+                let got_sweep = cadkit_core::geom_ops::ccw_sweep(sa, ea);
+                assert!((want_sweep - got_sweep).abs() < 1e-7);
+                assert_eq!(e.layer.as_deref(), Some("CURB_ARC"));
+                found += 1;
+            }
+        });
+        assert_eq!(found, 1);
+    }
+}
+
+#[test]
+fn ring_boundaries_surface_patches_building_furniture_and_srs_units() {
+    let xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<core:CityModel xmlns:core="{CORE}" xmlns:bldg="{BUILDING}" xmlns:gml="{GML}">
+  <gml:boundedBy>
+    <gml:Envelope srsName="EPSG:2229" srsDimension="3">
+      <gml:lowerCorner>0 0 0</gml:lowerCorner>
+      <gml:upperCorner>10 10 5</gml:upperCorner>
+    </gml:Envelope>
+  </gml:boundedBy>
+  <core:cityObjectMember>
+    <bldg:Building gml:id="b1">
+      <bldg:interiorFurniture>
+        <bldg:BuildingFurniture gml:id="furn1">
+          <bldg:lod4Geometry>
+            <gml:PolyhedralSurface>
+              <gml:polygonPatches>
+                <gml:PolygonPatch>
+                  <gml:exterior>
+                    <gml:Ring>
+                      <gml:curveMember>
+                        <gml:LineString>
+                          <gml:posList>0 0 0 4 0 0 4 3 0</gml:posList>
+                        </gml:LineString>
+                      </gml:curveMember>
+                      <gml:curveMember>
+                        <gml:Curve>
+                          <gml:segments>
+                            <gml:LineStringSegment>
+                              <gml:posList>4 3 0 0 3 0 0 0 0</gml:posList>
+                            </gml:LineStringSegment>
+                          </gml:segments>
+                        </gml:Curve>
+                      </gml:curveMember>
+                    </gml:Ring>
+                  </gml:exterior>
+                </gml:PolygonPatch>
+              </gml:polygonPatches>
+            </gml:PolyhedralSurface>
+          </bldg:lod4Geometry>
+        </bldg:BuildingFurniture>
+      </bldg:interiorFurniture>
+      <bldg:boundedBy>
+        <bldg:RoofSurface gml:id="roof1">
+          <bldg:lod2MultiSurface>
+            <gml:MultiSurface>
+              <gml:surfaceMember>
+                <gml:TriangulatedSurface>
+                  <gml:trianglePatches>
+                    <gml:Triangle>
+                      <gml:exterior>
+                        <gml:LinearRing>
+                          <gml:posList>0 0 5 4 0 5 2 3 6 0 0 5</gml:posList>
+                        </gml:LinearRing>
+                      </gml:exterior>
+                    </gml:Triangle>
+                  </gml:trianglePatches>
+                </gml:TriangulatedSurface>
+              </gml:surfaceMember>
+            </gml:MultiSurface>
+          </bldg:lod2MultiSurface>
+        </bldg:RoofSurface>
+      </bldg:boundedBy>
+    </bldg:Building>
+  </core:cityObjectMember>
+</core:CityModel>"#
+    );
+    let doc = read(xml.as_bytes(), &ReadOptions::default()).unwrap();
+    assert_eq!(doc.units.unit, cadkit_core::LengthUnit::UsSurveyFoot);
+    assert!(doc.layers.iter().any(|l| l.name == "BuildingFurniture"));
+    assert!(doc.layers.iter().any(|l| l.name == "RoofSurface"));
+    let mut polys_by_layer = Vec::new();
+    doc.walk(0, 64, |e, _| {
+        if matches!(e.kind, EntityKind::Polygon { .. }) {
+            polys_by_layer.push(e.layer.clone().unwrap_or_default());
+        }
+    });
+    assert_eq!(
+        polys_by_layer,
+        vec!["BuildingFurniture".to_owned(), "RoofSurface".to_owned()]
+    );
+
+    // Geographic EPSG:4326 stays unitless.
+    let geo_xml = xml.replace("EPSG:2229", "EPSG:4326");
+    let geo_doc = read(geo_xml.as_bytes(), &ReadOptions::default()).unwrap();
+    assert_eq!(geo_doc.units.unit, cadkit_core::LengthUnit::Unitless);
+}

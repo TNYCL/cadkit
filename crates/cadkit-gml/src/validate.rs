@@ -34,6 +34,43 @@ impl Default for ValidationOptions {
     }
 }
 
+impl ValidationOptions {
+    /// Sets resource consumption limits.
+    #[must_use]
+    pub fn with_limits(mut self, limits: Limits) -> Self {
+        self.limits = limits;
+        self
+    }
+
+    /// Enables or disables geometric validation (planarity, ring intersections, solid shells).
+    #[must_use]
+    pub fn with_geometry(mut self, geometry: bool) -> Self {
+        self.geometry = geometry;
+        self
+    }
+
+    /// Sets the boundary intersection and vertex welding tolerance in coordinate units.
+    #[must_use]
+    pub fn with_tolerance(mut self, tolerance: f64) -> Self {
+        self.tolerance = tolerance;
+        self
+    }
+
+    /// Sets the maximum ring-point distance from the exterior plane in coordinate units.
+    #[must_use]
+    pub fn with_planarity_tolerance(mut self, planarity_tolerance: f64) -> Self {
+        self.planarity_tolerance = planarity_tolerance;
+        self
+    }
+
+    /// Sets the total edge-comparison work budget across the document.
+    #[must_use]
+    pub fn with_max_geometry_work(mut self, max_geometry_work: u64) -> Self {
+        self.max_geometry_work = max_geometry_work;
+        self
+    }
+}
+
 /// Structural element and geometry counts (never contains source identifiers or coordinate values).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ValidationReport {
@@ -174,23 +211,15 @@ pub(crate) fn positions(e: &Element, inherited: usize, limits: &Limits) -> Resul
         .collect())
 }
 
-/// Decodes a `gml:Polygon` element into typed exterior and interior rings.
-pub fn polygon(e: &Element, inherited: usize, limits: &Limits) -> Result<Polygon> {
-    let dim = dimension(e, inherited)?;
-    let mut exterior = None;
-    let mut interiors = vec![];
-    for boundary in e.elements() {
-        if !(boundary.name.is(GML, "exterior") || boundary.name.is(GML, "interior")) {
-            continue;
-        }
-        let ring = boundary
-            .elements()
-            .find(|e| e.name.is(GML, "LinearRing"))
-            .ok_or_else(|| {
-                Error::Unsupported("polygon boundary requires an inline LinearRing".into())
-            })?;
-        let dim = dimension(ring, dimension(boundary, dim)?)?;
-        let mut points = vec![];
+/// Decodes an inline `gml:LinearRing` or `gml:Ring` element into a closed vertex loop.
+pub(crate) fn ring_element_points(
+    ring: &Element,
+    inherited: usize,
+    limits: &Limits,
+) -> Result<Vec<Point3>> {
+    let dim = dimension(ring, inherited)?;
+    let mut points = vec![];
+    if ring.name.is(GML, "LinearRing") {
         for p in ring.elements() {
             if p.name.is(GML, "pos") || p.name.is(GML, "posList") {
                 let values = positions(p, dim, limits)?;
@@ -212,6 +241,107 @@ pub fn polygon(e: &Element, inherited: usize, limits: &Limits) -> Result<Polygon
                 "LinearRing must be closed and contain at least four positions",
             ));
         }
+        return Ok(points);
+    }
+    if ring.name.is(GML, "Ring") {
+        for member in ring.elements() {
+            if !member.name.is(GML, "curveMember") {
+                return Err(Error::Unsupported(format!(
+                    "Ring child {}",
+                    member.name.local()
+                )));
+            }
+            if member.attribute(XLINK, "href").is_some() {
+                return Err(Error::Unsupported(
+                    "Ring curveMember requires inline curve geometry".into(),
+                ));
+            }
+            let member_dim = dimension(member, dim)?;
+            let mut curves = member.elements();
+            let curve = curves
+                .next()
+                .ok_or_else(|| Error::invalid(member.offset, "empty Ring curveMember"))?;
+            if curves.next().is_some() {
+                return Err(Error::invalid(
+                    member.offset,
+                    "Ring curveMember must hold one curve",
+                ));
+            }
+            let curve_dim = dimension(curve, member_dim)?;
+            if curve.name.is(GML, "LineString") {
+                let mut part = Vec::new();
+                for p in curve.elements() {
+                    if p.name.is(GML, "pos") || p.name.is(GML, "posList") {
+                        let vals = positions(p, curve_dim, limits)?;
+                        if part.len().saturating_add(vals.len()) as u64
+                            > u64::from(limits.max_vertices)
+                        {
+                            return Err(Error::LimitExceeded("GML ring vertices".into()));
+                        }
+                        part.extend(vals);
+                    }
+                }
+                if part.len() < 2 {
+                    return Err(Error::invalid(
+                        curve.offset,
+                        "LineString in Ring requires at least two positions",
+                    ));
+                }
+                crate::curves::append_chain(&mut points, &part, limits)?;
+            } else if curve.name.is(GML, "Curve") {
+                let seg_containers: Vec<_> = curve
+                    .elements()
+                    .filter(|s| s.name.is(GML, "segments"))
+                    .collect();
+                let [segments] = seg_containers.as_slice() else {
+                    return Err(Error::invalid(curve.offset, "Ring Curve requires segments"));
+                };
+                let seg_dim = dimension(segments, curve_dim)?;
+                let mut had_seg = false;
+                for seg in segments.elements() {
+                    had_seg = true;
+                    let part = crate::curves::segment_points(seg, seg_dim, limits)?;
+                    crate::curves::append_chain(&mut points, &part, limits)?;
+                }
+                if !had_seg {
+                    return Err(Error::invalid(curve.offset, "empty Ring Curve segments"));
+                }
+            } else {
+                return Err(Error::Unsupported(format!(
+                    "Ring curveMember {}",
+                    curve.name.local()
+                )));
+            }
+        }
+        if points.len() < 4 || points.first() != points.last() {
+            return Err(Error::invalid(
+                ring.offset,
+                "Ring must be closed and contain at least four positions",
+            ));
+        }
+        return Ok(points);
+    }
+    Err(Error::Unsupported(
+        "polygon boundary requires an inline LinearRing or Ring".into(),
+    ))
+}
+
+/// Decodes a `gml:Polygon`, `gml:PolygonPatch`, or `gml:Triangle` element into typed exterior and interior rings.
+pub fn polygon(e: &Element, inherited: usize, limits: &Limits) -> Result<Polygon> {
+    let dim = dimension(e, inherited)?;
+    let mut exterior = None;
+    let mut interiors = vec![];
+    for boundary in e.elements() {
+        if !(boundary.name.is(GML, "exterior") || boundary.name.is(GML, "interior")) {
+            continue;
+        }
+        let ring = boundary
+            .elements()
+            .find(|r| r.name.is(GML, "LinearRing") || r.name.is(GML, "Ring"))
+            .ok_or_else(|| {
+                Error::Unsupported("polygon boundary requires an inline LinearRing".into())
+            })?;
+        let points = ring_element_points(ring, dimension(boundary, dim)?, limits)?;
         if boundary.name.is(GML, "exterior") {
             if exterior.replace(points).is_some() {
                 return Err(Error::invalid(e.offset, "polygon has multiple exteriors"));
@@ -274,6 +404,13 @@ pub fn validate(doc: &CityGmlDocument, options: &ValidationOptions) -> Result<Va
         if e.name.is(GML, "Circle") {
             // Native XML can retain coordinate encodings outside the neutral subset.
             if let Err(error) = crate::curves::read_segment(e, *dim, &options.limits) {
+                if !matches!(error, Error::Unsupported(_)) {
+                    return Err(error);
+                }
+            }
+        }
+        if e.name.is(GML, "Arc") {
+            if let Err(error) = crate::curves::read_arc_segment(e, *dim, &options.limits) {
                 if !matches!(error, Error::Unsupported(_)) {
                     return Err(error);
                 }

@@ -11,12 +11,20 @@ authors.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[features]
+default = ["write"]
+write = ["dep:cfb"]
+
 [dependencies]
 cadkit-core.workspace = true
 flate2.workspace = true
 encoding_rs.workspace = true
-cfb.workspace = true
+cfb = { workspace = true, optional = true }
 serde.workspace = true
+
+[[example]]
+name = "raster_structure"
+required-features = ["write"]
 
 [lints]
 workspace = true

@@ -9,8 +9,13 @@
 
 pub mod cfb;
 pub mod native;
+#[cfg(feature = "write")]
 pub mod writer;
-pub use writer::{WriteOptions, repack_v8, seed_has_raster_template, write_v8};
+#[cfg(feature = "write")]
+pub use writer::{
+    DimensionPolicy, SeedPrepareOptions, V8Seed, WriteOptions, repack_v8, seed_has_raster_template,
+    write_v8, write_v8_with_seed,
+};
 pub mod palette;
 
 mod budget;
@@ -22,13 +27,24 @@ mod map;
 mod text;
 mod zlib;
 
-use cadkit_core::{Document, Error, ReadOptions, Result};
+use cadkit_core::{Document, Error, ReadOptions, Result, Summary};
 
 /// Returns true when `bytes` look like a DGN file: a V7 design file header, or a compound
 /// file whose root storage holds the `Dgn~H` stream (other OLE files such as `.doc` or
 /// `.xls` are rejected). Reads only headers and the compound file directory.
 pub fn sniff(bytes: &[u8]) -> bool {
     native::v7::sniff(bytes) || native::v8::sniff(bytes)
+}
+
+/// Inspects the DGN V7 TCB or V8 summary/model header without decoding graphic elements.
+pub fn inspect(bytes: &[u8], options: &ReadOptions) -> Result<Summary> {
+    if native::v7::sniff(bytes) {
+        return native::v7::inspect(bytes, options);
+    }
+    if bytes.starts_with(&cfb::SIGNATURE) {
+        return native::v8::inspect(bytes, options);
+    }
+    Err(Error::UnknownFormat)
 }
 
 /// Reads a whole DGN V7 or V8 file into the format-neutral model.

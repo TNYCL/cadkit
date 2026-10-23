@@ -36,6 +36,64 @@ impl Default for Limits {
     }
 }
 
+impl Limits {
+    /// Tighter resource limits suitable for untrusted multi-tenant web or API inputs
+    /// (64 MiB input, 256 MiB decompressed, 500k objects, max nesting depth 32).
+    pub const fn strict() -> Self {
+        Self {
+            max_input_bytes: 64 << 20,
+            max_decompressed_bytes: 256 << 20,
+            max_objects: 500_000,
+            max_depth: 32,
+            max_string_bytes: 4 << 20,
+            max_vertices: 1_000_000,
+            max_total_vertices: 5_000_000,
+        }
+    }
+
+    /// Sets [`Limits::max_input_bytes`].
+    pub const fn with_max_input_bytes(mut self, bytes: u64) -> Self {
+        self.max_input_bytes = bytes;
+        self
+    }
+
+    /// Sets [`Limits::max_decompressed_bytes`].
+    pub const fn with_max_decompressed_bytes(mut self, bytes: u64) -> Self {
+        self.max_decompressed_bytes = bytes;
+        self
+    }
+
+    /// Sets [`Limits::max_objects`].
+    pub const fn with_max_objects(mut self, count: u64) -> Self {
+        self.max_objects = count;
+        self
+    }
+
+    /// Sets [`Limits::max_depth`].
+    pub const fn with_max_depth(mut self, depth: u32) -> Self {
+        self.max_depth = depth;
+        self
+    }
+
+    /// Sets [`Limits::max_string_bytes`].
+    pub const fn with_max_string_bytes(mut self, bytes: u32) -> Self {
+        self.max_string_bytes = bytes;
+        self
+    }
+
+    /// Sets [`Limits::max_vertices`].
+    pub const fn with_max_vertices(mut self, count: u32) -> Self {
+        self.max_vertices = count;
+        self
+    }
+
+    /// Sets [`Limits::max_total_vertices`].
+    pub const fn with_max_total_vertices(mut self, count: u64) -> Self {
+        self.max_total_vertices = count;
+        self
+    }
+}
+
 /// Options accepted by every reader.
 #[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -47,4 +105,29 @@ pub struct ReadOptions {
     /// Code page (WHATWG label, e.g. `"windows-1254"`) for 8-bit text when the file does not
     /// declare one. `None` uses the reader's default (windows-1252).
     pub fallback_codepage: Option<String>,
+}
+
+impl ReadOptions {
+    /// Creates default reader options.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Overrides the resource [`Limits`].
+    pub fn with_limits(mut self, limits: Limits) -> Self {
+        self.limits = limits;
+        self
+    }
+
+    /// Configures whether original native record bytes are retained in [`crate::Entity::raw`].
+    pub fn with_keep_raw(mut self, keep_raw: bool) -> Self {
+        self.keep_raw = keep_raw;
+        self
+    }
+
+    /// Sets the fallback 8-bit code page label (for example `"windows-1254"` or `"cp857"`).
+    pub fn with_fallback_codepage(mut self, codepage: impl Into<String>) -> Self {
+        self.fallback_codepage = Some(codepage.into());
+        self
+    }
 }
