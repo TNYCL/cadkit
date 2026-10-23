@@ -1,4 +1,4 @@
-//! Belgelenmiş V8 öğe alanlarının sınır denetimli kodlayıcısı.
+//! Bounds-checked encoder for documented DGN V8 element fields.
 
 use crate::native::v8::ModelHeader;
 use cadkit_core::{Entity, Error, Point3, Result, Value, Vec3};

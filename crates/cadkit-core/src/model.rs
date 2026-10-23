@@ -80,7 +80,7 @@ pub enum Format {
     DgnV7,
     /// MicroStation DGN V8 (OLE compound file).
     DgnV8,
-    /// CityGML 2.0; GML 3.1.1 tabanlı XML uygulama şeması.
+    /// CityGML 2.0 (XML application schema based on GML 3.1.1).
     CityGml,
 }
 
@@ -468,12 +468,12 @@ pub enum EntityKind {
         /// The face is filled (SOLID/TRACE) rather than a wire face.
         filled: bool,
     },
-    /// Çizim birimlerinde, WCS koordinatlı düzlemsel ve delikli yüzey.
-    /// Halkalar ilk noktayı son noktada tekrar ederek kapatılır.
+    /// A planar surface with optional holes, in world coordinates (WCS) and drawing units.
+    /// Each ring is explicitly closed by repeating its first point as its last point.
     Polygon {
-        /// Yüzeyin dış sınırı; en az dört konum içerir.
+        /// Closed outer boundary ring containing at least four positions.
         exterior: Vec<Point3>,
-        /// Dış sınırın içindeki boşlukların kapalı halkaları.
+        /// Closed hole rings inside the exterior boundary.
         interiors: Vec<Vec<Point3>>,
     },
     /// A leader line.

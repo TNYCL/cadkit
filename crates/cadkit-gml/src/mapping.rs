@@ -1,4 +1,4 @@
-//! CityGML ilişkilerinden nötr geometriye ve açık geometri eşlemesiyle geri dönüşüm.
+//! Projects CityGML object graphs into the format-neutral [`Document`] model.
 
 use crate::native::*;
 use crate::validate::{dimension, elements, polygon, positions};
@@ -9,10 +9,10 @@ use cadkit_core::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Nötr görünüme alınacak ayrıntı düzeyi.
+/// Options controlling which CityGML geometry is projected into the neutral [`Document`].
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ImportOptions {
-    /// `None` bütün LoD'ları tutar; seçilen LoD dışındaki geometri özellikleri atlanır.
+    /// Optional LoD filter (`0..=4`); `None` imports all LoDs, while `Some(lod)` skips other `lodN*` geometry properties.
     pub lod: Option<u8>,
 }
 
@@ -68,7 +68,7 @@ impl Importer<'_> {
             }
         }
         if let Some(id) = e.attribute(XLINK, "href").and_then(|s| s.strip_prefix('#')) {
-            // Semantik grup/parent bağlantıları geometri olarak genişletilmez.
+            // Do not expand semantic group or parent links as geometry.
             if e.name.namespace == GML {
                 let target = *self
                     .ids
@@ -231,7 +231,7 @@ impl Importer<'_> {
     }
 }
 
-/// Geometriyi dönüştürür; özgün nesne ağı ve XML ayrıntıları kaynak belgede kalır.
+/// Projects CityGML geometry into a neutral [`Document`]; full LoD ownership, shared references, and XML extensions remain in `source`.
 pub fn to_document(
     source: &CityGmlDocument,
     options: &ImportOptions,

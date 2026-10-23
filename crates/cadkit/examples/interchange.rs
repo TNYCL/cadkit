@@ -1,4 +1,4 @@
-//! Kamuya açık bir seed ile bağımsız kabul testine uygun sentetik çıktılar üretir.
+//! Generates synthetic DGN V8 and CityGML outputs from a public seed for independent acceptance checks.
 
 use cadkit::{Document, Entity, EntityKind, Model, Point3, ReadOptions, Value};
 use std::{io, path::PathBuf};

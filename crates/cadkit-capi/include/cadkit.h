@@ -1,7 +1,7 @@
 /*
  * cadkit C API
  *
- * Read DWG, DGN and DXF drawings into one format-neutral model, from C or C++.
+ * Read DWG, DGN, DXF, and CityGML 2.0 drawings and write DXF, DGN V8, CityGML 2.0, SVG, and JSON from C or C++.
  * Copyright (c) 2026 TNYCL (https://tnycl.com).
  * License: MIT OR Apache-2.0.
  *
@@ -132,7 +132,8 @@ CADKIT_API cadkit_format cadkit_detect(const uint8_t *data, size_t len);
 
 /* Reads a drawing. On success *out owns a document (free with cadkit_document_free);
  * on failure *out is NULL. `options` may be NULL. CADKIT_UNSUPPORTED is returned
- * for files that use features the readers do not handle. DWG and DGN are read, not written. */
+ * for files that use features the readers do not handle. Writers cover ASCII DXF,
+ * seed-based DGN V8, and CityGML 2.0 (plus SVG and JSON); DWG and DGN V7 are read-only. */
 CADKIT_API cadkit_status cadkit_read_file(const char *utf8_path, const cadkit_options *options,
                                           cadkit_document **out);
 CADKIT_API cadkit_status cadkit_read_bytes(const uint8_t *data, size_t len,
@@ -152,9 +153,9 @@ CADKIT_API cadkit_status cadkit_document_to_svg(const cadkit_document *doc,
 CADKIT_API cadkit_status cadkit_document_to_dxf(const cadkit_document *doc, cadkit_dxf_version version,
                                                 char **out);
 
-/* Yeni geometri ve CityGML modelleri; dönen dizeler cadkit_string_free ile bırakılır. */
+/* Neutral document construction and CityGML I/O; release returned strings with cadkit_string_free (and documents with cadkit_document_free). */
 CADKIT_API cadkit_status cadkit_document_from_json(const char *json, cadkit_document **out);
-/* İkili çıktıyı yalnız cadkit_bytes_free ile bırakın; out_len bayt uzunluğudur. */
+/* Release the binary output only with cadkit_bytes_free; *out_len receives the byte length. */
 CADKIT_API cadkit_status cadkit_document_to_dgn(const cadkit_document *doc, const uint8_t *seed,
     size_t seed_len, const char *options_json, uint8_t **out, size_t *out_len);
 CADKIT_API void cadkit_bytes_free(uint8_t *data);

@@ -297,7 +297,7 @@ fn citygml_native_json_and_binary_dgn_ownership() {
     let xml = b"<CityModel xmlns='http://www.opengis.net/citygml/2.0'/>";
     let mut json = ptr::null_mut();
     let mut output = ptr::null_mut();
-    // SAFETY: Sabit bayt aralığı ve bütün çıktı adresleri geçerlidir.
+    // SAFETY: Static byte slice, valid C string literals, and valid out-pointers.
     unsafe {
         assert_eq!(
             cadkit_citygml_read_json(xml.as_ptr(), xml.len(), ptr::null(), &mut json),
@@ -340,7 +340,7 @@ fn citygml_native_json_and_binary_dgn_ownership() {
     }
     let doc = read(MINIMAL_DXF.as_bytes()).unwrap();
     let mut gml = ptr::null_mut();
-    // SAFETY: Canlı belge ve sonlandırılmış CRS dizesi kullanılır.
+    // SAFETY: `doc` is a live handle, the CRS C string is NUL-terminated, and `gml` is a valid out-pointer.
     unsafe {
         assert_eq!(
             cadkit_document_to_citygml(doc, c"urn:ogc:def:crs:EPSG::4979".as_ptr(), 1, &mut gml),
@@ -359,7 +359,7 @@ fn citygml_native_json_and_binary_dgn_ownership() {
         let mut writer_doc = ptr::null_mut();
         let mut data = ptr::null_mut();
         let mut len = 0;
-        // SAFETY: JSON, canlı belge, seed ve çıktı adresleri geçerlidir.
+        // SAFETY: Valid C strings, live document handles, valid seed slice, and valid out-pointers.
         unsafe {
             assert_eq!(
                 cadkit_document_from_json(json.as_ptr(), &mut writer_doc),
@@ -386,7 +386,7 @@ fn citygml_native_json_and_binary_dgn_ownership() {
             cadkit_bytes_free(data);
         }
     }
-    // SAFETY: Son kullanımın ardından belge bırakılır.
+    // SAFETY: `doc` is a live handle and is not used after being freed here.
     unsafe {
         cadkit_document_free(doc);
     }

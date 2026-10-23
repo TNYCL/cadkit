@@ -1,8 +1,8 @@
-//! Çizim birimlerinde, kapalı ve düzlemsel halkaların sınırlı doğrulaması.
+//! Bounded validation of closed, planar polygon rings in drawing units.
 
 use crate::{Error, Point3, Result, Vec3};
 
-/// İlk noktaya göre hesaplanan birim yüzey normali; dejenere halkada `None`.
+/// Unit surface normal computed relative to the first vertex, or `None` for a degenerate ring.
 pub fn normal(ring: &[Point3]) -> Option<Vec3> {
     let o = ring.first()?;
     let mut n = Vec3::default();

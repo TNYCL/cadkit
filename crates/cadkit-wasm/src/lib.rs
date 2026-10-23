@@ -57,7 +57,7 @@ fn format_name(f: cadkit::Format) -> Value {
 
 /// Detects the drawing format from the file header.
 ///
-/// Returns `"dwg"`, `"dxf"`, `"dgn_v7"` or `"dgn_v8"`, or `undefined` when unrecognised.
+/// Returns `"dwg"`, `"dxf"`, `"dgn_v7"`, `"dgn_v8"`, or `"city_gml"`, or `undefined` when unrecognised.
 #[wasm_bindgen]
 pub fn detect(bytes: &[u8]) -> Option<String> {
     cadkit::detect(bytes).and_then(|f| format_name(f).as_str().map(str::to_owned))
@@ -106,7 +106,7 @@ pub struct CadDocument {
 
 #[wasm_bindgen]
 impl CadDocument {
-    /// Yeni nötr belgeyi JSON metninden oluşturur.
+    /// Constructs a format-neutral document from its JSON string representation.
     #[wasm_bindgen(js_name=fromJsonString)]
     pub fn from_json_string(text: &str) -> Result<CadDocument, JsValue> {
         let doc = cadkit::export::document_from_json(text, &wasm_limits(cadkit::Limits::default()))
@@ -114,7 +114,7 @@ impl CadDocument {
         Ok(CadDocument { doc })
     }
 
-    /// Seed baytlarıyla DGN V8 üretir; seçenekler Rust WriteOptions JSON sözleşmesidir.
+    /// Writes DGN V8 bytes using `seed`; `options_json` follows the Rust `dgn::WriteOptions` JSON contract.
     #[wasm_bindgen(js_name=toDgn)]
     pub fn to_dgn(&self, seed: &[u8], options_json: Option<String>) -> Result<Vec<u8>, JsValue> {
         let mut options: cadkit::dgn::WriteOptions = options_json
@@ -127,7 +127,7 @@ impl CadDocument {
         cadkit::to_dgn(&self.doc, seed, &options).map_err(|e| from_cadkit(&e))
     }
 
-    /// Açık CRS ile genel CityGML geometrisi üretir; eksen dönüşümü yapılmaz.
+    /// Exports generic CityGML 2.0 geometry with an explicit CRS and LoD without axis or CRS transformation.
     #[wasm_bindgen(js_name=toCityGml)]
     pub fn to_citygml(&self, srs_name: String, lod: u8) -> Result<Vec<u8>, JsValue> {
         cadkit::to_citygml(
@@ -308,13 +308,13 @@ impl CadDocument {
     }
 }
 
-/// Özgün CityGML nesne ağını koruyan belge.
+/// Native CityGML 2.0 document preserving the object graph, IDs, references, and XML extensions.
 #[wasm_bindgen]
 pub struct CityGmlDocument {
     doc: cadkit::gml::CityGmlDocument,
 }
 
-/// CityGML baytlarını kayıpsız modele okur; seçenekler ReadOptions JSON sözleşmesidir.
+/// Reads CityGML 2.0 bytes into a lossless native `CityGmlDocument`; `options_json` follows the Rust `ReadOptions` JSON contract.
 #[wasm_bindgen(js_name=readCityGml)]
 pub fn read_citygml(
     bytes: &[u8],
@@ -351,7 +351,7 @@ impl CityGmlDocument {
             serde_json::to_string(&report).map_err(|e| js_error("invalid", &e.to_string()))?;
         parse_json(&text)
     }
-    /// Tipli XML modelini JSON'dan oluşturur.
+    /// Constructs and validates a typed native `CityGmlDocument` from its JSON string.
     #[wasm_bindgen(js_name=fromJsonString)]
     pub fn from_json_string(text: &str) -> Result<CityGmlDocument, JsValue> {
         let doc = cadkit::gml::read_native_json(
@@ -364,12 +364,12 @@ impl CityGmlDocument {
         .map_err(|e| from_cadkit(&e))?;
         Ok(CityGmlDocument { doc })
     }
-    /// Düzenlenebilir, kayıpsız model JSON'u.
+    /// Serializes the lossless native model to an editable JSON string.
     #[wasm_bindgen(js_name=toJsonString)]
     pub fn to_json_string(&self) -> Result<String, JsValue> {
         serde_json::to_string(&self.doc).map_err(|e| js_error("invalid", &e.to_string()))
     }
-    /// UTF-8 CityGML üretir; seçenekler ValidationOptions JSON sözleşmesidir.
+    /// Serializes UTF-8 CityGML 2.0 XML bytes; `options_json` follows the Rust `gml::ValidationOptions` JSON contract.
     #[wasm_bindgen(js_name=toGml)]
     pub fn to_gml(&self, options_json: Option<String>) -> Result<Vec<u8>, JsValue> {
         let mut options: cadkit::gml::ValidationOptions = options_json
@@ -381,7 +381,7 @@ impl CityGmlDocument {
         options.limits = wasm_limits(options.limits);
         cadkit::gml::write(&self.doc, &options).map_err(|e| from_cadkit(&e))
     }
-    /// Nötr geometri görünümü; belirtilirse yalnız seçilen LoD alınır.
+    /// Projects native CityGML geometry into a neutral `CadDocument`, optionally filtered to `lod`.
     #[wasm_bindgen(js_name=toDocument)]
     pub fn to_document(&self, lod: Option<u8>) -> Result<CadDocument, JsValue> {
         Ok(CadDocument {
@@ -396,7 +396,7 @@ impl CityGmlDocument {
             .map_err(|e| from_cadkit(&e))?,
         })
     }
-    /// Yapısal ve geometrik kontrol sayaçları.
+    /// Runs structural and geometric validation checks and returns summary counters (`ValidationOptions` JSON).
     pub fn validate(&self, options_json: Option<String>) -> Result<JsValue, JsValue> {
         let mut options: cadkit::gml::ValidationOptions = options_json
             .as_deref()
@@ -412,7 +412,7 @@ impl CityGmlDocument {
     }
 }
 
-// WASM adres alanında masaüstü varsayılanlarıyla büyük ayırma yapılması önlenir.
+// Cap limits to conservative ceilings so desktop defaults cannot trigger large allocations in wasm32's 4 GiB address space.
 fn wasm_limits(mut limits: cadkit::Limits) -> cadkit::Limits {
     limits.max_input_bytes = limits.max_input_bytes.min(512 << 20);
     limits.max_decompressed_bytes = limits.max_decompressed_bytes.min(1 << 30);

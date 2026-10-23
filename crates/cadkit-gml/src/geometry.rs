@@ -1,4 +1,4 @@
-//! Poligon ve katı kabukları için kaynak bütçeli tanılama.
+//! Work-bounded diagnostics for polygons and solid shells.
 
 use crate::{
     CityGmlDocument, ValidationOptions,
@@ -9,19 +9,19 @@ use cadkit_core::{Error, Point3, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Geometri sorunu; özgün kimlik veya koordinat değerini rapora kopyalamaz.
+/// A geometry diagnostic that omits source identifiers and coordinate values.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GeometryIssue {
-    /// XML girdisindeki bayt konumu; programatik belgelerde sıfır olabilir.
+    /// Byte offset in the source XML input, or zero for programmatically built elements.
     pub offset: u64,
-    /// Kararlı tanılama kodu.
+    /// Stable machine-readable diagnostic code.
     pub code: String,
-    /// Sorunun açıklaması.
+    /// Human-readable description of the issue.
     pub message: String,
 }
 
-/// Yapısal denetimden sonra bütün poligon ve kabuk sorunlarını toplar.
-/// Kenar eşleşmesi tam koordinat eşitliği kullanır; hacimlerin birbirini kesmesini denetlemez.
+/// Collects all polygon and solid-shell geometry issues after structural validation.
+/// Shell edge matching uses exact coordinate equality and does not test inter-solid volumetric intersections.
 pub fn geometry_issues(
     doc: &CityGmlDocument,
     options: &ValidationOptions,

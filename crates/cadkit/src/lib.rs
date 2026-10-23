@@ -1,4 +1,5 @@
-//! Read DWG, DGN and DXF drawings into one format-neutral model.
+//! Read DWG, DGN (V7/V8), DXF, and CityGML 2.0 files into one format-neutral model,
+//! and write DXF, seed-based DGN V8, CityGML 2.0, SVG, and JSON.
 //!
 //! ```no_run
 //! let doc = cadkit::open("plan.dgn")?;
@@ -8,7 +9,7 @@
 //! # Ok::<(), cadkit::Error>(())
 //! ```
 //!
-//! Native, lossless APIs of each format are available under [`dgn`], [`dwg`] and [`dxf`].
+//! Native, lossless APIs of each format are available under [`dgn`], [`dwg`], [`dxf`], and [`gml`].
 
 use std::path::Path;
 
@@ -109,12 +110,12 @@ pub fn to_dxf(doc: &Document, version: DxfVersion) -> Result<String> {
     cadkit_dxf::write(doc, version)
 }
 
-/// Tek nötr modeli, birimleri ve model boyutu eşleşen seed ile DGN V8'e yazar.
+/// Writes a single-model neutral document to DGN V8 using a seed with matching master units and 2D/3D dimension.
 pub fn to_dgn(doc: &Document, seed: &[u8], options: &dgn::WriteOptions) -> Result<Vec<u8>> {
     dgn::write_v8(doc, seed, options)
 }
 
-/// Nötr geometriyi açık CRS/LoD seçimiyle genel CityGML nesnelerine yazar.
+/// Writes neutral geometry to generic CityGML 2.0 objects with an explicit CRS and LoD, preserving source coordinates and units without reprojection.
 pub fn to_citygml(doc: &Document, options: &gml::ExportOptions) -> Result<Vec<u8>> {
     gml::write_document(doc, options)
 }

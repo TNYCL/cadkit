@@ -36,7 +36,7 @@ format knowledge is recorded in [docs/PROVENANCE.md](docs/PROVENANCE.md).
 | DWG | AC1014 to AC1032, including 2007 | no | Implemented; R13 (AC1012) is untested; entity coverage is still growing |
 | DGN V7 | yes | no | Implemented, including tags |
 | DGN V8 | yes | seed-based V8 subset | Local tests pass; external application acceptance pending |
-| CityGML 2.0 | native XML and geometry | native XML and explicit generic geometry | Independent XSD tests; no TKGM business rules |
+| CityGML 2.0 | native XML and geometry | native XML and explicit generic geometry | Independent XSD tests; generic structural/geometric I/O plus optional local structural TKGM preflight (`cadkit::gml::tkgm`), without external or proprietary acceptance rules |
 
 The model can be written as JSON, SVG, DXF, seed-based DGN V8 and CityGML 2.0 from Rust,
 the CLI, Python, WebAssembly and C (C++ wraps the C ABI). The DGN V8 writer needs a seed

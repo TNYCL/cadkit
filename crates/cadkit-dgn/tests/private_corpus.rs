@@ -243,7 +243,7 @@ fn private_seed_takes_a_new_raster_attachment() {
     image.attributes.clear();
     let mut doc = source.clone();
     doc.models[0].entities = vec![image.clone()];
-    // As Cady writes: the seed model is cleared, its other control records are kept.
+    // Application workflow: clear the seed model while keeping its other control records.
     let options = cadkit_dgn::WriteOptions {
         clear_seed_model: true,
         ..Default::default()

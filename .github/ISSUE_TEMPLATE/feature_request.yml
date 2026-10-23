@@ -1,0 +1,25 @@
+name: Feature request
+description: Propose support for a CAD/GIS entity, format version, operation, or binding API
+labels: ["enhancement"]
+body:
+  - type: input
+    id: component
+    attributes:
+      label: Format, crate, or binding
+      placeholder: "cadkit-dwg / cadkit-core / pycadkit / cadkit-wasm"
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Use case
+      description: What workflow or CAD/GIS data requires this feature?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed API or mapping
+      description: How should this map to the neutral Document model or format writer?
+    validations:
+      required: false

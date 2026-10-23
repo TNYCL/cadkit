@@ -4,14 +4,14 @@ use crate::native::*;
 use cadkit_core::{Document, Entity, EntityKind, Error, Point3, Result, Value};
 use serde::{Deserialize, Serialize};
 
-/// Yeni CityGML çıktısının koordinat sözleşmesi.
+/// Coordinate, LoD, and resource-limit contract for CityGML export.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExportOptions {
-    /// Koordinatların mevcut CRS tanımı; dönüştürme yapılmaz.
+    /// Identifier of the existing CRS of the source coordinates; no coordinate reprojection is performed.
     pub srs_name: String,
-    /// Genel nesne geometrisinin LoD değeri, 0..=4.
+    /// Level of Detail (`0..=4`) written on generic city object geometry.
     pub lod: u8,
-    /// Yazma öncesi ve XML çıktısı için kaynak sınırları.
+    /// Resource limits enforced before writing and on the serialized XML output.
     #[serde(default)]
     pub limits: cadkit_core::Limits,
 }
@@ -221,8 +221,8 @@ fn geometry(kind: &EntityKind) -> Result<Element> {
     }
 }
 
-/// Her üst düzey nötr nesne için bir `GenericCityObject` üretir.
-/// Koordinatlar değiştirilmez; CRS ve birimler çağıranın sorumluluğundadır.
+/// Builds one `gen:GenericCityObject` per top-level neutral entity, rejecting unsupported geometry.
+/// Coordinates are written unchanged; matching the declared CRS and units is the caller's responsibility.
 pub fn from_document(source: &Document, options: &ExportOptions) -> Result<CityGmlDocument> {
     from_document_with_report(source, options, UnsupportedGeometry::Reject).map(|(doc, _)| doc)
 }

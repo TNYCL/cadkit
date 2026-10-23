@@ -1,4 +1,4 @@
-//! CFB akışlarını, dizin metadatasını ve kaynak sınırlarını koruyan yazma katmanı.
+//! CFB container writer that preserves streams, directory metadata, and resource limits.
 
 use cadkit_core::{Error, ReadOptions, Result};
 use std::{

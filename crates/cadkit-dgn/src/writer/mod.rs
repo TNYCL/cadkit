@@ -1,4 +1,4 @@
-//! Seed tabanlı DGN V8 dışa aktarımı; desteklenmeyen veriler hata üretir.
+//! Seed-based DGN V8 export; unsupported data returns an error.
 
 mod container;
 mod encode;
@@ -26,17 +26,17 @@ use std::{
 };
 use tables::Tables;
 
-/// V8 yazma sözleşmesi; bir çağrı tek model üretir.
+/// Options for DGN V8 export; each call writes a single model.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct WriteOptions {
-    /// Girdi, çıktı, öğe ve koordinat sınırları.
+    /// Resource limits for input, output, elements, and coordinates.
     pub limits: Limits,
-    /// 8 bit etiket/metin kodlaması; `None` UTF-16 kullanır.
+    /// 8-bit code page for text and tags; `None` writes UTF-16LE.
     pub codepage: Option<String>,
-    /// Yeni kayıtların zamanı, Unix başlangıcından milisaniye; varsayılan sıfır.
+    /// Timestamp for new records in milliseconds since the Unix epoch; defaults to zero.
     pub timestamp_ms: f64,
-    /// Dolu seed'in grafik ve kontrol kayıtlarının çıkarılmasına açık izin.
+    /// Explicitly allow clearing graphic and control records from a non-empty seed model.
     pub clear_seed_model: bool,
     /// Maximum distance of polygon ring points from the exterior plane, in source
     /// drawing units. Defaults to 0.01 (1 cm for metres), allowing coordinate rounding.
@@ -65,7 +65,7 @@ impl Default for WriteOptions {
     }
 }
 
-/// Akış içeriklerini değiştirmeden geçerli CFB diziniyle yeniden paketler.
+/// Repacks a DGN V8 file with a valid CFB directory without altering stream contents.
 pub fn repack_v8(seed: &[u8], options: &ReadOptions) -> Result<Vec<u8>> {
     let native = v8::read(seed, options)?;
     if native.models.is_empty() {
@@ -122,8 +122,8 @@ fn page(records: &[Vec<u8>], version: u32, _number: u32) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-/// Nötr modelin tek tasarım modelini uygun boyutlu V8 seed'e yazar.
-/// Kaynak birimi seed master birimiyle aynı olmalı; Z veya öznitelikler sessizce atılmaz.
+/// Writes the single design model of a neutral document into a matching DGN V8 seed.
+/// Source units and 2D/3D dimension must match the seed's master units and dimension; Z coordinates and attributes are never silently dropped.
 pub fn write_v8(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<Vec<u8>> {
     cadkit_core::export::validate_limits(doc, &options.limits)?;
     if doc
@@ -440,7 +440,7 @@ pub fn write_v8(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<V
     }
     let mut data = inflated.data;
     u64_at(&mut data, 0x128, max_id)?;
-    // Başlığın zaman/revizyon biçimi ek örneklerle doğrulanana kadar seed değerleri korunur.
+    // Keep the seed header's timestamp and revision fields until their layout is verified across more samples.
     let mut h = h
         .get(..0x14)
         .ok_or_else(|| Error::invalid(0, "short DGN header"))?
@@ -1034,7 +1034,7 @@ impl State<'_> {
                 )));
             }
         };
-        // Kaynakta çözümlenmiş delik bayrağı yeni geometriye de taşınır.
+        // Carry an explicit hole flag from source props onto newly written geometry.
         if matches!(e.props.get("dgn.hole"), Some(Value::Bool(true))) {
             let props = le::u32_at(&b, 0x28).unwrap_or(0) | 0x8000;
             u32_at(&mut b, 0x28, props)?;

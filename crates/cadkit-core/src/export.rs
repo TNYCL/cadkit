@@ -1,8 +1,8 @@
-//! Yazıcılardan önce bellek içi modelin kaynak bütçesini denetler.
+//! Validates resource budgets on in-memory documents before writing.
 
 use crate::{Document, EntityKind, Error, Limits, Result, Value};
 
-/// JSON girdisini boyut sınırından sonra ayrıştırır ve belge bütçelerini denetler.
+/// Parses a JSON document after checking the input byte limit and validates document budgets.
 pub fn document_from_json(text: &str, limits: &Limits) -> Result<Document> {
     if text.len() as u64 > limits.max_input_bytes {
         return Err(Error::LimitExceeded("document JSON input bytes".into()));
@@ -12,7 +12,7 @@ pub fn document_from_json(text: &str, limits: &Limits) -> Result<Document> {
     Ok(doc)
 }
 
-/// Nötr belgeyi kopyalamadan derinlik, nesne, geometri ve JSON boyutunu sınırlar.
+/// Enforces depth, object, geometry, and serialized JSON size limits without cloning the document.
 pub fn validate_limits(doc: &Document, limits: &Limits) -> Result<()> {
     let mut objects = doc.models.len().saturating_add(doc.blocks.len()) as u64;
     let mut vertices = 0u64;
@@ -94,7 +94,7 @@ pub fn validate_limits(doc: &Document, limits: &Limits) -> Result<()> {
             value_limit(value, limits)?;
         }
     }
-    // Serileştirici akışa yazar; ikinci bir belge veya JSON ağacı ayırmaz.
+    // Stream through the serializer without allocating a second document or JSON tree.
     let mut sink = Counter {
         remaining: limits.max_decompressed_bytes,
     };

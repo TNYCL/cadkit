@@ -766,7 +766,7 @@ fn live_buffers() -> MutexGuard<'static, std::collections::HashMap<usize, Vec<u8
         .unwrap_or_else(|p| p.into_inner())
 }
 
-/// İkili çıktı belleğini serbest bırakır; NULL ve daha önce bırakılmış adresler etkisizdir.
+/// Releases a binary buffer returned by this library; NULL and previously freed pointers are no-ops.
 #[unsafe(no_mangle)]
 pub extern "C" fn cadkit_bytes_free(data: *mut u8) {
     live_buffers().remove(&(data as usize));
@@ -775,7 +775,7 @@ pub extern "C" fn cadkit_bytes_free(data: *mut u8) {
 unsafe fn options_json<T: serde::de::DeserializeOwned + Default>(
     text: *const c_char,
 ) -> Result<T, cadkit_status> {
-    // SAFETY: Çağıran işlev metnin NULL veya geçerli C dizesi olmasını şart koşar.
+    // SAFETY: The caller guarantees `text` is NULL or a valid NUL-terminated C string.
     match unsafe { opt_str(text, "options_json") }? {
         None => Ok(T::default()),
         Some(s) => serde_json::from_str(s)
@@ -789,7 +789,7 @@ unsafe fn binary_getter(
     out_len: *mut usize,
     f: impl FnOnce(&Document) -> Result<Vec<u8>, Error>,
 ) -> cadkit_status {
-    // SAFETY: Çıktı adresleri NULL veya yazılabilir olmalıdır.
+    // SAFETY: Non-null out-pointers are writable per the caller's contract.
     unsafe {
         if !out.is_null() {
             *out = std::ptr::null_mut();
@@ -802,7 +802,7 @@ unsafe fn binary_getter(
         if out.is_null() || out_len.is_null() {
             return fail(cadkit_status::NullPointer, "binary output pointer is NULL");
         }
-        // SAFETY: Kayıt tablosu belge adresini dereference öncesinde denetler.
+        // SAFETY: `doc_ref` validates `doc` against the live-handle registry before dereferencing.
         let d = match unsafe { doc_ref(doc) } {
             Ok(d) => d,
             Err(s) => return s,
@@ -812,7 +812,7 @@ unsafe fn binary_getter(
                 let len = bytes.len();
                 let ptr = bytes.as_mut_ptr();
                 live_buffers().insert(ptr as usize, bytes);
-                // SAFETY: Her iki çıktı adresi de yukarıda NULL denetiminden geçti.
+                // SAFETY: Both `out` and `out_len` were checked non-null above and are writable per the contract.
                 unsafe {
                     *out = ptr;
                     *out_len = len;
@@ -824,16 +824,16 @@ unsafe fn binary_getter(
     })
 }
 
-/// Yeni nötr belgeyi JSON'dan oluşturur.
+/// Constructs a format-neutral document from its JSON representation.
 ///
 /// # Safety
-/// `json` geçerli C dizesi, `out` yazılabilir adres olmalıdır.
+/// `json` must be NULL or a valid NUL-terminated C string; `out` must be NULL or writable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn cadkit_document_from_json(
     json: *const c_char,
     out: *mut *mut cadkit_document,
 ) -> cadkit_status {
-    // SAFETY: NULL olmayan çıktı adresi sözleşme gereği yazılabilirdir.
+    // SAFETY: Non-null `out` is writable per the caller's contract.
     unsafe {
         if !out.is_null() {
             *out = std::ptr::null_mut();
@@ -843,7 +843,7 @@ pub unsafe extern "C" fn cadkit_document_from_json(
         if out.is_null() {
             return fail(cadkit_status::NullPointer, "out is NULL");
         }
-        // SAFETY: Girdi NULL veya sonlandırılmış C dizesidir.
+        // SAFETY: `json` is NULL or a valid NUL-terminated C string per the caller's contract.
         let text = match unsafe { opt_str(json, "json") } {
             Ok(Some(s)) => s,
             Ok(None) => return fail(cadkit_status::NullPointer, "json is NULL"),
@@ -851,7 +851,7 @@ pub unsafe extern "C" fn cadkit_document_from_json(
         };
         match cadkit::export::document_from_json(text, &cadkit::Limits::default()) {
             Ok(doc) => {
-                // SAFETY: Çıktı adresi denetlendi; oluşturulan belge kayıt tablosuna eklenir.
+                // SAFETY: `out` was verified non-null and writable; `register` records the new live handle.
                 unsafe {
                     register(doc, out);
                 }
@@ -862,12 +862,13 @@ pub unsafe extern "C" fn cadkit_document_from_json(
     })
 }
 
-/// Seed ile DGN V8 üretir. Çıktıyı `cadkit_bytes_free` ile bırakın.
-/// `options_json`, Rust `dgn::WriteOptions` sözleşmesidir; NULL varsayılanları seçer.
+/// Writes DGN V8 bytes using `seed`. Release `*out` with [`cadkit_bytes_free`].
+/// `options_json_text` follows the Rust `dgn::WriteOptions` JSON contract; NULL selects defaults.
 ///
 /// # Safety
-/// Belge canlı olmalı; seed `seed_len` bayt okunabilir olmalı; seçenek dizesi geçerli,
-/// çıktı adresleri yazılabilir olmalıdır. Belge eşzamanlı serbest bırakılamaz.
+/// `doc` must be a live handle and must not be freed concurrently; `seed` must be NULL or point to
+/// `seed_len` readable bytes; `options_json_text` must be NULL or a valid NUL-terminated C string;
+/// `out` and `out_len` must be NULL or writable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn cadkit_document_to_dgn(
     doc: *const cadkit_document,
@@ -878,7 +879,7 @@ pub unsafe extern "C" fn cadkit_document_to_dgn(
     out_len: *mut usize,
 ) -> cadkit_status {
     guarded(|| {
-        // SAFETY: Çıktı adresleri NULL veya yazılabilir olmalıdır.
+        // SAFETY: Non-null out-pointers are writable per the caller's contract.
         unsafe {
             if !out.is_null() {
                 *out = std::ptr::null_mut();
@@ -890,23 +891,24 @@ pub unsafe extern "C" fn cadkit_document_to_dgn(
         if seed.is_null() || seed_len > isize::MAX as usize {
             return fail(cadkit_status::InvalidArgument, "invalid DGN seed buffer");
         }
-        // SAFETY: Seçenek dizesi ve seed aralığı çağıranın sözleşmesiyle korunur.
+        // SAFETY: `options_json_text` is NULL or a valid NUL-terminated C string per the caller's contract.
         let options = match unsafe { options_json::<cadkit::dgn::WriteOptions>(options_json_text) }
         {
             Ok(o) => o,
             Err(s) => return s,
         };
-        // SAFETY: Seed aralığı okunabilir ve dilim boyutu isize::MAX altında.
+        // SAFETY: `seed` is non-null, readable for `seed_len` bytes, and `seed_len <= isize::MAX as usize`.
         let bytes = unsafe { std::slice::from_raw_parts(seed, seed_len) };
-        // SAFETY: Belge/çıktı sözleşmesi binary_getter'a aktarılır.
+        // SAFETY: Document handle and out-pointer contracts are forwarded to `binary_getter`.
         unsafe { binary_getter(doc, out, out_len, |d| cadkit::to_dgn(d, bytes, &options)) }
     })
 }
 
-/// Genel geometriyi CityGML UTF-8 dizesine yazar; çıktı `cadkit_string_free` ile bırakılır.
+/// Exports generic geometry as a UTF-8 CityGML 2.0 string; release `*out` with [`cadkit_string_free`].
 ///
 /// # Safety
-/// Belge canlı, `srs_name` geçerli C dizesi, `out` yazılabilir olmalıdır.
+/// `doc` must be a live handle; `srs_name` must be NULL or a valid NUL-terminated C string;
+/// `out` must be NULL or writable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn cadkit_document_to_citygml(
     doc: *const cadkit_document,
@@ -915,19 +917,19 @@ pub unsafe extern "C" fn cadkit_document_to_citygml(
     out: *mut *mut c_char,
 ) -> cadkit_status {
     guarded(|| {
-        // SAFETY: NULL olmayan çıktı yazılabilirdir; CRS sonlandırılmış C dizesidir.
+        // SAFETY: Non-null `out` is writable per the caller's contract.
         unsafe {
             if !out.is_null() {
                 *out = std::ptr::null_mut();
             }
         }
-        // SAFETY: CRS dizesinin geçerliliği çağıranın sözleşmesindedir.
+        // SAFETY: `srs_name` is NULL or a valid NUL-terminated C string per the caller's contract.
         let srs = match unsafe { opt_str(srs_name, "srs_name") } {
             Ok(Some(s)) => s.to_owned(),
             Ok(None) => return fail(cadkit_status::InvalidArgument, "srs_name is required"),
             Err(s) => return s,
         };
-        // SAFETY: Belge ve çıktı sözleşmesi string_getter'a aktarılır.
+        // SAFETY: Document handle and `out` pointer contracts are forwarded to `string_getter`.
         unsafe {
             string_getter(doc, out, |d| {
                 String::from_utf8(cadkit::to_citygml(
@@ -1002,10 +1004,11 @@ pub unsafe extern "C" fn cadkit_document_to_citygml_with_report(
     })
 }
 
-/// CityGML'in özgün nesne ağını JSON olarak okur; çıktı `cadkit_string_free` ile bırakılır.
+/// Reads a CityGML 2.0 XML buffer into its native object-graph JSON; release `*out` with [`cadkit_string_free`].
 ///
 /// # Safety
-/// `data` en az `len` bayt okunabilir, seçenekler NULL veya geçerli, çıktı yazılabilir olmalıdır.
+/// `data` must be NULL or point to `len` readable bytes; `options` must be NULL or valid;
+/// `out` must be NULL or writable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn cadkit_citygml_read_json(
     data: *const u8,
@@ -1013,7 +1016,7 @@ pub unsafe extern "C" fn cadkit_citygml_read_json(
     options: *const cadkit_options,
     out: *mut *mut c_char,
 ) -> cadkit_status {
-    // SAFETY: NULL olmayan çıktı sözleşme gereği yazılabilirdir.
+    // SAFETY: Non-null `out` is writable per the caller's contract.
     unsafe {
         if !out.is_null() {
             *out = std::ptr::null_mut();
@@ -1026,18 +1029,18 @@ pub unsafe extern "C" fn cadkit_citygml_read_json(
                 "invalid CityGML input/output buffer",
             );
         }
-        // SAFETY: Seçenek adresi NULL veya geçerli bir yapıdır.
+        // SAFETY: `options` is NULL or points to a valid `cadkit_options` per the caller's contract.
         let opts = match unsafe { convert_options(options) } {
             Ok(o) => o,
             Err(s) => return s,
         };
-        // SAFETY: Girdi aralığı geçerli ve boyut isize::MAX altında.
+        // SAFETY: `data` is non-null, readable for `len` bytes, and `len <= isize::MAX as usize`.
         let bytes = unsafe { std::slice::from_raw_parts(data, len) };
         let result = cadkit::gml::read_native(bytes, &opts)
             .and_then(|d| serde_json::to_string(&d).map_err(|e| Error::invalid(0, e.to_string())));
         match result {
             Ok(s) => {
-                // SAFETY: Çıktı adresi denetlendi; sahiplik çağırana aktarılır.
+                // SAFETY: `out` was verified non-null and writable; CString ownership transfers to the caller.
                 unsafe {
                     *out = into_c_string(s).into_raw();
                 }
@@ -1048,17 +1051,19 @@ pub unsafe extern "C" fn cadkit_citygml_read_json(
     })
 }
 
-/// Özgün model JSON'undan CityGML üretir; seçenekler ValidationOptions JSON sözleşmesidir.
+/// Serializes native CityGML JSON to UTF-8 CityGML 2.0 XML; `validation_options` follows the
+/// Rust `gml::ValidationOptions` JSON contract (NULL selects defaults). Release `*out` with [`cadkit_string_free`].
 ///
 /// # Safety
-/// JSON ve seçenek dizeleri geçerli, çıktı adresi yazılabilir olmalıdır.
+/// `json` and `validation_options` must be NULL or valid NUL-terminated C strings;
+/// `out` must be NULL or writable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn cadkit_citygml_write_json(
     json: *const c_char,
     validation_options: *const c_char,
     out: *mut *mut c_char,
 ) -> cadkit_status {
-    // SAFETY: NULL olmayan çıktı adresi sözleşme gereği yazılabilirdir.
+    // SAFETY: Non-null `out` is writable per the caller's contract.
     unsafe {
         if !out.is_null() {
             *out = std::ptr::null_mut();
@@ -1068,13 +1073,13 @@ pub unsafe extern "C" fn cadkit_citygml_write_json(
         if out.is_null() {
             return fail(cadkit_status::NullPointer, "out is NULL");
         }
-        // SAFETY: Girdi NULL veya sonlandırılmış C dizesidir.
+        // SAFETY: `json` is NULL or a valid NUL-terminated C string per the caller's contract.
         let text = match unsafe { opt_str(json, "json") } {
             Ok(Some(s)) => s,
             Ok(None) => return fail(cadkit_status::NullPointer, "json is NULL"),
             Err(s) => return s,
         };
-        // SAFETY: Seçenekler NULL veya geçerli C dizesidir.
+        // SAFETY: `validation_options` is NULL or a valid NUL-terminated C string per the caller's contract.
         let options =
             match unsafe { options_json::<cadkit::gml::ValidationOptions>(validation_options) } {
                 Ok(o) => o,
@@ -1091,7 +1096,7 @@ pub unsafe extern "C" fn cadkit_citygml_write_json(
         .and_then(|bytes| String::from_utf8(bytes).map_err(|e| Error::invalid(0, e.to_string())));
         match result {
             Ok(s) => {
-                // SAFETY: Çıktı adresi denetlendi; dize sahipliği çağırana aktarılır.
+                // SAFETY: `out` was verified non-null and writable; CString ownership transfers to the caller.
                 unsafe {
                     *out = into_c_string(s).into_raw();
                 }

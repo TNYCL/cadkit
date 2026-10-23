@@ -4,8 +4,9 @@ You are a **senior Rust engineer** specialised in binary file formats, parsers f
 untrusted input, and library API design. You write code that a careful maintainer
 would merge without edits: small, explicit, tested, documented, panic-free.
 
-cadkit reads DWG, DGN (V7/V8) and DXF drawings into one format-neutral model,
-in pure Rust, with no vendor SDK. Read `docs/ARCHITECTURE.md` before writing code.
+cadkit reads DWG, DGN (V7/V8), DXF, and CityGML 2.0 drawings into one format-neutral model
+and writes DXF, seed-based DGN V8, and CityGML 2.0 (plus SVG and JSON), in pure Rust, with
+no vendor SDK. Read `docs/ARCHITECTURE.md` before writing code.
 
 ## 1. Build lock (machine safety, non-negotiable)
 

@@ -1,4 +1,4 @@
-//! DWG, DGN, DXF ve CityGML 2.0 belgelerini inceleyen ve dönüştüren komut satırı aracı.
+//! Command-line tool for inspecting and converting DWG, DGN, DXF, and CityGML 2.0 drawings.
 //!
 //! Exit codes: 0 success, 1 the drawing could not be read / written, 2 usage error.
 #![allow(clippy::print_stdout)]
@@ -12,7 +12,7 @@ use std::process::ExitCode;
 use cadkit::{Color, Document, DxfVersion, Entity, EntityKind, ReadOptions, SvgOptions};
 use clap::{Parser, Subcommand};
 
-/// DWG, DGN, DXF ve CityGML 2.0 belgelerini inceler ve dönüştürür.
+/// Inspect and convert DWG, DGN, DXF, and CityGML 2.0 drawings.
 #[derive(Parser, Debug)]
 #[command(name = "cadkit", version, about, long_about = None)]
 struct Cli {
@@ -50,7 +50,7 @@ struct Cli {
 enum Command {
     /// Summarize a drawing: format, units, models, layers, entity histogram.
     Info {
-        /// DWG, DGN, DXF veya CityGML 2.0 dosyası.
+        /// Input DWG, DGN, DXF, or CityGML 2.0 file.
         file: PathBuf,
         /// Also list the warnings recorded while reading.
         #[arg(long)]
@@ -61,12 +61,12 @@ enum Command {
     },
     /// List the layers with their state and entity counts.
     Layers {
-        /// DWG, DGN, DXF veya CityGML 2.0 dosyası.
+        /// Input DWG, DGN, DXF, or CityGML 2.0 file.
         file: PathBuf,
     },
-    /// Çizimi .json, .svg, .dxf, .dgn veya .gml biçimine dönüştürür.
+    /// Convert a drawing to .json, .svg, .dxf, .dgn, or .gml.
     Convert {
-        /// DWG, DGN, DXF veya CityGML 2.0 dosyası.
+        /// Input DWG, DGN, DXF, or CityGML 2.0 file.
         input: PathBuf,
         /// Output file; its extension selects the format.
         output: PathBuf,
@@ -82,19 +82,19 @@ enum Command {
         /// Pretty-print JSON output.
         #[arg(long)]
         pretty: bool,
-        /// DGN V8 çıktısı için seed dosyası.
+        /// Seed DGN V8 file required for .dgn output.
         #[arg(long)]
         seed: Option<PathBuf>,
-        /// Dolu seed'in model içeriğini temizlemeye açık izin.
+        /// Explicitly allow clearing existing model elements from a non-empty seed.
         #[arg(long)]
         clear_seed_model: bool,
-        /// Yeni CityGML çıktısındaki koordinatların mevcut CRS tanımı.
+        /// Explicit CRS identifier of the existing coordinates for new CityGML output.
         #[arg(long)]
         crs: Option<String>,
-        /// CityGML için ayrıntı düzeyi (0..4).
+        /// CityGML level of detail (0..4).
         #[arg(long, default_value_t = 1)]
         lod: u8,
-        /// Yalnız GML → GML aktarımında kaynak geometri hatalarını korumaya açık izin.
+        /// Explicitly allow preserving source geometry defects in GML-to-GML output.
         #[arg(long)]
         preserve_invalid_geometry: bool,
         /// For CAD-to-GML, retain unsupported entities only as JSON metadata and print a report.
@@ -102,19 +102,25 @@ enum Command {
         #[arg(long)]
         gml_metadata_only: bool,
     },
-    /// CityGML yapı ve geometri sorunlarını JSON olarak raporlar; sorun varsa çıkış kodu 1.
+    /// Report CityGML structural and geometry issues as JSON (exits 1 if issues are found).
     ValidateGml {
+        /// Input CityGML 2.0 file.
         file: PathBuf,
         /// Run a local TKGM subset: city-model-tender or digital-building-registration.
         /// Profile selection is explicit; neither result is official acceptance.
         #[arg(long)]
         tkgm_profile: Option<cadkit::gml::tkgm::Profile>,
     },
-    /// DGN V8 akışlarını içeriklerini değiştirmeden yeni CFB konteynerine paketler.
-    RepackDgn { input: PathBuf, output: PathBuf },
+    /// Repack DGN V8 streams into a fresh CFB container without altering stream contents.
+    RepackDgn {
+        /// Input DGN V8 file.
+        input: PathBuf,
+        /// Output DGN V8 file.
+        output: PathBuf,
+    },
     /// Print one line per entity, or the full document as JSON.
     Dump {
-        /// DWG, DGN, DXF veya CityGML 2.0 dosyası.
+        /// Input DWG, DGN, DXF, or CityGML 2.0 file.
         file: PathBuf,
         /// Print the whole document as pretty JSON instead.
         #[arg(long)]

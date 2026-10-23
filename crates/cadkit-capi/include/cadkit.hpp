@@ -165,14 +165,14 @@ public:
         return detail::take(out);
     }
 
-    /// JSON sözleşmesinden yeni nötr belge oluşturur.
+    /// Constructs a format-neutral Document from its JSON contract.
     static Document from_json(const std::string& json) {
         cadkit_document* out = nullptr;
         detail::check(cadkit_document_from_json(json.c_str(), &out));
         return Document(out);
     }
 
-    /// Seed ve isteğe bağlı WriteOptions JSON'u ile V8 baytları üretir.
+    /// Writes DGN V8 bytes using a seed buffer and optional dgn::WriteOptions JSON.
     std::vector<std::uint8_t> to_dgn(const std::vector<std::uint8_t>& seed, const std::string& options_json = "{}") const {
         std::uint8_t* out = nullptr;
         std::size_t len = 0;
@@ -182,7 +182,7 @@ public:
         return len == 0 ? std::vector<std::uint8_t>{} : std::vector<std::uint8_t>(out, out + len);
     }
 
-    /// Açık CRS tanımıyla genel CityGML geometrisi üretir.
+    /// Exports generic CityGML 2.0 geometry with an explicit CRS and LoD.
     std::string to_citygml(const std::string& srs_name, std::uint8_t lod = 1) const {
         char* out = nullptr;
         detail::check(cadkit_document_to_citygml(require(), srs_name.c_str(), lod, &out));

@@ -34,8 +34,9 @@ from the public corpus (fetched, not committed).
 
 ## Building and testing
 
-This machine class has crashed under parallel builds, so all build commands go through the
-lock, one at a time:
+`scripts/buildlock.py` is the workspace build wrapper: it serializes concurrent `cargo`,
+`maturin`, `wasm-bindgen`, and `npm` invocations and caps parallelism so simultaneous builds
+from multiple terminals or tools do not contend for memory:
 
 ```sh
 python scripts/buildlock.py cargo test -p cadkit-dxf
@@ -43,8 +44,8 @@ python scripts/buildlock.py cargo clippy -p cadkit-dxf --all-targets -- -D warni
 python scripts/buildlock.py cargo fmt --all -- --check
 ```
 
-Prefer the narrowest command (`-p <crate>`). Never run builds in the background or with more
-than 4 jobs. If you build without the lock on your own machine, that is your call; CI does.
+Prefer checking the narrowest crate (`-p <crate>`) while iterating, and run workspace-wide
+formatting and lint checks before submitting a pull request.
 
 Public samples for corpus tests:
 
