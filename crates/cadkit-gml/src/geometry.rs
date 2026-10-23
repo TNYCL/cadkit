@@ -145,7 +145,14 @@ impl VertexWelder {
         for dx in -1..=1 {
             for dy in -1..=1 {
                 for dz in -1..=1 {
-                    if let Some(bucket) = self.grid.get(&(cx + dx, cy + dy, cz + dz)) {
+                    // f64 cannot represent a one-cell margin at i64 bounds. A saturated
+                    // coordinate has no neighbor beyond the boundary, so skip that key.
+                    let (Some(x), Some(y), Some(z)) =
+                        (cx.checked_add(dx), cy.checked_add(dy), cz.checked_add(dz))
+                    else {
+                        continue;
+                    };
+                    if let Some(bucket) = self.grid.get(&(x, y, z)) {
                         for &idx in bucket {
                             charge(work)?;
                             if let Some(&q) = self.points.get(idx as usize) {
@@ -267,4 +274,32 @@ fn shell(
         ));
     }
     Ok(None)
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vertex_grid_neighbors_handle_saturated_cells() {
+        let mut welder = VertexWelder::new(1e-6);
+        let mut work = 100;
+        for point in [
+            Point3::new(f64::MAX, f64::MAX, f64::MAX),
+            Point3::new(-f64::MAX, -f64::MAX, -f64::MAX),
+            Point3::new(f64::MAX, -f64::MAX, 0.0),
+        ] {
+            let id = welder.intern(point, &mut work).expect("finite vertex");
+            assert_eq!(welder.intern(point, &mut work).expect("same vertex"), id);
+        }
+        assert_eq!(welder.points.len(), 3);
+        let origin = welder.intern(Point3::default(), &mut work).expect("origin");
+        assert_eq!(
+            welder
+                .intern(Point3::new(5e-7, 0.0, 0.0), &mut work)
+                .expect("near origin"),
+            origin
+        );
+    }
 }
