@@ -61,14 +61,16 @@ pub fn inspect(bytes: &[u8], options: &ReadOptions) -> Result<Summary> {
             } else {
                 None
             };
-            if let Some(target) = slot
-                && let Ok(raw) = std::str::from_utf8(attr.value.as_ref())
-                && let Ok(val) = quick_xml::escape::unescape(raw)
-            {
-                let trimmed = val.trim();
-                if !trimmed.is_empty() {
-                    *target = Some(trimmed.to_owned());
-                }
+            let Some(target) = slot else { continue };
+            let Ok(raw) = std::str::from_utf8(attr.value.as_ref()) else {
+                continue;
+            };
+            let Ok(val) = quick_xml::escape::unescape(raw) else {
+                continue;
+            };
+            let trimmed = val.trim();
+            if !trimmed.is_empty() {
+                *target = Some(trimmed.to_owned());
             }
         }
     };
@@ -89,11 +91,12 @@ pub fn inspect(bytes: &[u8], options: &ReadOptions) -> Result<Summary> {
                         return Err(Error::UnknownFormat);
                     }
                 } else {
-                    if let ResolveResult::Bound(ns) = res
-                        && ns.as_ref() == native::GML.as_bytes()
-                        && e.local_name().as_ref() == b"boundedBy"
-                    {
-                        in_bounded_by = true;
+                    if let ResolveResult::Bound(ns) = res {
+                        if ns.as_ref() == native::GML.as_bytes()
+                            && e.local_name().as_ref() == b"boundedBy"
+                        {
+                            in_bounded_by = true;
+                        }
                     }
                     capture_srs(&e, &mut srs_name, &mut srs_dim);
                     if srs_name.is_some() {
