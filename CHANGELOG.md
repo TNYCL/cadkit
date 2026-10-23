@@ -6,6 +6,42 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.3.7] - 2026-10-23
+
+
+Header inspection, CAD document operations and binding/CLI parity, with additional format
+coverage and explicit export controls. Existing 0.3.x option-struct layouts are retained.
+
+### Added
+
+- Header-only inspection and stream-oriented facade helpers, feature selection, and a prelude.
+- Document transformations, unit conversion, block expansion, geometry utilities and reusable
+  DGN V8 seed preparation with explicit unit/dimension/symbology conversion.
+- Additional SVG hatch/dimension/linetype handling, binary DXF and CAD entity support,
+  CityGML curve/geometry handling, and legacy OEM code-page decoding/byte export.
+- Python inspection, reusable `V8Seed`, immutable document operations and updated typing;
+  additive C/C++ entry points with immutable result handles and CMake/pkg-config installation.
+- CLI JSON summaries, bounded stdin/stdout conversion, output code pages, geometry filters
+  and shell completion scripts without extra Cargo dependencies.
+- WASM option/result types and object options, document operations and geometric picking;
+  viewer code-page, visibility, coordinate, selection and GML export controls.
+
+### Fixed
+
+- GML shell diagnostics handle extreme finite coordinates without integer-overflow panics.
+- Reader/export bounds, encoding, geometry and cross-format fidelity edge cases, backed by
+  synthetic regressions. Reader/export paths also avoid several temporary allocations.
+- Circular viewer picking uses analytic XY distance; display-hidden layers are excluded
+  from selection. GML export requires an explicit CRS and explicit metadata-only opt-in.
+- C ABI struct layouts and existing entry points remain unchanged; failed operations reset
+  outputs and immutable block expansion reports exhausted work limits instead of a partial copy.
+
+### Changed
+
+- English repository documentation/public messages, contribution and security guidance,
+  issue/PR templates, deterministic fuzz seeding and release checks.
+- Expanded API and architecture documentation and C++ contract testing in CI.
+
 ## [0.3.6] - 2026-10-23
 
 DGN CFB directory trees, page header counters, and default element timestamps match
@@ -238,7 +274,8 @@ Fixed during development, before this first release:
 - No automatic TKGM/CityMax building inference or receiving-system acceptance.
 - DWG R13 (AC1012) is untested; entity coverage of all readers is still growing.
 
-[Unreleased]: https://github.com/TNYCL/cadkit/compare/v0.3.6...HEAD
+[Unreleased]: https://github.com/TNYCL/cadkit/compare/v0.3.7...HEAD
+[0.3.7]: https://github.com/TNYCL/cadkit/compare/v0.3.6...v0.3.7
 [0.3.6]: https://github.com/TNYCL/cadkit/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/TNYCL/cadkit/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/TNYCL/cadkit/compare/v0.3.3...v0.3.4

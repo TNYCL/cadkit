@@ -1172,6 +1172,219 @@ pub unsafe extern "C" fn cadkit_citygml_preflight_tkgm(
     })
 }
 
+/// Inspects a file header and returns owned summary JSON; free with `cadkit_string_free`.
+///
+/// # Safety
+/// `path` is NULL or NUL-terminated UTF-8, `options` NULL or valid, `out` NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cadkit_inspect_file(
+    path: *const c_char,
+    options: *const cadkit_options,
+    out: *mut *mut c_char,
+) -> cadkit_status {
+    // SAFETY: Non-null output is writable per the contract.
+    if !out.is_null() {
+        unsafe { *out = std::ptr::null_mut() };
+    }
+    guarded(|| {
+        if out.is_null() {
+            return fail(cadkit_status::NullPointer, "out pointer is NULL");
+        }
+        // SAFETY: The string and options satisfy the caller's contract.
+        let path = match unsafe { opt_str(path, "path") } {
+            Ok(Some(p)) => p,
+            Ok(None) => return fail(cadkit_status::NullPointer, "path is NULL"),
+            Err(s) => return s,
+        };
+        // SAFETY: Options are NULL or valid per the contract.
+        let opts = match unsafe { convert_options(options) } {
+            Ok(o) => o,
+            Err(s) => return s,
+        };
+        let summary = match cadkit::inspect_file_with(path, &opts) {
+            Ok(s) => s,
+            Err(e) => return map_error(&e),
+        };
+        match serde_json::to_string(&summary) {
+            Ok(s) => {
+                // SAFETY: Output was checked non-null and is writable.
+                unsafe { *out = into_c_string(s).into_raw() };
+                cadkit_status::Ok
+            }
+            Err(e) => fail(cadkit_status::Internal, &e.to_string()),
+        }
+    })
+}
+
+/// Inspects an in-memory header and returns owned summary JSON; free with `cadkit_string_free`.
+///
+/// # Safety
+/// `data` is NULL only for zero length, otherwise readable for `len` bytes;
+/// `options` NULL or valid, `out` NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cadkit_inspect_bytes(
+    data: *const u8,
+    len: usize,
+    options: *const cadkit_options,
+    out: *mut *mut c_char,
+) -> cadkit_status {
+    // SAFETY: Non-null output is writable per the contract.
+    if !out.is_null() {
+        unsafe { *out = std::ptr::null_mut() };
+    }
+    guarded(|| {
+        if out.is_null() || (data.is_null() && len != 0) {
+            return fail(cadkit_status::NullPointer, "invalid data or output pointer");
+        }
+        let bytes = if len == 0 {
+            &[]
+        } else {
+            // SAFETY: Non-null data is readable for len bytes per the contract.
+            unsafe { std::slice::from_raw_parts(data, len) }
+        };
+        // SAFETY: Options are NULL or valid per the contract.
+        let opts = match unsafe { convert_options(options) } {
+            Ok(o) => o,
+            Err(s) => return s,
+        };
+        let summary = match cadkit::inspect_with(bytes, &opts) {
+            Ok(s) => s,
+            Err(e) => return map_error(&e),
+        };
+        match serde_json::to_string(&summary) {
+            Ok(s) => {
+                // SAFETY: Output was checked non-null and is writable.
+                unsafe { *out = into_c_string(s).into_raw() };
+                cadkit_status::Ok
+            }
+            Err(e) => fail(cadkit_status::Internal, &e.to_string()),
+        }
+    })
+}
+
+// SAFETY contract: doc satisfies doc_ref and out is NULL or writable.
+unsafe fn transformed_document(
+    doc: *const cadkit_document,
+    out: *mut *mut cadkit_document,
+    transform: impl FnOnce(&mut Document) -> Result<(), cadkit_status>,
+) -> cadkit_status {
+    // SAFETY: Non-null output is writable per the contract.
+    if !out.is_null() {
+        unsafe { *out = std::ptr::null_mut() };
+    }
+    guarded(|| {
+        if out.is_null() {
+            return fail(cadkit_status::NullPointer, "out pointer is NULL");
+        }
+        // SAFETY: doc_ref validates the handle before dereferencing.
+        let source = match unsafe { doc_ref(doc) } {
+            Ok(d) => d,
+            Err(s) => return s,
+        };
+        let mut copy = source.clone();
+        if let Err(status) = transform(&mut copy) {
+            return status;
+        }
+        // SAFETY: Output was checked non-null and is writable.
+        unsafe { register(copy, out) };
+        cadkit_status::Ok
+    })
+}
+
+/// Returns a new immutable document with block references expanded up to `max_depth`.
+/// Missing/cyclic/deeper references remain as inserts, as in Rust `Document::explode_inserts`.
+///
+/// # Safety
+/// `doc` is a live handle, `out` NULL or writable; release the result with `cadkit_document_free`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cadkit_document_explode_inserts(
+    doc: *const cadkit_document,
+    max_depth: u32,
+    out: *mut *mut cadkit_document,
+) -> cadkit_status {
+    // SAFETY: Forwarded handle and output contract.
+    unsafe {
+        transformed_document(doc, out, |d| {
+            if d.explode_inserts(max_depth).truncated {
+                return Err(fail(
+                    cadkit_status::LimitExceeded,
+                    "block expansion work limit exceeded",
+                ));
+            }
+            Ok(())
+        })
+    }
+}
+
+/// Returns a new immutable document converted to the named length unit (e.g. "mm", "meter").
+///
+/// # Safety
+/// `doc` is a live handle, `unit` NULL or NUL-terminated UTF-8, `out` NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cadkit_document_convert_units(
+    doc: *const cadkit_document,
+    unit: *const c_char,
+    out: *mut *mut cadkit_document,
+) -> cadkit_status {
+    // SAFETY: Forwarded handle and output contract; unit is valid for this call.
+    unsafe {
+        transformed_document(doc, out, |d| {
+            let name = opt_str(unit, "unit")?
+                .ok_or_else(|| fail(cadkit_status::NullPointer, "unit is NULL"))?;
+            let target = cadkit::LengthUnit::from_name(name)
+                .ok_or_else(|| fail(cadkit_status::InvalidArgument, "unknown length unit"))?;
+            d.convert_units(target)
+                .map(|_| ())
+                .map_err(|e| map_error(&e))
+        })
+    }
+}
+
+/// Writes DXF bytes with optional legacy code page; release with `cadkit_bytes_free`.
+///
+/// # Safety
+/// `doc` is a live handle, `codepage` NULL or NUL-terminated UTF-8;
+/// `out` and `out_len` are NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cadkit_document_to_dxf_bytes(
+    doc: *const cadkit_document,
+    version: i32,
+    codepage: *const c_char,
+    out: *mut *mut u8,
+    out_len: *mut usize,
+) -> cadkit_status {
+    // SAFETY: Each non-null output is writable per the contract.
+    unsafe {
+        if !out.is_null() {
+            *out = std::ptr::null_mut();
+        }
+        if !out_len.is_null() {
+            *out_len = 0;
+        }
+    }
+    guarded(|| {
+        let version = match version {
+            0 => DxfVersion::R12,
+            1 => DxfVersion::R2000,
+            2 => DxfVersion::R2004,
+            3 => DxfVersion::R2007,
+            4 => DxfVersion::R2010,
+            5 => DxfVersion::R2013,
+            6 => DxfVersion::R2018,
+            _ => return fail(cadkit_status::InvalidArgument, "unknown DXF version"),
+        };
+        // SAFETY: Optional string is valid for this call.
+        let codepage = match unsafe { opt_str(codepage, "codepage") } {
+            Ok(c) => c,
+            Err(s) => return s,
+        };
+        let options =
+            cadkit::dxf::WriteOptions::new(version).with_codepage(codepage.map(str::to_owned));
+        // SAFETY: Forwarded handle and binary output contracts.
+        unsafe { binary_getter(doc, out, out_len, |d| cadkit::to_dxf_bytes(d, &options)) }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

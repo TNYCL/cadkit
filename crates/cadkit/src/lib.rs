@@ -326,6 +326,12 @@ pub fn to_svg(doc: &Document, options: &SvgOptions) -> String {
     cadkit_core::svg::render(doc, options)
 }
 
+/// Renders a document model as SVG, including entities on hidden or frozen layers.
+#[cfg(feature = "svg")]
+pub fn to_svg_all_layers(doc: &Document, options: &SvgOptions) -> String {
+    cadkit_core::svg::render_all_layers(doc, options)
+}
+
 /// Writes an SVG rendering of `doc` into `writer`.
 #[cfg(feature = "svg")]
 pub fn write_svg_to(doc: &Document, options: &SvgOptions, mut writer: impl Write) -> Result<()> {

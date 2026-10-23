@@ -52,6 +52,7 @@ except cadkit.UnknownFormatError:
 | Item | Description |
 | --- | --- |
 | `read(source, *, keep_raw=False, codepage=None, max_input_bytes=None, max_decompressed_bytes=None, max_objects=None, max_depth=None) -> Document` | `source` is a path (`str`/`PathLike`) or `bytes`/`bytearray`/`memoryview`. `keep_raw` keeps original record bytes in entities (`raw`). `codepage` is a WHATWG label (e.g. `"windows-1254"`) used for 8-bit text when the file declares none. The `max_*` keywords override the resource limits (`None` = default); exceeding one raises `LimitExceededError`. |
+| `inspect(source, *, codepage=None, max_input_bytes=None, max_decompressed_bytes=None, max_objects=None, max_depth=None) -> dict` | Header-only format/version/units metadata, with the same path and buffer inputs as `read`. |
 | `detect(data: bytes) -> str \| None` | `"dwg"`, `"dxf"`, `"dgn_v7"`, `"dgn_v8"`, `"city_gml"`, or `None`. |
 | `read_citygml(data: bytes, options_json: str \| None = None) -> CityGmlDocument` | Reads CityGML 2.0 bytes into a native `CityGmlDocument` preserving IDs, references, and XML extensions (`ReadOptions` JSON). |
 | `Document.from_json(text: str) -> Document` | Constructs a format-neutral `Document` from its JSON contract. |
@@ -60,9 +61,13 @@ except cadkit.UnknownFormatError:
 | `Document.layers / blocks / models / warnings` | Lists of dicts, shaped like the Rust model serialized with serde. |
 | `Document.to_dict()` | Whole document as nested dicts. |
 | `Document.to_json(pretty=False)` | Whole document as JSON text. |
-| `Document.to_svg(model=0, width=1600, stroke=1.0, background="#ffffff", text=True, expand_blocks=True, images=True)` | SVG text; `background=None` is transparent. `width` and `stroke` must be finite and > 0 (`ValueError`). Raises `IndexError` for a bad model index. |
+| `Document.to_svg(model=0, width=1600, stroke=1.0, background="#ffffff", text=True, expand_blocks=True, images=True, include_hidden_layers=False)` | SVG text; hidden/frozen layers are excluded by default. `background=None` is transparent. `width` and `stroke` must be finite and > 0 (`ValueError`). Raises `IndexError` for a bad model index. |
 | `Document.to_dxf(version="r2018")` | ASCII DXF text; versions `r12`, `r2000`, `r2004`, `r2007`, `r2010`, `r2013`, `r2018`. |
-| `Document.to_dgn(seed: bytes, options_json: str \| None = None) -> bytes` | Writes seed-based DGN V8 bytes (`dgn::WriteOptions` JSON). |
+| `Document.to_dgn(seed: bytes \| V8Seed, options_json: str \| None = None) -> bytes` | Writes seed-based DGN V8 bytes (`dgn::WriteOptions` JSON). |
+| `Document.to_dxf_bytes(version="r2018", codepage=None) -> bytes` | DXF byte output, including legacy OEM code pages such as `DOS857`. |
+| `Document.explode_inserts(max_depth=32) -> Document` | New document with expanded block references; missing, cyclic or deeper inserts remain. |
+| `Document.convert_units(unit) -> Document` | New document with converted geometry and unit metadata (`"mm"`, `"meter"`, `"ft"`, etc.); the source is unchanged. |
+| `V8Seed(source, *, codepage=None, max_input_bytes=None, max_decompressed_bytes=None, max_objects=None, max_depth=None)` | Reusable parsed single-design-model V8 seed; accepts paths, buffers, or another `V8Seed`. Properties: `is_3d`, `units`, `is_nonempty`, `has_raster_template`; methods: `to_bytes()`, `prepare_document(doc, options_json=None)`. |
 | `Document.to_citygml(srs_name: str, lod: int = 1) -> bytes` | Writes generic CityGML 2.0 XML bytes with an explicit CRS and LoD. |
 | `Document.to_citygml_with_report(srs_name: str, lod: int = 1, metadata_only: bool = False) -> tuple[bytes, dict]` | Writes generic CityGML 2.0 XML bytes and returns `(xml_bytes, report_dict)`; `metadata_only=True` retains unsupported entities as JSON metadata instead of raising `UnsupportedError`. |
 | `Document.entities(model=0)` | Iterator of entity dicts (`{"id", "layer", "color", "kind": {"type": ...}, "props", ...}`). |
@@ -124,3 +129,20 @@ Defaults validate geometry; `{"geometry": false}` explicitly permits preserving
 existing geometry defects. No schema or CRS is downloaded. See
 [GML limits](gml/FORMAT_NOTES.md) and [DGN limits](dgn/FORMAT_NOTES.md) before
 choosing an export path.
+
+
+## Repeated DGN export
+
+```python
+seed = cadkit.V8Seed("blank.dgn")
+prepared = seed.prepare_document(cadkit.read("plan.dxf"))
+output = prepared.to_dgn(seed)  # reuses the parsed seed
+```
+
+`prepare_document` returns a copy adjusted to seed units/dimensions/symbology; its optional
+JSON follows Rust `dgn::SeedPrepareOptions`. Existing non-empty-seed write checks still
+apply (`clear_seed_model` is an explicit write option). This API does not imply receiver
+application acceptance.
+
+Block expansion raises a limit error if its work budget is exhausted; it does not return
+a silently partial copy. Missing, cyclic and deeper references remain as inserts.

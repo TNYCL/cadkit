@@ -211,6 +211,8 @@ test("DGN export from neutral JSON", (t) => {
   const doc = wasm.CadDocument.fromJsonString(JSON.stringify(source));
   try {
     const output = doc.toDgn(seed, JSON.stringify({ clear_seed_model: true }));
+    const outputFromObj = doc.toDgn(seed, { clearSeedModel: true });
+    assert.deepEqual(outputFromObj, output);
     const readback = wasm.read(output);
     try {
       assert.equal(readback.toJSON().models[0].entities.length, 1);
@@ -220,4 +222,57 @@ test("DGN export from neutral JSON", (t) => {
   } finally {
     doc.free();
   }
+});
+
+test("inspect, pickEntity, convertUnits, explodeInserts, toDxfBytes and includeHiddenLayers", () => {
+  const bytes = new TextEncoder().encode(DXF);
+  const summary = wasm.inspect(bytes);
+  assert.equal(summary.format, "dxf");
+  assert.equal(summary.version, "AC1015");
+  assert.equal(summary.units?.unit, "millimeter");
+
+  const doc = wasm.read(bytes);
+  try {
+    const picked = doc.pickEntity(0, 5.0, 2.5, 0.5);
+    assert.equal(picked?.kind, "line");
+    assert.equal(picked?.layer, "WALLS");
+    assert.equal(doc.pickEntity(0, 5.0, 2.5, 0.5, false, { excludedLayers: ["WALLS"] }), null);
+    assert.equal(doc.pickEntity(0, 5.0, 2.5, 0.5, false, { excludedKinds: ["line"] })?.kind, "circle");
+    assert.equal(doc.pickEntity(0, 500.0, 500.0, 0.5), null);
+
+    const scale = doc.convertUnits("meter");
+    assert.ok(Math.abs(scale - 0.001) < 1e-12);
+    assert.equal(doc.info().units, "meter");
+
+    const stats = doc.explodeInserts();
+    assert.equal(stats.truncated, false);
+
+    const dxfBytes = doc.toDxfBytes("r2000", "windows-1254");
+    assert.equal(wasm.detect(dxfBytes), "dxf");
+  } finally {
+    doc.free();
+  }
+
+  const hiddenDxf = [
+    "0", "SECTION", "2", "TABLES", "0", "TABLE", "2", "LAYER", "70", "1",
+    "0", "LAYER", "2", "HIDDEN_L", "70", "1", "62", "1", "0", "ENDTAB", "0", "ENDSEC",
+    "0", "SECTION", "2", "ENTITIES",
+    "0", "LINE", "8", "HIDDEN_L", "10", "0", "20", "0", "11", "10", "21", "0",
+    "0", "ENDSEC", "0", "EOF", "",
+  ].join("\n");
+  const hDoc = wasm.read(new TextEncoder().encode(hiddenDxf));
+  try {
+    assert.doesNotMatch(hDoc.toSvg(), /data-layer="HIDDEN_L"/);
+    assert.match(hDoc.toSvg({ includeHiddenLayers: true }), /data-layer="HIDDEN_L"/);
+    assert.equal(hDoc.pickEntity(0, 5.0, 0.0, 0.5, false), null);
+    assert.equal(hDoc.pickEntity(0, 5.0, 0.0, 0.5, true)?.layer, "HIDDEN_L");
+  } finally {
+    hDoc.free();
+  }
+
+  const gmlBytes = new TextEncoder().encode(
+    "<CityModel xmlns='http://www.opengis.net/citygml/2.0' xmlns:gml='http://www.opengis.net/gml'/>"
+  );
+  const gmlDoc = wasm.CadDocument.fromCityGml(gmlBytes, 1, { maxDepth: 32 });
+  gmlDoc.free();
 });

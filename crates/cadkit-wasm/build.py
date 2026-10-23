@@ -19,7 +19,8 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 LOCK = [sys.executable, os.path.join(ROOT, "scripts", "buildlock.py")]
-WASM = os.path.join(ROOT, "target", "wasm32-unknown-unknown", "release", "cadkit_wasm.wasm")
+TARGET_DIR = os.path.abspath(os.environ.get("CARGO_TARGET_DIR") or os.path.join(ROOT, "target"))
+WASM = os.path.join(TARGET_DIR, "wasm32-unknown-unknown", "release", "cadkit_wasm.wasm")
 
 
 def locked(cmd, env=None):
@@ -117,6 +118,7 @@ def main():
         sys.exit(f"CLI is '{out}', Cargo.lock wants wasm-bindgen {version}")
 
     env = dict(os.environ)
+    env["CARGO_TARGET_DIR"] = TARGET_DIR
     # Size-oriented release settings applied by env, because the workspace profile is shared.
     env.update(
         CARGO_PROFILE_RELEASE_OPT_LEVEL="z",
@@ -130,11 +132,11 @@ def main():
     for target, outdir in (("web", "pkg"), ("nodejs", "pkg-node")):
         dest = os.path.join(HERE, outdir)
         shutil.rmtree(dest, ignore_errors=True)
-        locked([cli, "--target", target, "--out-dir", dest, "--out-name", "cadkit_wasm", WASM])
+        locked([cli, "--target", target, "--out-dir", dest, "--out-name", "cadkit_wasm", WASM], env=env)
         opt = shutil.which("wasm-opt")
         if opt:
             w = os.path.join(dest, "cadkit_wasm_bg.wasm")
-            locked([opt, "-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int", "-o", w, w])
+            locked([opt, "-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int", "-o", w, w], env=env)
         write_dev_package_json(dest, target == "nodejs")
         size = os.path.getsize(os.path.join(dest, "cadkit_wasm_bg.wasm"))
         print(f"{outdir}/cadkit_wasm_bg.wasm: {size:,} bytes")

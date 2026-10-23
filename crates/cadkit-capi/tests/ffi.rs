@@ -452,3 +452,124 @@ fn citygml_export_report_ownership_and_invalid_arguments() {
         assert!(out.is_null());
     }
 }
+
+#[test]
+fn header_inspection_and_immutable_operations() {
+    let input = b"0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1015\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n0\nLINE\n10\n0\n20\n0\n11\n1000\n21\n0\n0\nENDSEC\n0\nEOF\n";
+    let mut json = ptr::null_mut();
+    let mut source = ptr::null_mut();
+    let mut meters = ptr::null_mut();
+    let mut expanded = ptr::null_mut();
+    // SAFETY: Synthetic readable bytes, valid output pointers and C strings; returned handles are freed once.
+    unsafe {
+        assert_eq!(
+            cadkit_inspect_bytes(input.as_ptr(), input.len(), ptr::null(), &mut json),
+            cadkit_status::Ok
+        );
+        let summary: serde_json::Value = serde_json::from_str(&take(json)).unwrap();
+        assert_eq!(summary["units"]["unit"], "millimeter");
+        assert_eq!(
+            cadkit_read_bytes(input.as_ptr(), input.len(), ptr::null(), &mut source),
+            cadkit_status::Ok
+        );
+        assert_eq!(
+            cadkit_document_convert_units(source, c"meter".as_ptr(), &mut meters),
+            cadkit_status::Ok
+        );
+        assert_ne!(source, meters);
+        assert_eq!(
+            cadkit_document_explode_inserts(meters, 32, &mut expanded),
+            cadkit_status::Ok
+        );
+        assert_eq!(
+            cadkit_document_to_json(source, 0, &mut json),
+            cadkit_status::Ok
+        );
+        let original: serde_json::Value = serde_json::from_str(&take(json)).unwrap();
+        assert_eq!(original["units"]["unit"], "millimeter");
+        assert_eq!(
+            cadkit_document_to_json(expanded, 0, &mut json),
+            cadkit_status::Ok
+        );
+        let converted: serde_json::Value = serde_json::from_str(&take(json)).unwrap();
+        assert_eq!(converted["units"]["unit"], "meter");
+        assert_eq!(
+            converted["models"][0]["entities"][0]["kind"]["end"]["x"],
+            1.0
+        );
+        let mut bytes = ptr::null_mut();
+        let mut len = 0;
+        assert_eq!(
+            cadkit_document_to_dxf_bytes(expanded, 1, c"DOS857".as_ptr(), &mut bytes, &mut len),
+            cadkit_status::Ok
+        );
+        let roundtrip = cadkit::read(std::slice::from_raw_parts(bytes, len)).unwrap();
+        assert_eq!(roundtrip.units.unit, cadkit::LengthUnit::Meter);
+        cadkit_bytes_free(bytes);
+        assert_eq!(
+            cadkit_document_to_dxf_bytes(source, -1, ptr::null(), &mut bytes, &mut len),
+            cadkit_status::InvalidArgument
+        );
+        assert!(bytes.is_null());
+        assert_eq!(len, 0);
+        let mut bad = source;
+        assert_eq!(
+            cadkit_document_convert_units(source, c"bad".as_ptr(), &mut bad),
+            cadkit_status::InvalidArgument
+        );
+        assert!(bad.is_null());
+        assert_eq!(
+            cadkit_document_convert_units(source, ptr::null(), &mut bad),
+            cadkit_status::NullPointer
+        );
+        assert!(bad.is_null());
+        assert_eq!(
+            cadkit_inspect_bytes(ptr::null(), 1, ptr::null(), &mut json),
+            cadkit_status::NullPointer
+        );
+        assert!(json.is_null());
+        assert_eq!(
+            cadkit_inspect_bytes(ptr::null(), 0, ptr::null(), &mut json),
+            cadkit_status::UnknownFormat
+        );
+        assert!(json.is_null());
+        for handle in [source, meters, expanded] {
+            assert_eq!(cadkit_document_free(handle), cadkit_status::Ok);
+        }
+        assert_eq!(
+            cadkit_document_explode_inserts(source, 32, &mut bad),
+            cadkit_status::InvalidHandle
+        );
+        assert!(bad.is_null());
+    }
+}
+
+#[test]
+fn inspect_file_and_limits() {
+    let path = std::env::temp_dir().join(format!("cadkit-inspect-{}.dxf", std::process::id()));
+    std::fs::write(&path, MINIMAL_DXF).unwrap();
+    let path_c = CString::new(path.to_str().unwrap()).unwrap();
+    let mut output = ptr::null_mut();
+    let mut options = std::mem::MaybeUninit::uninit();
+    // SAFETY: Valid UTF-8 path and writable initialized options/output; returned string is freed once.
+    unsafe {
+        assert_eq!(
+            cadkit_inspect_file(path_c.as_ptr(), ptr::null(), &mut output),
+            cadkit_status::Ok
+        );
+        assert!(take(output).contains("dxf"));
+        cadkit_options_init(options.as_mut_ptr());
+        let mut options = options.assume_init();
+        options.max_input_bytes = 1;
+        assert_eq!(
+            cadkit_inspect_file(path_c.as_ptr(), &options, &mut output),
+            cadkit_status::LimitExceeded
+        );
+        assert!(output.is_null());
+        assert_eq!(
+            cadkit_inspect_file(ptr::null(), ptr::null(), &mut output),
+            cadkit_status::NullPointer
+        );
+    }
+    std::fs::remove_file(path).unwrap();
+}

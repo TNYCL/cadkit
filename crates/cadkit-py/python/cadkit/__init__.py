@@ -3,6 +3,8 @@
 from cadkit._cadkit import (
     CadkitError,
     Document,
+    V8Seed,
+    inspect,
     CityGmlDocument,
     InvalidDataError,
     LimitExceededError,
@@ -17,6 +19,8 @@ from cadkit._cadkit import (
 __all__ = [
     "CadkitError",
     "Document",
+    "V8Seed",
+    "inspect",
     "CityGmlDocument",
     "InvalidDataError",
     "LimitExceededError",

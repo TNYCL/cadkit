@@ -134,6 +134,7 @@ fn convert_usage_errors() {
     let out = cadkit(&["convert", input, bad_out.to_str().expect("utf8 path")]);
     assert_eq!(out.status.code(), Some(2));
     assert!(text(&out.stderr).contains(".json, .svg, .dxf, .dgn or .gml"));
+    assert!(!text(&out.stderr).contains(".glm"));
     let svg = dir.join("out.svg");
     let svg = svg.to_str().expect("utf8 path");
     assert_eq!(
@@ -321,4 +322,181 @@ fn citygml_export_roundtrip_and_validation() {
         std::fs::read(output).expect("gml"),
         std::fs::read(copy).expect("copy")
     );
+}
+
+fn cadkit_stdin(args: &[&str], input: &[u8]) -> Output {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_cadkit"))
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(input)
+        .expect("write stdin");
+    child.wait_with_output().expect("wait")
+}
+
+#[test]
+fn metadata_json_and_stdin_limits() {
+    for command in ["inspect", "info", "layers", "blocks"] {
+        let result = cadkit_stdin(&[command, "-", "--json"], DXF.as_bytes());
+        assert!(
+            result.status.success(),
+            "{command}: {}",
+            text(&result.stderr)
+        );
+        let value: serde_json::Value = serde_json::from_slice(&result.stdout).expect("JSON");
+        assert!(value.is_object() || value.is_array());
+    }
+    let result = cadkit_stdin(
+        &["--max-input-bytes", "1", "inspect", "-", "--json"],
+        DXF.as_bytes(),
+    );
+    assert_eq!(result.status.code(), Some(1));
+    let result = cadkit_stdin(&["convert", "-", "-"], DXF.as_bytes());
+    assert_eq!(result.status.code(), Some(2));
+}
+
+#[test]
+fn stdout_conversion_units_filters_and_codepage() {
+    let drawing = "0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1021\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n0\nLINE\n8\nKEEP\n10\n0\n20\n0\n11\n1000\n21\n0\n0\nCIRCLE\n8\nDROP\n10\n0\n20\n0\n40\n10\n0\nTEXT\n8\nDROP\n10\n0\n20\n0\n40\n1\n1\nŞğİı\n0\nENDSEC\n0\nEOF\n";
+    let result = cadkit_stdin(
+        &[
+            "convert", "-", "-", "--to", "json", "--units", "meter", "--layer", "KEEP", "--kind",
+            "line",
+        ],
+        drawing.as_bytes(),
+    );
+    assert!(result.status.success(), "{}", text(&result.stderr));
+    let doc: serde_json::Value = serde_json::from_slice(&result.stdout).expect("JSON");
+    assert_eq!(doc["units"]["unit"], "meter");
+    let entities = doc["models"][0]["entities"].as_array().expect("entities");
+    assert_eq!(entities.len(), 1);
+    assert_eq!(entities[0]["kind"]["end"]["x"], 1.0);
+    let result = cadkit_stdin(
+        &["dump", "-", "--json", "--kind", "circle"],
+        drawing.as_bytes(),
+    );
+    let doc: serde_json::Value = serde_json::from_slice(&result.stdout).expect("dump JSON");
+    assert_eq!(
+        doc["models"][0]["entities"]
+            .as_array()
+            .expect("entities")
+            .len(),
+        1
+    );
+    assert_eq!(doc["models"][0]["entities"][0]["kind"]["type"], "circle");
+    let result = cadkit_stdin(
+        &[
+            "convert",
+            "-",
+            "-",
+            "--to",
+            "dxf",
+            "--dxf-version",
+            "r2000",
+            "--output-codepage",
+            "DOS857",
+        ],
+        drawing.as_bytes(),
+    );
+    assert!(result.status.success(), "{}", text(&result.stderr));
+    let roundtrip = cadkit::read(&result.stdout).expect("DXF bytes");
+    assert_eq!(roundtrip.units.unit, cadkit::LengthUnit::Millimeter);
+    assert_eq!(roundtrip.models[0].entities.len(), 3);
+    assert!(
+        roundtrip.models[0]
+            .entities
+            .iter()
+            .any(|e| matches!(&e.kind, cadkit::EntityKind::Text { value, .. } if value == "Şğİı"))
+    );
+    assert!(
+        cadkit_stdin(
+            &[
+                "convert",
+                "-",
+                "-",
+                "--to",
+                "svg",
+                "--output-codepage",
+                "DOS857"
+            ],
+            drawing.as_bytes()
+        )
+        .status
+        .code()
+            == Some(2)
+    );
+}
+
+#[test]
+fn stdin_insert_expansion_and_json_control_safety() {
+    let drawing = b"0\nSECTION\n2\nBLOCKS\n0\nBLOCK\n2\nB\n10\n0\n20\n0\n0\nLINE\n10\n0\n20\n0\n11\n2\n21\n0\n0\nENDBLK\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n0\nINSERT\n2\nB\n10\n10\n20\n0\n0\nENDSEC\n0\nEOF\n";
+    let result = cadkit_stdin(&["dump", "-", "--json", "--explode-inserts"], drawing);
+    assert!(result.status.success(), "{}", text(&result.stderr));
+    let doc: serde_json::Value = serde_json::from_slice(&result.stdout).expect("JSON");
+    assert_eq!(doc["models"][0]["entities"][0]["kind"]["type"], "line");
+    assert_eq!(doc["models"][0]["entities"][0]["kind"]["end"]["x"], 12.0);
+    let escaped = DXF.replacen("0\nSECTION", "0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1021\n0\nENDSEC\n0\nSECTION", 1).replace("2\nENTITIES", "2\nTABLES\n0\nTABLE\n2\nLAYER\n0\nLAYER\n2\nWALLS\n70\n0\n62\n1\n0\nENDTAB\n0\nENDSEC\n0\nSECTION\n2\nENTITIES").replace("WALLS", "layer\u{009b}[31m");
+    let result = cadkit_stdin(&["layers", "-", "--json"], escaped.as_bytes());
+    assert!(result.status.success());
+    assert!(!text(&result.stdout).contains('\u{009b}'));
+    let layers: serde_json::Value = serde_json::from_slice(&result.stdout).expect("safe JSON");
+    assert!(
+        layers
+            .as_array()
+            .expect("layers")
+            .iter()
+            .any(|l| l["name"] == "layer\u{009b}[31m")
+    );
+}
+
+#[test]
+fn completions_for_all_shells() {
+    for shell in ["bash", "zsh", "fish", "powershell"] {
+        let output = cadkit(&["completions", shell]);
+        assert!(output.status.success());
+        assert!(text(&output.stdout).contains("inspect"));
+        assert!(text(&output.stdout).contains("output-codepage"));
+        if shell == "bash" {
+            use std::io::Write;
+            use std::process::Stdio;
+            // Windows PATH may resolve bash.exe to the WSL launcher; use Git's Bash.
+            let bash = if cfg!(windows) {
+                let git = Command::new("git")
+                    .arg("--exec-path")
+                    .output()
+                    .expect("Git path");
+                assert!(git.status.success());
+                let exec_path = text(&git.stdout);
+                Path::new(exec_path.trim())
+                    .ancestors()
+                    .map(|path| path.join("bin/bash.exe"))
+                    .find(|path| path.is_file())
+                    .expect("Git for Windows Bash")
+            } else {
+                PathBuf::from("bash")
+            };
+            let mut child = Command::new(bash)
+                .arg("-n")
+                .stdin(Stdio::piped())
+                .spawn()
+                .expect("bash");
+            child
+                .stdin
+                .take()
+                .expect("stdin")
+                .write_all(&output.stdout)
+                .expect("script");
+            assert!(child.wait().expect("bash syntax").success());
+        }
+    }
+    assert_eq!(cadkit(&["completions", "unknown"]).status.code(), Some(2));
 }

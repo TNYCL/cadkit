@@ -571,6 +571,7 @@ fn dash_array_px(pattern: &[f64], px_per_unit: f64, stroke_px: f64) -> Option<St
 struct Renderer<'a> {
     doc: &'a Document,
     opts: &'a SvgOptions,
+    include_hidden_layers: bool,
     fmt: Fmt,
     view: Transform,
     cross: f64,
@@ -738,9 +739,11 @@ impl<'a> Renderer<'a> {
     }
 
     fn layer_hidden(&self, name: &str) -> bool {
-        self.layer_map
-            .get(name)
-            .is_some_and(|l| !l.visible || l.frozen)
+        !self.include_hidden_layers
+            && self
+                .layer_map
+                .get(name)
+                .is_some_and(|l| !l.visible || l.frozen)
     }
 
     fn render_attributes(&mut self, e: &Entity, ctx: &WalkContext<'_>) {
@@ -1524,6 +1527,16 @@ fn hatch_loop(pb: &mut PathBuilder<'_>, edges: &[HatchEdge], normal: Vec3, t: &T
 /// An empty model (or a model index out of range) yields a valid SVG with an empty 100x100
 /// view box. See the module documentation for the drawing conventions.
 pub fn render(doc: &Document, options: &SvgOptions) -> String {
+    render_internal(doc, options, false)
+}
+
+/// Like [`render`], but also emits `<g data-layer="...">` groups for layers marked invisible
+/// (`visible == false`) or frozen (`frozen == true`).
+pub fn render_all_layers(doc: &Document, options: &SvgOptions) -> String {
+    render_internal(doc, options, true)
+}
+
+fn render_internal(doc: &Document, options: &SvgOptions, include_hidden_layers: bool) -> String {
     let width = if options.width_px.is_finite() && options.width_px > 0.0 {
         options.width_px
     } else {
@@ -1538,23 +1551,21 @@ pub fn render(doc: &Document, options: &SvgOptions) -> String {
     let bg = options.background.as_deref().filter(|b| !b.is_empty());
 
     // Fit to the vector geometry; image frames only count when nothing else is drawn.
-    let fitted = doc
-        .bbox_with(
-            options.model,
-            &BBoxOptions {
-                include_images: false,
-                max_work: options.max_work,
-            },
-        )
-        .or_else(|| {
-            doc.bbox_with(
-                options.model,
-                &BBoxOptions {
-                    include_images: true,
-                    max_work: options.max_work,
-                },
-            )
-        });
+    let bbox_no_images = BBoxOptions {
+        include_images: false,
+        max_work: options.max_work,
+    };
+    let bbox_with_images = BBoxOptions {
+        include_images: true,
+        max_work: options.max_work,
+    };
+    let fitted = if include_hidden_layers {
+        doc.bbox_all_layers_with(options.model, &bbox_no_images)
+            .or_else(|| doc.bbox_all_layers_with(options.model, &bbox_with_images))
+    } else {
+        doc.bbox_with(options.model, &bbox_no_images)
+            .or_else(|| doc.bbox_with(options.model, &bbox_with_images))
+    };
     let Some(bb) = fitted else {
         let mut out = format!(
             "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w}\" height=\"{w}\" viewBox=\"0 0 100 100\">\n",
@@ -1599,6 +1610,7 @@ pub fn render(doc: &Document, options: &SvgOptions) -> String {
     let mut r = Renderer {
         doc,
         opts: options,
+        include_hidden_layers,
         fmt: Fmt { dec: fmt.dec },
         view: Transform::scaling(1.0, -1.0, 1.0),
         cross: view_extent * 0.004,
@@ -1619,13 +1631,18 @@ pub fn render(doc: &Document, options: &SvgOptions) -> String {
         max_work: options.max_work,
     };
     let cap = options.max_output_bytes;
-    let stats = doc.walk_while(options.model, &walk_opts, |e, ctx| {
+    let visit = |e: &Entity, ctx: &WalkContext<'_>| {
         if r.layers.bytes > cap {
             return false;
         }
         r.render_entity(e, ctx);
         true
-    });
+    };
+    let stats = if include_hidden_layers {
+        doc.walk_all_layers_while(options.model, &walk_opts, visit)
+    } else {
+        doc.walk_while(options.model, &walk_opts, visit)
+    };
     let mut truncated = stats.truncated;
     if !truncated && options.expand_blocks && options.text && !doc.blocks.is_empty() {
         if let Some(m) = doc.models.get(options.model) {

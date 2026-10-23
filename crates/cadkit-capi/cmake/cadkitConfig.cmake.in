@@ -1,0 +1,8 @@
+@PACKAGE_INIT@
+if(NOT TARGET cadkit::cadkit)
+  add_library(cadkit::cadkit UNKNOWN IMPORTED)
+  set_target_properties(cadkit::cadkit PROPERTIES
+    IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LIBDIR@/@CADKIT_LIBRARY_NAME@"
+    INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_INCLUDEDIR@")
+endif()
+check_required_components(cadkit)

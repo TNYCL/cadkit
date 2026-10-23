@@ -23,8 +23,8 @@ fn every_exported_function_is_declared_in_the_header() {
         found += 1;
     }
     assert!(
-        found >= 15,
-        "expected at least 15 exported functions, found {found}"
+        found >= 28,
+        "expected at least 28 exported functions, found {found}"
     );
 }
 
@@ -32,4 +32,20 @@ fn every_exported_function_is_declared_in_the_header() {
 fn cpp_wrapper_includes_the_c_header() {
     let hpp = include_str!("../include/cadkit.hpp");
     assert!(hpp.contains("#include \"cadkit.h\""));
+}
+
+#[test]
+fn every_unsafe_export_has_a_safety_contract() {
+    let src = include_str!("../src/lib.rs");
+    for (before, rest) in src
+        .split("pub unsafe extern \"C\" fn ")
+        .zip(src.split("pub unsafe extern \"C\" fn ").skip(1))
+    {
+        let docs = before.rsplit("}\n").next().unwrap_or(before);
+        let name = rest.split('(').next().unwrap_or("");
+        assert!(
+            docs.contains("/// # Safety"),
+            "missing safety contract for {name}"
+        );
+    }
 }

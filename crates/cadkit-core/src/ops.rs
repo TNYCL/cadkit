@@ -164,6 +164,7 @@ struct Walker<'a, F> {
     layers: HashMap<&'a str, &'a Layer>,
     colors: Rc<HashMap<&'a str, Color>>,
     opts: WalkOptions,
+    include_hidden_layers: bool,
     work: u64,
     spent: u64,
     truncated: bool,
@@ -173,9 +174,11 @@ struct Walker<'a, F> {
 
 impl<'a, F: FnMut(&'a Entity, &WalkContext<'a>) -> bool> Walker<'a, F> {
     fn layer_hidden(&self, name: &str) -> bool {
-        self.layers
-            .get(name)
-            .is_some_and(|l| !l.visible || l.frozen)
+        !self.include_hidden_layers
+            && self
+                .layers
+                .get(name)
+                .is_some_and(|l| !l.visible || l.frozen)
     }
 
     fn color_of(&self, e: &Entity, ctx: &WalkContext<'a>) -> (u8, u8, u8) {
@@ -367,6 +370,33 @@ impl Document {
     where
         F: FnMut(&'a Entity, &WalkContext<'a>) -> bool,
     {
+        self.walk_while_internal(model_index, options, false, f)
+    }
+
+    /// Like [`Document::walk_while`], but also visits entities on hidden (`visible == false`)
+    /// or frozen (`frozen == true`) layers. Entities with `entity.visible == false` remain skipped.
+    pub fn walk_all_layers_while<'a, F>(
+        &'a self,
+        model_index: usize,
+        options: &WalkOptions,
+        f: F,
+    ) -> WalkStats
+    where
+        F: FnMut(&'a Entity, &WalkContext<'a>) -> bool,
+    {
+        self.walk_while_internal(model_index, options, true, f)
+    }
+
+    fn walk_while_internal<'a, F>(
+        &'a self,
+        model_index: usize,
+        options: &WalkOptions,
+        include_hidden_layers: bool,
+        f: F,
+    ) -> WalkStats
+    where
+        F: FnMut(&'a Entity, &WalkContext<'a>) -> bool,
+    {
         let Some(model) = self.models.get(model_index) else {
             return WalkStats::default();
         };
@@ -388,6 +418,7 @@ impl Document {
             layers,
             colors: Rc::clone(&colors),
             opts: *options,
+            include_hidden_layers,
             work: options.max_work,
             spent: 0,
             truncated: false,
@@ -418,16 +449,31 @@ impl Document {
     /// [`Document::bbox`] with options; with `include_images: false` raster image frames are
     /// ignored (their stored extent can dwarf the drawing, e.g. DGN raster frames).
     pub fn bbox_with(&self, model_index: usize, options: &BBoxOptions) -> Option<BBox> {
+        self.bbox_internal(model_index, options, false)
+    }
+
+    /// Like [`Document::bbox_with`], including entities on hidden or frozen layers.
+    pub fn bbox_all_layers_with(&self, model_index: usize, options: &BBoxOptions) -> Option<BBox> {
+        self.bbox_internal(model_index, options, true)
+    }
+
+    fn bbox_internal(
+        &self,
+        model_index: usize,
+        options: &BBoxOptions,
+        include_hidden_layers: bool,
+    ) -> Option<BBox> {
         let mut bb = None;
         let walk = WalkOptions {
             max_work: options.max_work,
             ..WalkOptions::default()
         };
-        self.walk_with(model_index, &walk, |e, ctx| {
+        self.walk_while_internal(model_index, &walk, include_hidden_layers, |e, ctx| {
             if !options.include_images && matches!(e.kind, EntityKind::Image { .. }) {
-                return;
+                return true;
             }
             entity_extents(e, &ctx.transform, &mut bb);
+            true
         });
         bb
     }
@@ -482,6 +528,16 @@ impl Entity {
             },
             ctx.block_color,
         )
+    }
+
+    /// World-space bounding box of this entity without an additional placement transform.
+    pub fn bbox(&self) -> Option<BBox> {
+        entity_bbox(self, &Transform::identity())
+    }
+
+    /// Bounding box of this entity mapped through `transform`.
+    pub fn bbox_in(&self, transform: &Transform) -> Option<BBox> {
+        entity_bbox(self, transform)
     }
 }
 
@@ -965,6 +1021,284 @@ fn entity_extents(e: &Entity, tf: &Transform, bb: &mut Option<BBox>) {
             }
         }
         EntityKind::Viewport { .. } | EntityKind::Group { .. } | EntityKind::Unknown { .. } => {}
+    }
+}
+
+/// Computes the world-space XYZ [`BBox`] of `entity` after applying `transform`, or `None` when
+/// the entity contributes no drawable extent (`Viewport`, `Group`, `Unknown`, or empty geometry).
+pub fn entity_bbox(entity: &Entity, transform: &Transform) -> Option<BBox> {
+    let mut bb = None;
+    entity_extents(entity, transform, &mut bb);
+    bb
+}
+
+fn seg_dist_xy(px: f64, py: f64, a: Point3, b: Point3) -> f64 {
+    let dx = b.x - a.x;
+    let dy = b.y - a.y;
+    let len_sq = dx * dx + dy * dy;
+    if !(len_sq.is_finite() && len_sq > 1e-24) {
+        return (px - a.x).hypot(py - a.y);
+    }
+    let t = (((px - a.x) * dx + (py - a.y) * dy) / len_sq).clamp(0.0, 1.0);
+    (px - (a.x + t * dx)).hypot(py - (a.y + t * dy))
+}
+
+fn arc_dist_xy(px: f64, py: f64, arc: &EllipseArc) -> f64 {
+    // Preserve exact circular picking after uniform scale/reflection. Chords otherwise
+    // underestimate ring distance and can select points outside a small tolerance.
+    let radius = arc.u.x.hypot(arc.u.y);
+    let other_radius = arc.v.x.hypot(arc.v.y);
+    let dot = arc.u.x * arc.v.x + arc.u.y * arc.v.y;
+    if radius.is_finite()
+        && radius > 0.0
+        && (radius - other_radius).abs() <= radius * 1e-12
+        && dot.abs() <= radius * other_radius * 1e-12
+    {
+        let dx = px - arc.center.x;
+        let dy = py - arc.center.y;
+        let t = (dx * arc.v.x + dy * arc.v.y).atan2(dx * arc.u.x + dy * arc.u.y);
+        let sweep = arc.sweep();
+        let travel = if sweep >= 0.0 { t - arc.t0 } else { arc.t0 - t };
+        if sweep.abs() >= std::f64::consts::TAU - 1e-12
+            || travel.rem_euclid(std::f64::consts::TAU) <= sweep.abs()
+        {
+            return (dx.hypot(dy) - radius).abs();
+        }
+        let a = arc.point(arc.t0);
+        let b = arc.point(arc.t1);
+        return (px - a.x).hypot(py - a.y).min((px - b.x).hypot(py - b.y));
+    }
+    let steps = ((arc.sweep().abs() / 0.1).ceil() as usize).clamp(16, 256);
+    let mut best = f64::INFINITY;
+    let mut prev = arc.point(arc.t0);
+    for i in 1..=steps {
+        let t = arc.t0 + (arc.t1 - arc.t0) * (i as f64) / (steps as f64);
+        let cur = arc.point(t);
+        best = best.min(seg_dist_xy(px, py, prev, cur));
+        prev = cur;
+    }
+    best
+}
+
+fn ring_contains_xy(px: f64, py: f64, ring: &[Point3], tf: &Transform) -> bool {
+    let n = ring.len();
+    if n < 3 {
+        return false;
+    }
+    let mut inside = false;
+    for i in 0..n {
+        let (Some(ra), Some(rb)) = (ring.get(i), ring.get((i + 1) % n)) else {
+            continue;
+        };
+        let a = tf.apply_point(*ra);
+        let b = tf.apply_point(*rb);
+        if (a.y > py) != (b.y > py) {
+            let x_cross = a.x + (py - a.y) * (b.x - a.x) / (b.y - a.y);
+            if px < x_cross {
+                inside = !inside;
+            }
+        }
+    }
+    inside
+}
+
+fn ring_edge_dist_xy(px: f64, py: f64, ring: &[Point3], closed: bool, tf: &Transform) -> f64 {
+    let n = ring.len();
+    if n == 0 {
+        return f64::INFINITY;
+    }
+    if n == 1 {
+        let p = ring
+            .first()
+            .map_or(Point3::default(), |pt| tf.apply_point(*pt));
+        return (px - p.x).hypot(py - p.y);
+    }
+    let segs = if closed { n } else { n - 1 };
+    let mut best = f64::INFINITY;
+    for i in 0..segs {
+        if let (Some(ra), Some(rb)) = (ring.get(i), ring.get((i + 1) % n)) {
+            best = best.min(seg_dist_xy(
+                px,
+                py,
+                tf.apply_point(*ra),
+                tf.apply_point(*rb),
+            ));
+        }
+    }
+    best
+}
+
+/// 2D distance in world XY coordinates from `point` `(x, y)` to `entity` mapped by `transform`,
+/// or `None` when the entity has no 2D extent.
+///
+/// Circular arcs use exact XY distances; other curves use bounded polyline sampling.
+/// Filled polygons/faces use their regions (including polygon holes). Other unsupported
+/// kinds, hatches and annotations use bounding boxes and return zero inside those boxes.
+pub fn entity_distance_xy(
+    entity: &Entity,
+    transform: &Transform,
+    point: (f64, f64),
+) -> Option<f64> {
+    let (px, py) = point;
+    if !(px.is_finite() && py.is_finite()) {
+        return None;
+    }
+    match &entity.kind {
+        EntityKind::Point { position } => {
+            let p = transform.apply_point(*position);
+            Some((px - p.x).hypot(py - p.y))
+        }
+        EntityKind::Line { start, end } => Some(seg_dist_xy(
+            px,
+            py,
+            transform.apply_point(*start),
+            transform.apply_point(*end),
+        )),
+        EntityKind::Polyline {
+            vertices,
+            closed,
+            normal,
+        } => {
+            let n = vertices.len();
+            if n == 0 {
+                return None;
+            }
+            if n == 1 {
+                let p = vertices
+                    .first()
+                    .map_or(Point3::default(), |v| transform.apply_point(v.position));
+                return Some((px - p.x).hypot(py - p.y));
+            }
+            let segs = if *closed { n } else { n - 1 };
+            let mut best = f64::INFINITY;
+            for i in 0..segs {
+                let (Some(a), Some(b)) = (vertices.get(i), vertices.get((i + 1) % n)) else {
+                    continue;
+                };
+                let d = if let Some(arc) = segment_arc(a, b, *normal, transform) {
+                    arc_dist_xy(px, py, &arc)
+                } else {
+                    seg_dist_xy(
+                        px,
+                        py,
+                        transform.apply_point(a.position),
+                        transform.apply_point(b.position),
+                    )
+                };
+                best = best.min(d);
+            }
+            best.is_finite().then_some(best)
+        }
+        EntityKind::Circle {
+            center,
+            radius,
+            normal,
+        } => {
+            let arc = circle_arc(*center, *radius, 0.0, 0.0, *normal, transform);
+            Some(arc_dist_xy(px, py, &arc))
+        }
+        EntityKind::Arc {
+            center,
+            radius,
+            start_angle,
+            end_angle,
+            normal,
+        } => {
+            let arc = circle_arc(
+                *center,
+                *radius,
+                *start_angle,
+                *end_angle,
+                *normal,
+                transform,
+            );
+            Some(arc_dist_xy(px, py, &arc))
+        }
+        EntityKind::Ellipse {
+            center,
+            major_axis,
+            ratio,
+            start_param,
+            end_param,
+            normal,
+        } => {
+            let arc = full_ellipse_arc(
+                *center,
+                *major_axis,
+                *ratio,
+                *normal,
+                *start_param,
+                *end_param,
+                transform,
+            );
+            Some(arc_dist_xy(px, py, &arc))
+        }
+        EntityKind::Spline {
+            degree,
+            knots,
+            control_points,
+            weights,
+            fit_points,
+            closed,
+        } => {
+            let pts = spline_points(
+                *degree,
+                knots,
+                control_points,
+                weights,
+                fit_points,
+                *closed,
+                transform,
+            );
+            let d = ring_edge_dist_xy(px, py, &pts, *closed, &Transform::identity());
+            d.is_finite().then_some(d)
+        }
+        EntityKind::Leader { vertices, .. } => {
+            let d = ring_edge_dist_xy(px, py, vertices, false, transform);
+            d.is_finite().then_some(d)
+        }
+        EntityKind::Face { points, filled } => {
+            if *filled && ring_contains_xy(px, py, points, transform) {
+                return Some(0.0);
+            }
+            let d = ring_edge_dist_xy(px, py, points, true, transform);
+            d.is_finite().then_some(d)
+        }
+        EntityKind::Polygon {
+            exterior,
+            interiors,
+        } => {
+            let in_ext = ring_contains_xy(px, py, exterior, transform);
+            let in_hole = interiors
+                .iter()
+                .any(|hole| ring_contains_xy(px, py, hole, transform));
+            if in_ext && !in_hole {
+                return Some(0.0);
+            }
+            let mut best = ring_edge_dist_xy(px, py, exterior, true, transform);
+            for hole in interiors {
+                best = best.min(ring_edge_dist_xy(px, py, hole, true, transform));
+            }
+            best.is_finite().then_some(best)
+        }
+        _ => {
+            let bb = entity_bbox(entity, transform)?;
+            let dx = if px < bb.min.x {
+                bb.min.x - px
+            } else if px > bb.max.x {
+                px - bb.max.x
+            } else {
+                0.0
+            };
+            let dy = if py < bb.min.y {
+                bb.min.y - py
+            } else if py > bb.max.y {
+                py - bb.max.y
+            } else {
+                0.0
+            };
+            Some(dx.hypot(dy))
+        }
     }
 }
 
@@ -1500,5 +1834,67 @@ mod tests {
                 && (bb.max.y - 1.5).abs() < 1e-9,
             "unexpected clockwise hatch ellipse bbox: {bb:?}"
         );
+    }
+
+    #[test]
+    fn entity_bbox_and_distance_xy_distinguish_diagonal_line_from_box() {
+        let diag = line(0.0, 0.0, 10.0, 10.0);
+        let bb = diag.bbox().unwrap();
+        assert_eq!(
+            (bb.min.x, bb.min.y, bb.max.x, bb.max.y),
+            (0.0, 0.0, 10.0, 10.0)
+        );
+        // (5, 5) sits directly on the diagonal; (0, 10) is inside the AABB but 5*sqrt(2) away.
+        let d_on = entity_distance_xy(&diag, &Transform::identity(), (5.0, 5.0)).unwrap();
+        let d_off = entity_distance_xy(&diag, &Transform::identity(), (0.0, 10.0)).unwrap();
+        assert!(d_on < 1e-12);
+        assert!((d_off - 5.0 * 2.0_f64.sqrt()).abs() < 1e-9);
+
+        let circle = Entity::circle(Point3::xy(0.0, 0.0), 5.0);
+        // Center is 5 units from the ring; (5, 0) is on the ring.
+        assert!(
+            (entity_distance_xy(&circle, &Transform::identity(), (0.0, 0.0)).unwrap() - 5.0).abs()
+                < 1e-3
+        );
+        assert!(entity_distance_xy(&circle, &Transform::identity(), (5.0, 0.0)).unwrap() < 1e-6);
+
+        let mut hidden = line(0.0, 0.0, 4.0, 0.0).on_layer("FROZEN");
+        hidden.id = Some(9);
+        let mut doc = doc_with(vec![hidden], vec![]);
+        doc.layers.push(Layer {
+            name: "FROZEN".into(),
+            visible: true,
+            frozen: true,
+            ..Layer::default()
+        });
+        assert!(doc.bbox(0).is_none());
+        assert!(
+            doc.bbox_all_layers_with(0, &BBoxOptions::default())
+                .is_some()
+        );
+    }
+}
+
+#[cfg(test)]
+mod picking_regressions {
+    use super::*;
+
+    #[test]
+    fn circular_picking_is_exact_between_old_sample_vertices() {
+        let circle = Entity::circle(Point3::xy(0.0, 0.0), 1000.0);
+        let angle = 0.037_f64;
+        let point = (1000.001 * angle.cos(), 1000.001 * angle.sin());
+        let d = entity_distance_xy(&circle, &Transform::identity(), point).unwrap_or(f64::INFINITY);
+        assert!((d - 0.001).abs() < 1e-9);
+        let arc = Entity::new(EntityKind::Arc {
+            center: Point3::default(),
+            radius: 5.0,
+            start_angle: 0.0,
+            end_angle: std::f64::consts::FRAC_PI_2,
+            normal: Vec3::Z,
+        });
+        let d =
+            entity_distance_xy(&arc, &Transform::identity(), (-5.0, 0.0)).unwrap_or(f64::INFINITY);
+        assert!((d - 50.0_f64.sqrt()).abs() < 1e-9);
     }
 }

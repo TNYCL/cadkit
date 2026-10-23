@@ -23,8 +23,8 @@
  *   - No panic crosses this boundary; an internal bug is reported as CADKIT_PANIC.
  *   - Freeing a handle twice, or using a freed handle, is detected and reported as
  *     CADKIT_INVALID_HANDLE (best effort; do not rely on it).
- *   - Structs are initialized with cadkit_options_init / cadkit_svg_options_init so that
- *     fields added in later versions get defaults.
+ *   - Initialize existing option structs with cadkit_options_init / cadkit_svg_options_init.
+ *     Their layouts are fixed; additions use separate entry points.
  */
 #ifndef CADKIT_H
 #define CADKIT_H
@@ -173,6 +173,18 @@ CADKIT_API cadkit_status cadkit_citygml_write_json(const char *json,
 /* Local field/reference preflight of native CityGML JSON; never official TKGM acceptance. */
 /* Required profile: "city-model-tender" or "digital-building-registration". */
 CADKIT_API cadkit_status cadkit_citygml_preflight_tkgm(const char *json, const char *profile, char **out);
+
+/* Header inspection returns owned JSON (cadkit_string_free). No entity decoding. */
+CADKIT_API cadkit_status cadkit_inspect_file(const char *path, const cadkit_options *options, char **out);
+CADKIT_API cadkit_status cadkit_inspect_bytes(const uint8_t *data, size_t len, const cadkit_options *options, char **out);
+/* Returns a new document; the source remains unchanged. Free the result with cadkit_document_free.
+ * Missing/cyclic/deeper block references remain as inserts when expanding. */
+CADKIT_API cadkit_status cadkit_document_explode_inserts(const cadkit_document *doc, uint32_t max_depth, cadkit_document **out);
+CADKIT_API cadkit_status cadkit_document_convert_units(const cadkit_document *doc, const char *unit, cadkit_document **out);
+/* Optional legacy code page (NULL = default); release bytes with cadkit_bytes_free.
+ * Failure sets *out = NULL and *out_len = 0. */
+CADKIT_API cadkit_status cadkit_document_to_dxf_bytes(const cadkit_document *doc, int32_t version,
+    const char *codepage, uint8_t **out, size_t *out_len);
 
 /* Releases a string returned by this library. NULL is a no-op. */
 CADKIT_API void cadkit_string_free(char *s);
