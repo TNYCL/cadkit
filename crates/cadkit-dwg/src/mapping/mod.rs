@@ -16,9 +16,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use cadkit_core::geom_ops::arbitrary_axes;
 use cadkit_core::{
-    Block, Color, Document, Entity, EntityKind, Error, Format, HatchEdge, Layer, LengthUnit,
-    Limits, Linetype, Lineweight, Model, ModelKind, Point3, Props, Raw, ReadOptions, Result,
-    SourceInfo, TextStyle, Units, Value, Vec3, Warning,
+    Block, Color, Document, Entity, EntityKind, Error, Format, HatchEdge, Layer, Limits, Linetype,
+    Lineweight, Model, ModelKind, Point3, Props, Raw, ReadOptions, Result, SourceInfo, TextStyle,
+    Units, Value, Vec3, Warning,
 };
 
 use crate::native::{
@@ -61,6 +61,7 @@ struct Mapper<'f> {
     /// The first limit exceeded while mapping; reading then fails with it.
     limit_error: Option<Error>,
     keep_raw: bool,
+    text_encoding: Option<crate::codepage::TextEncoding>,
     warnings: Vec<Warning>,
     unsupported: BTreeMap<String, usize>,
 }
@@ -650,6 +651,9 @@ pub fn to_document(file: &DwgFile, options: &ReadOptions) -> Result<Document> {
         limits: options.limits,
         limit_error: None,
         keep_raw: options.keep_raw,
+        text_encoding: (!file.version.r2007_plus())
+            .then(|| crate::codepage::from_label(file.encoding))
+            .flatten(),
         warnings: Vec::new(),
         unsupported: BTreeMap::new(),
     };
@@ -662,16 +666,10 @@ pub fn to_document(file: &DwgFile, options: &ReadOptions) -> Result<Document> {
         },
         ..Document::default()
     };
-    let unit = file
+    doc.units = file
         .header
         .int("INSUNITS")
-        .map_or(LengthUnit::Unitless, |u| {
-            LengthUnit::from_insunits(u as i32)
-        });
-    doc.units = Units {
-        unit,
-        meters_per_unit: unit.meters(),
-    };
+        .map_or_else(Units::default, |u| Units::from_insunits(u as i32));
     header_props(file, &mut doc.props);
 
     // Layers.
@@ -1183,5 +1181,168 @@ mod tests {
             "MyBlock"
         );
         assert_eq!(Mapper::block_name(&file, 0x10, &bh(""), None), "*BLOCK_10");
+    }
+
+    #[test]
+    fn dos857_mtext_survey_units_and_insert_attrib_display_are_preserved() {
+        use crate::native::{Attrib, Insert, LayerRecord, MText, Text, TextStyleRecord};
+        use cadkit_core::{HAlign, VAlign};
+
+        let mut file = file_with_model_space(
+            vec![0x70, 0x80],
+            vec![
+                object(
+                    0x40,
+                    0x32,
+                    ObjectData::Control(Control {
+                        entries: vec![0x41, 0x42],
+                        extra: Vec::new(),
+                    }),
+                    None,
+                    None,
+                ),
+                object(
+                    0x41,
+                    0x33,
+                    ObjectData::Layer(LayerRecord {
+                        entry: TableEntry {
+                            name: "BLOCKS".into(),
+                            ..TableEntry::default()
+                        },
+                        on: true,
+                        ..LayerRecord::default()
+                    }),
+                    Some(0x40),
+                    None,
+                ),
+                object(
+                    0x42,
+                    0x33,
+                    ObjectData::Layer(LayerRecord {
+                        entry: TableEntry {
+                            name: "ATTR_LAYER".into(),
+                            ..TableEntry::default()
+                        },
+                        on: true,
+                        ..LayerRecord::default()
+                    }),
+                    Some(0x40),
+                    None,
+                ),
+                object(
+                    0x44,
+                    0x34,
+                    ObjectData::Control(Control {
+                        entries: vec![0x45],
+                        extra: Vec::new(),
+                    }),
+                    None,
+                    None,
+                ),
+                object(
+                    0x45,
+                    0x35,
+                    ObjectData::TextStyle(TextStyleRecord {
+                        entry: TableEntry {
+                            name: "ROMANS".into(),
+                            ..TableEntry::default()
+                        },
+                        ..TextStyleRecord::default()
+                    }),
+                    Some(0x44),
+                    None,
+                ),
+                object(
+                    0x70,
+                    0x2C,
+                    ObjectData::MText(MText {
+                        insertion: [1.0, 2.0, 0.0],
+                        extrusion: [0.0, 0.0, 1.0],
+                        x_axis: [1.0, 0.0, 0.0],
+                        height: 2.5,
+                        value: "%%158ehir %%159ube".into(),
+                        ..MText::default()
+                    }),
+                    Some(MODEL),
+                    Some(0),
+                ),
+            ],
+        );
+        file.codepage = 15; // DOS857 (Turkish OEM)
+        file.encoding = "cp857";
+        file.header.vars.push(("INSUNITS".into(), Value::Int(22))); // US Survey Inches
+        file.header
+            .handles
+            .insert("LAYER_CONTROL_OBJECT".into(), 0x40);
+        file.header
+            .handles
+            .insert("STYLE_CONTROL_OBJECT".into(), 0x44);
+
+        let mut ins_obj = object(
+            0x80,
+            0x07,
+            ObjectData::Insert(Insert {
+                position: [10.0, 20.0, 0.0],
+                scale: [1.0, 1.0, 1.0],
+                extrusion: [0.0, 0.0, 1.0],
+                has_attribs: true,
+                attribs: vec![0x81],
+                ..Insert::default()
+            }),
+            Some(MODEL),
+            Some(0),
+        );
+        ins_obj.common.entity.as_mut().unwrap().layer = Some(0x41);
+        file.objects.insert(0x80, ins_obj);
+
+        let mut att_obj = object(
+            0x81,
+            0x02,
+            ObjectData::Attrib(Attrib {
+                tag: "ROOM_NO".into(),
+                text: Text {
+                    insertion: [10.0, 20.0],
+                    alignment: Some([15.0, 25.0]),
+                    elevation: 3.0,
+                    extrusion: [0.0, 0.0, 1.0],
+                    height: 2.0,
+                    width_factor: 0.75,
+                    rotation: 0.5,
+                    halign: 1, // Center -> uses alignment point
+                    valign: 2, // Middle
+                    style: Some(0x45),
+                    value: "A-101".into(),
+                    ..Text::default()
+                },
+                ..Attrib::default()
+            }),
+            Some(0x80),
+            Some(0),
+        );
+        att_obj.common.entity.as_mut().unwrap().layer = Some(0x42);
+        file.objects.insert(0x81, att_obj);
+
+        let doc = to_document(&file, &ReadOptions::default()).unwrap();
+        assert_eq!(doc.units.unit, cadkit_core::LengthUnit::Custom);
+        assert_eq!(doc.units.to_insunits(), 22);
+
+        let EntityKind::MText { plain, .. } = &doc.models[0].entities[0].kind else {
+            panic!("expected MText");
+        };
+        assert_eq!(plain, "Şehir şube");
+
+        let ins_entity = &doc.models[0].entities[1];
+        assert_eq!(ins_entity.attributes.len(), 1);
+        let attr = &ins_entity.attributes[0];
+        assert_eq!(attr.tag, "ROOM_NO");
+        assert_eq!(attr.layer.as_deref(), Some("ATTR_LAYER"));
+        assert_eq!(attr.position, Some(Point3::new(15.0, 25.0, 3.0)));
+        let disp = attr.display.as_ref().expect("display metadata");
+        assert_eq!(disp.height, 2.0);
+        assert_eq!(disp.width, 1.5);
+        assert_eq!(disp.style.as_deref(), Some("ROMANS"));
+        assert_eq!(disp.halign, HAlign::Center);
+        assert_eq!(disp.valign, VAlign::Middle);
+        assert_eq!(disp.rotation, 0.5);
     }
 }

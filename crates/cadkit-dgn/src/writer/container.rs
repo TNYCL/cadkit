@@ -10,12 +10,14 @@ use std::{
 pub(super) struct BoundedCursor {
     inner: Cursor<Vec<u8>>,
     limit: u64,
+    exceeded: bool,
 }
 impl BoundedCursor {
     fn new(limit: u64) -> Self {
         Self {
             inner: Cursor::new(vec![]),
             limit,
+            exceeded: false,
         }
     }
     pub(super) fn bytes(self) -> Vec<u8> {
@@ -33,6 +35,7 @@ impl Seek for BoundedCursor {
         let result = self.inner.seek(p)?;
         if result > self.limit {
             self.inner.set_position(old);
+            self.exceeded = true;
             return Err(std::io::Error::other("CFB output limit exceeded"));
         }
         Ok(result)
@@ -46,12 +49,21 @@ impl Write for BoundedCursor {
             .checked_add(b.len() as u64)
             .is_none_or(|n| n > self.limit)
         {
+            self.exceeded = true;
             return Err(std::io::Error::other("CFB output limit exceeded"));
         }
         self.inner.write(b)
     }
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
+    }
+}
+
+fn map_cfb_io(e: std::io::Error) -> Error {
+    if e.to_string().contains("CFB output limit exceeded") {
+        Error::LimitExceeded("CFB output limit exceeded".into())
+    } else {
+        Error::Io(e)
     }
 }
 
@@ -107,76 +119,79 @@ pub(super) fn rewrite(
         }))
         .collect();
     items.sort_by(|a, b| microstation_rank(a.key()).cmp(&microstation_rank(b.key())));
-    let mut output = ::cfb::CompoundFile::create_with_version(
-        source.version(),
-        BoundedCursor::new(options.limits.max_input_bytes),
-    )?;
-    for item in items {
-        match item {
-            Item::Seed(key, entry) => {
-                if entry.is_storage() {
-                    output.create_storage_all(entry.path())?;
-                    continue;
-                }
-                if !entry.is_stream() {
-                    continue;
-                }
-                match replacements.get(&key) {
-                    Some(None) => {}
-                    Some(Some(bytes)) => {
-                        if let Some(parent) = entry.path().parent() {
-                            if parent != Path::new("/") && !parent.as_os_str().is_empty() {
-                                output.create_storage_all(parent)?;
-                            }
-                        }
-                        output.create_stream(entry.path())?.write_all(bytes)?;
+    let mut bytes = (|| -> std::io::Result<Vec<u8>> {
+        let mut output = ::cfb::CompoundFile::create_with_version(
+            source.version(),
+            BoundedCursor::new(options.limits.max_input_bytes),
+        )?;
+        for item in items {
+            match item {
+                Item::Seed(key, entry) => {
+                    if entry.is_storage() {
+                        output.create_storage_all(entry.path())?;
+                        continue;
                     }
-                    None => {
-                        if let Some(parent) = entry.path().parent() {
-                            if parent != Path::new("/") && !parent.as_os_str().is_empty() {
-                                output.create_storage_all(parent)?;
-                            }
-                        }
-                        let mut src = source.open_stream(entry.path())?;
-                        let mut dst = output.create_stream(entry.path())?;
-                        std::io::copy(&mut src.by_ref().take(entry.len()), &mut dst)?;
+                    if !entry.is_stream() {
+                        continue;
                     }
+                    match replacements.get(&key) {
+                        Some(None) => {}
+                        Some(Some(bytes)) => {
+                            if let Some(parent) = entry.path().parent() {
+                                if parent != Path::new("/") && !parent.as_os_str().is_empty() {
+                                    output.create_storage_all(parent)?;
+                                }
+                            }
+                            output.create_stream(entry.path())?.write_all(bytes)?;
+                        }
+                        None => {
+                            if let Some(parent) = entry.path().parent() {
+                                if parent != Path::new("/") && !parent.as_os_str().is_empty() {
+                                    output.create_storage_all(parent)?;
+                                }
+                            }
+                            let mut src = source.open_stream(entry.path())?;
+                            let mut dst = output.create_stream(entry.path())?;
+                            std::io::copy(&mut src.by_ref().take(entry.len()), &mut dst)?;
+                        }
+                    }
+                }
+                Item::New(name, data) => {
+                    let path = format!("/{name}");
+                    if let Some((parent, _)) = path.rsplit_once('/') {
+                        if !parent.is_empty() {
+                            output.create_storage_all(parent)?;
+                        }
+                    }
+                    output.create_stream(&path)?.write_all(data)?;
                 }
             }
-            Item::New(name, data) => {
-                let path = format!("/{name}");
-                if let Some((parent, _)) = path.rsplit_once('/') {
-                    if !parent.is_empty() {
-                        output.create_storage_all(parent)?;
-                    }
-                }
-                output.create_stream(&path)?.write_all(data)?;
+        }
+        let created: Vec<_> = output
+            .walk()
+            .filter(|e| !source.exists(e.path()))
+            .map(|e| e.path().to_owned())
+            .collect();
+        let seed_time = source.entry("/")?.created();
+        for path in created {
+            output.set_created_time(&path, seed_time)?;
+            output.set_modified_time(&path, seed_time)?;
+        }
+        for entry in &entries {
+            if !output.exists(entry.path()) {
+                continue;
             }
+            if entry.is_storage() {
+                output.set_storage_clsid(entry.path(), *entry.clsid())?;
+            }
+            output.set_state_bits(entry.path(), entry.state_bits())?;
+            output.set_created_time(entry.path(), entry.created())?;
+            output.set_modified_time(entry.path(), entry.modified())?;
         }
-    }
-    let created: Vec<_> = output
-        .walk()
-        .filter(|e| !source.exists(e.path()))
-        .map(|e| e.path().to_owned())
-        .collect();
-    let seed_time = source.entry("/")?.created();
-    for path in created {
-        output.set_created_time(&path, seed_time)?;
-        output.set_modified_time(&path, seed_time)?;
-    }
-    for entry in &entries {
-        if !output.exists(entry.path()) {
-            continue;
-        }
-        if entry.is_storage() {
-            output.set_storage_clsid(entry.path(), *entry.clsid())?;
-        }
-        output.set_state_bits(entry.path(), entry.state_bits())?;
-        output.set_created_time(entry.path(), entry.created())?;
-        output.set_modified_time(entry.path(), entry.modified())?;
-    }
-    output.flush()?;
-    let mut bytes = output.into_inner().bytes();
+        output.flush()?;
+        Ok(output.into_inner().bytes())
+    })()
+    .map_err(map_cfb_io)?;
     balance_directory(&mut bytes, root_color)?;
     Ok(bytes)
 }
@@ -714,5 +729,15 @@ mod tests {
                 }
             }
         }
+
+        // Replacing a stream with data larger than `max_input_bytes` yields LimitExceeded.
+        let mut tight = ReadOptions::default();
+        tight.limits.max_input_bytes = seed.len() as u64;
+        let mut replacements = BTreeMap::new();
+        replacements.insert("Dgn~H".into(), Some(vec![0u8; 64 * 1024]));
+        assert!(matches!(
+            rewrite(&seed, &replacements, &tight),
+            Err(Error::LimitExceeded(_))
+        ));
     }
 }

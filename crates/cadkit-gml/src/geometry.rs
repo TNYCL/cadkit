@@ -21,7 +21,7 @@ pub struct GeometryIssue {
 }
 
 /// Collects all polygon and solid-shell geometry issues after structural validation.
-/// Shell edge matching uses exact coordinate equality and does not test inter-solid volumetric intersections.
+/// Shell edge matching welds vertices within `options.tolerance` and does not test inter-solid volumetric intersections.
 pub fn geometry_issues(
     doc: &CityGmlDocument,
     options: &ValidationOptions,
@@ -108,10 +108,66 @@ pub(crate) fn inspect(
     Ok(issues)
 }
 
-type Key = [u64; 3];
-fn key(p: Point3) -> Key {
-    [p.x, p.y, p.z].map(|v| if v == 0.0 { 0 } else { v.to_bits() })
+struct VertexWelder {
+    tol: f64,
+    tol2: f64,
+    points: Vec<Point3>,
+    grid: HashMap<(i64, i64, i64), Vec<u32>>,
 }
+
+impl VertexWelder {
+    fn new(tolerance: f64) -> Self {
+        let tol = if tolerance.is_finite() && tolerance > 0.0 {
+            tolerance
+        } else {
+            0.0
+        };
+        Self {
+            tol,
+            tol2: tol * tol,
+            points: Vec::new(),
+            grid: HashMap::new(),
+        }
+    }
+
+    fn cell(&self, p: Point3) -> (i64, i64, i64) {
+        let step = self.tol.max(1e-12);
+        let q = |v: f64| {
+            (v / step)
+                .floor()
+                .clamp(i64::MIN as f64 + 2.0, i64::MAX as f64 - 2.0) as i64
+        };
+        (q(p.x), q(p.y), q(p.z))
+    }
+
+    fn intern(&mut self, p: Point3, work: &mut u64) -> Result<u32> {
+        let (cx, cy, cz) = self.cell(p);
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for dz in -1..=1 {
+                    if let Some(bucket) = self.grid.get(&(cx + dx, cy + dy, cz + dz)) {
+                        for &idx in bucket {
+                            charge(work)?;
+                            if let Some(&q) = self.points.get(idx as usize) {
+                                let (ux, uy, uz) = (p.x - q.x, p.y - q.y, p.z - q.z);
+                                let d2 = ux * ux + uy * uy + uz * uz;
+                                if d2 <= self.tol2 && (self.tol > 0.0 || p == q) {
+                                    return Ok(idx);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let idx = u32::try_from(self.points.len())
+            .map_err(|_| Error::LimitExceeded("GML shell vertices".into()))?;
+        self.points.push(p);
+        self.grid.entry((cx, cy, cz)).or_default().push(idx);
+        Ok(idx)
+    }
+}
+
 fn charge(work: &mut u64) -> Result<()> {
     *work = work
         .checked_sub(1)
@@ -127,7 +183,8 @@ fn shell(
     options: &ValidationOptions,
     work: &mut u64,
 ) -> Result<Option<String>> {
-    let mut edges: HashMap<(Key, Key), (u32, i32)> = HashMap::new();
+    let mut welder = VertexWelder::new(options.tolerance);
+    let mut edges: HashMap<(u32, u32), (u32, i32)> = HashMap::new();
     let mut todo = vec![(start, dim, 1i32, 0u32)];
     let mut volume = 0.0;
     let mut origin = None;
@@ -155,7 +212,11 @@ fn shell(
                 for pair in ring.windows(2) {
                     charge(work)?;
                     if let (Some(&a), Some(&b)) = (pair.first(), pair.get(1)) {
-                        let (a_key, b_key) = (key(a), key(b));
+                        let a_key = welder.intern(a, work)?;
+                        let b_key = welder.intern(b, work)?;
+                        if a_key == b_key {
+                            continue;
+                        }
                         let (edge, direction) = if a_key < b_key {
                             ((a_key, b_key), sign)
                         } else {

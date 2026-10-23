@@ -18,7 +18,7 @@ use crate::native::element::{
     TcbData, TextData, TextNodeData, UorPoint,
 };
 use crate::native::linkage::{self, LinkageData};
-use crate::text;
+use crate::text::{self, TextDecoder};
 
 /// V7 angles are stored in 1/360000 degree.
 const ANGLE_UNIT: f64 = std::f64::consts::PI / 180.0 / 360_000.0;
@@ -84,18 +84,46 @@ pub fn sniff(b: &[u8]) -> bool {
     }
 }
 
+/// Borrowed V7 record view used by `map::v7` to avoid copying every record when `!keep_raw`.
+pub(crate) struct V7Slice<'a> {
+    pub offset: usize,
+    pub bytes: &'a [u8],
+}
+
+pub(crate) struct V7View<'a> {
+    pub is_3d: bool,
+    pub records: Vec<V7Slice<'a>>,
+    pub tcb: Option<TcbData>,
+    pub end_offset: usize,
+    pub warnings: Vec<Warning>,
+}
+
 /// Walks every record of a V7 file.
 pub fn read(bytes: &[u8], options: &ReadOptions) -> Result<V7File> {
     let mut budget = Budget::new(options.limits);
     let enc = text::encoding_for(options.fallback_codepage.as_deref());
-    read_with(bytes, &mut budget, enc)
+    let view = scan(bytes, &mut budget, enc)?;
+    Ok(V7File {
+        is_3d: view.is_3d,
+        records: view
+            .records
+            .into_iter()
+            .map(|r| V7Record {
+                offset: r.offset,
+                bytes: r.bytes.to_vec(),
+            })
+            .collect(),
+        tcb: view.tcb,
+        end_offset: view.end_offset,
+        warnings: view.warnings,
+    })
 }
 
-pub(crate) fn read_with(
-    bytes: &[u8],
+pub(crate) fn scan<'a>(
+    bytes: &'a [u8],
     budget: &mut Budget,
-    enc: &'static Encoding,
-) -> Result<V7File> {
+    enc: TextDecoder,
+) -> Result<V7View<'a>> {
     if !sniff(bytes) {
         return Err(Error::UnknownFormat);
     }
@@ -124,18 +152,18 @@ pub(crate) fn read_with(
             break;
         };
         budget.charge_objects(1)?;
-        records.push(V7Record {
+        records.push(V7Slice {
             offset: off,
-            bytes: rec.to_vec(),
+            bytes: rec,
         });
         off += len;
     }
     let tcb = records
         .iter()
-        .find(|r| r.type_code() == 9)
-        .and_then(|r| parse_tcb(&r.bytes, enc));
+        .find(|r| u16::from(le::u8_at(r.bytes, 1).unwrap_or(0) & 0x7f) == 9)
+        .and_then(|r| parse_tcb(r.bytes, enc));
     let is_3d = bytes.first() == Some(&0xC8) || tcb.as_ref().is_some_and(|t| t.is_3d);
-    Ok(V7File {
+    Ok(V7View {
         is_3d,
         records,
         tcb,
@@ -145,7 +173,7 @@ pub(crate) fn read_with(
 }
 
 /// Design file header (GDAL `DGNParseTCB`).
-fn parse_tcb(b: &[u8], enc: &'static Encoding) -> Option<TcbData> {
+fn parse_tcb(b: &[u8], enc: TextDecoder) -> Option<TcbData> {
     let label = |off| {
         text::decode_8bit(le::bytes(b, off, 2).unwrap_or(&[]), enc)
             .trim()
@@ -172,8 +200,16 @@ fn has_display_header(t: u16) -> bool {
 
 /// Decodes one V7 record. Never fails; problems are reported in [`Element::problem`].
 pub fn decode(rec: &V7Record, is_3d: bool, enc: &'static Encoding, limits: &Limits) -> Element {
-    let b = &rec.bytes;
-    let t = rec.type_code();
+    decode_bytes(&rec.bytes, is_3d, TextDecoder::Whatwg(enc), limits)
+}
+
+pub(crate) fn decode_bytes(b: &[u8], is_3d: bool, enc: TextDecoder, limits: &Limits) -> Element {
+    let b0 = le::u8_at(b, 0).unwrap_or(0);
+    let b1 = le::u8_at(b, 1).unwrap_or(0);
+    let t = u16::from(b1 & 0x7f);
+    let level = b0 & 0x3f;
+    let is_complex = b0 & 0x80 != 0;
+    let is_deleted = b1 & 0x80 != 0;
     let display = has_display_header(t) && b.len() >= 36;
     let properties = if display {
         u32::from(le::u16_at(b, 32).unwrap_or(0))
@@ -198,11 +234,11 @@ pub fn decode(rec: &V7Record, is_3d: bool, enc: &'static Encoding, limits: &Limi
     });
     let header = ElementHeader {
         type_code: t,
-        level: u32::from(rec.level()),
+        level: u32::from(level),
         id: None,
         complex_header: matches!(t, 2 | 7 | 12 | 14 | 18 | 19 | 24 | 27 | 34),
-        complex_component: rec.is_complex() && t != 9,
-        deleted: rec.is_deleted(),
+        complex_component: is_complex && t != 9,
+        deleted: is_deleted,
         is_3d,
         has_display_header: display,
         graphic_group: if display {
@@ -237,7 +273,7 @@ pub fn decode(rec: &V7Record, is_3d: bool, enc: &'static Encoding, limits: &Limi
         2 => d.cell(),
         3 => d.line(),
         4 => d.points(2).map(|points| ElementData::LineString { points }),
-        5 if rec.level() == 1 => d.color_table(),
+        5 if level == 1 => d.color_table(),
         6 => d.points(2).map(|points| ElementData::Shape { points }),
         7 => d.text_node(),
         9 => parse_tcb(b, enc).map(ElementData::Tcb).ok_or_else(short),
@@ -267,7 +303,7 @@ pub fn decode(rec: &V7Record, is_3d: bool, enc: &'static Encoding, limits: &Limi
         34 => d.shared_cell(true),
         35 => d.shared_cell(false),
         37 => d.tag(),
-        66 if rec.level() == 24 => d.tag_set(&linkages),
+        66 if level == 24 => d.tag_set(&linkages),
         _ => Ok(ElementData::Unknown),
     };
     let (mut data, problem) = match result {
@@ -305,7 +341,7 @@ struct V7<'a> {
     /// End of the element data (start of the attribute linkages).
     end: usize,
     is_3d: bool,
-    enc: &'static Encoding,
+    enc: TextDecoder,
     limits: &'a Limits,
 }
 
@@ -612,15 +648,19 @@ impl V7<'_> {
 /// Byte offset where a V7 complex header's description ends (ezdgn `container_descriptor`):
 /// cells, text nodes and complex chains/shapes count words after byte 38; B-spline headers
 /// count words after byte 40.
-pub(crate) fn description_end(rec: &V7Record) -> Option<usize> {
-    let (base, words) = match rec.type_code() {
-        2 | 7 | 12 | 14 | 18 | 19 | 34 => (38usize, usize::from(le::u16_at(&rec.bytes, 36)?)),
-        24 | 27 => (40, usize::try_from(le::v7_i32_at(&rec.bytes, 36)?).ok()?),
+pub(crate) fn description_end_bytes(offset: usize, bytes: &[u8]) -> Option<usize> {
+    let type_code = u16::from(le::u8_at(bytes, 1).unwrap_or(0) & 0x7f);
+    let (base, words) = match type_code {
+        2 | 7 | 12 | 14 | 18 | 19 | 34 => (38usize, usize::from(le::u16_at(bytes, 36)?)),
+        24 | 27 => (40, usize::try_from(le::v7_i32_at(bytes, 36)?).ok()?),
         _ => return None,
     };
-    rec.offset
-        .checked_add(base)?
-        .checked_add(words.checked_mul(2)?)
+    offset.checked_add(base)?.checked_add(words.checked_mul(2)?)
+}
+
+#[cfg(test)]
+pub(crate) fn description_end(rec: &V7Record) -> Option<usize> {
+    description_end_bytes(rec.offset, &rec.bytes)
 }
 
 #[cfg(test)]

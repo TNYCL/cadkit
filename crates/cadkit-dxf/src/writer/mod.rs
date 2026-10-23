@@ -266,6 +266,19 @@ impl Writer<'_> {
                     self.appids.insert(clean_name(app));
                 }
             }
+            for at in &e.attributes {
+                if let Some(layer) = at.layer.as_deref().filter(|l| !l.trim().is_empty()) {
+                    self.layers.add(layer);
+                }
+                if let Some(st) = at
+                    .display
+                    .as_ref()
+                    .and_then(|d| d.style.as_deref())
+                    .filter(|s| !s.trim().is_empty())
+                {
+                    self.styles.add(st);
+                }
+            }
             match &e.kind {
                 EntityKind::Text { style: Some(s), .. }
                 | EntityKind::MText { style: Some(s), .. } => {
@@ -280,6 +293,19 @@ impl Writer<'_> {
                 }
                 EntityKind::Group { name: Some(_), .. } => {
                     self.appids.insert(entities::GROUP_APPID.to_owned());
+                }
+                EntityKind::Unknown { type_name }
+                    if type_name == "dxf.ATTDEF" || type_name == "dwg.ATTDEF" =>
+                {
+                    if let Some(cadkit_core::Value::Text(s)) = e
+                        .props
+                        .get("dxf.attdef.style")
+                        .or_else(|| e.props.get("dwg.style"))
+                    {
+                        if !s.trim().is_empty() {
+                            self.styles.add(s);
+                        }
+                    }
                 }
                 _ => {}
             }
@@ -432,8 +458,11 @@ impl Writer<'_> {
             walk(
                 &b.entities,
                 &mut |e| {
-                    if matches!(&e.kind, EntityKind::Unknown { type_name } if type_name == "dxf.ATTDEF")
-                    {
+                    if matches!(
+                        &e.kind,
+                        EntityKind::Unknown { type_name }
+                            if type_name == "dxf.ATTDEF" || type_name == "dwg.ATTDEF"
+                    ) {
                         has_attdef = true;
                     }
                 },
@@ -574,17 +603,7 @@ impl Writer<'_> {
         out.int(70, 4);
         if !self.r12 {
             out.word(9, "$INSUNITS");
-            let code = if doc.units.unit == cadkit_core::LengthUnit::Custom {
-                match doc.units.meters_per_unit {
-                    Some(m) if (m - 100.0 / 3937.0).abs() < 1e-9 => 22,
-                    Some(m) if (m - 3600.0 / 3937.0).abs() < 1e-9 => 23,
-                    Some(m) if (m - 6_336_000.0 / 3937.0).abs() < 1e-6 => 24,
-                    _ => 0,
-                }
-            } else {
-                i64::from(doc.units.unit.to_insunits())
-            };
-            out.int(70, code);
+            out.int(70, i64::from(doc.units.to_insunits()));
             out.word(9, "$TILEMODE");
             out.int(70, 1);
             out.word(9, "$DIMSTYLE");

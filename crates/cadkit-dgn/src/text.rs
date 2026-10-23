@@ -6,7 +6,43 @@
 //! - otherwise: 8-bit text in the code page (no UTF-8 sniffing: MicroStation stores
 //!   locale code page text, and guessing UTF-8 would mis-decode valid code page bytes).
 
+use cadkit_core::text::OemCodepage;
 use encoding_rs::Encoding;
+
+/// 8-bit character decoder: either a WHATWG [`Encoding`] or a legacy DOS [`OemCodepage`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TextDecoder {
+    Whatwg(&'static Encoding),
+    Oem(OemCodepage),
+}
+
+impl From<&'static Encoding> for TextDecoder {
+    fn from(enc: &'static Encoding) -> Self {
+        Self::Whatwg(enc)
+    }
+}
+
+impl From<OemCodepage> for TextDecoder {
+    fn from(oem: OemCodepage) -> Self {
+        Self::Oem(oem)
+    }
+}
+
+impl TextDecoder {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Whatwg(e) => e.name(),
+            Self::Oem(o) => o.name(),
+        }
+    }
+
+    pub(crate) fn decode_raw(self, bytes: &[u8]) -> String {
+        match self {
+            Self::Whatwg(e) => e.decode_without_bom_handling(bytes).0.into_owned(),
+            Self::Oem(o) => o.decode(bytes),
+        }
+    }
+}
 
 /// How a string was stored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,25 +66,31 @@ impl StringEncoding {
     }
 }
 
-/// Resolves a WHATWG label (e.g. `"windows-1254"`) or a Windows code page number
-/// (e.g. `"1254"`, `"cp1254"`) to an encoding.
-pub(crate) fn encoding_for(label: Option<&str>) -> &'static Encoding {
+/// Resolves a WHATWG label (e.g. `"windows-1254"`), DOS/OEM label (e.g. `"cp857"`, `"437"`),
+/// or Windows code page number (e.g. `"1254"`, `"cp1254"`) to a [`TextDecoder`].
+pub(crate) fn encoding_for(label: Option<&str>) -> TextDecoder {
     let Some(label) = label.map(str::trim).filter(|l| !l.is_empty()) else {
-        return encoding_rs::WINDOWS_1252;
+        return TextDecoder::Whatwg(encoding_rs::WINDOWS_1252);
     };
+    if let Some(oem) = OemCodepage::from_label(label) {
+        return TextDecoder::Oem(oem);
+    }
     if let Some(e) = Encoding::for_label(label.as_bytes()) {
-        return e;
+        return TextDecoder::Whatwg(e);
     }
     let digits = label.trim_start_matches(|c: char| !c.is_ascii_digit());
     digits
         .parse::<u16>()
         .ok()
         .and_then(encoding_for_codepage)
-        .unwrap_or(encoding_rs::WINDOWS_1252)
+        .unwrap_or(TextDecoder::Whatwg(encoding_rs::WINDOWS_1252))
 }
 
-/// Encoding for a Windows code page number, when known.
-pub(crate) fn encoding_for_codepage(cp: u16) -> Option<&'static Encoding> {
+/// Decoder for a Windows or DOS/OEM code page number, when known.
+pub(crate) fn encoding_for_codepage(cp: u16) -> Option<TextDecoder> {
+    if let Some(oem) = OemCodepage::from_number(cp) {
+        return Some(TextDecoder::Oem(oem));
+    }
     let label = match cp {
         65001 => "utf-8",
         1200 => "utf-16le",
@@ -57,25 +99,29 @@ pub(crate) fn encoding_for_codepage(cp: u16) -> Option<&'static Encoding> {
         949 => "euc-kr",
         950 => "big5",
         874 => "windows-874",
-        437 | 850 | 1252 => "windows-1252",
+        1252 => "windows-1252",
         866 => "ibm866",
-        c @ 1250..=1258 => return Encoding::for_label(format!("windows-{c}").as_bytes()),
+        c @ 1250..=1258 => {
+            return Encoding::for_label(format!("windows-{c}").as_bytes()).map(TextDecoder::Whatwg);
+        }
         c @ 28591..=28606 => {
-            return Encoding::for_label(format!("iso-8859-{}", c - 28590).as_bytes());
+            return Encoding::for_label(format!("iso-8859-{}", c - 28590).as_bytes())
+                .map(TextDecoder::Whatwg);
         }
         _ => return None,
     };
-    Encoding::for_label(label.as_bytes())
+    Encoding::for_label(label.as_bytes()).map(TextDecoder::Whatwg)
 }
 
 /// Decodes 8-bit text with `enc`, stopping at the first NUL.
-pub(crate) fn decode_8bit(bytes: &[u8], enc: &'static Encoding) -> String {
+pub(crate) fn decode_8bit(bytes: &[u8], enc: impl Into<TextDecoder>) -> String {
+    let enc = enc.into();
     let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
     let s = bytes.get(..end).unwrap_or(&[]);
     if s.is_ascii() {
         return s.iter().map(|&b| char::from(b)).collect();
     }
-    enc.decode_without_bom_handling(s).0.into_owned()
+    enc.decode_raw(s)
 }
 
 /// Decodes UTF-16LE units, stopping at the first NUL unit. Odd trailing bytes are ignored.
@@ -94,7 +140,11 @@ pub(crate) fn decode_utf16(bytes: &[u8]) -> String {
 }
 
 /// Decodes a DGN string payload, honoring the `ff fd` / `ff fe 01 00` markers.
-pub(crate) fn decode_dgn_string(bytes: &[u8], enc: &'static Encoding) -> (String, StringEncoding) {
+pub(crate) fn decode_dgn_string(
+    bytes: &[u8],
+    enc: impl Into<TextDecoder>,
+) -> (String, StringEncoding) {
+    let enc = enc.into();
     if let Some(rest) = bytes.strip_prefix(&[0xff, 0xfd]) {
         return (decode_utf16(rest), StringEncoding::Utf16);
     }
@@ -107,7 +157,11 @@ pub(crate) fn decode_dgn_string(bytes: &[u8], enc: &'static Encoding) -> (String
 /// V7 multibyte text: `ff fd` then 16-bit units. Units below 256 are single bytes, larger
 /// units are double-byte code page characters (high byte first), as GDAL's dgnlib reads
 /// them; the resulting byte string is decoded with `enc`.
-pub(crate) fn decode_v7_text(bytes: &[u8], enc: &'static Encoding) -> (String, StringEncoding) {
+pub(crate) fn decode_v7_text(
+    bytes: &[u8],
+    enc: impl Into<TextDecoder>,
+) -> (String, StringEncoding) {
+    let enc = enc.into();
     let Some(rest) = bytes.strip_prefix(&[0xff, 0xfd]) else {
         return (decode_8bit(bytes, enc), StringEncoding::CodePage);
     };
@@ -126,14 +180,16 @@ pub(crate) fn decode_v7_text(bytes: &[u8], enc: &'static Encoding) -> (String, S
             out.extend_from_slice(&u.to_be_bytes());
         }
     }
-    (
-        enc.decode_without_bom_handling(&out).0.into_owned(),
-        StringEncoding::Utf16,
-    )
+    (enc.decode_raw(&out), StringEncoding::Utf16)
 }
 
 /// Reads a NUL-terminated 8-bit string at `off`, returning it and the offset after the NUL.
-pub(crate) fn cstr_at(b: &[u8], off: usize, enc: &'static Encoding) -> Option<(String, usize)> {
+pub(crate) fn cstr_at(
+    b: &[u8],
+    off: usize,
+    enc: impl Into<TextDecoder>,
+) -> Option<(String, usize)> {
+    let enc = enc.into();
     let rest = b.get(off..)?;
     let len = rest.iter().position(|&c| c == 0)?;
     let s = decode_8bit(rest.get(..len)?, enc);
@@ -143,7 +199,12 @@ pub(crate) fn cstr_at(b: &[u8], off: usize, enc: &'static Encoding) -> Option<(S
 /// Reads a terminated DGN string at `off`: either `ff fd` + UTF-16LE ending with a 16-bit
 /// NUL (observed in V8 tag set definitions with non-ASCII names) or 8-bit text ending with
 /// a NUL byte. Returns the text and the offset after the terminator.
-pub(crate) fn dgn_cstr_at(b: &[u8], off: usize, enc: &'static Encoding) -> Option<(String, usize)> {
+pub(crate) fn dgn_cstr_at(
+    b: &[u8],
+    off: usize,
+    enc: impl Into<TextDecoder>,
+) -> Option<(String, usize)> {
+    let enc = enc.into();
     let rest = b.get(off..)?;
     if let Some(units) = rest.strip_prefix(&[0xff, 0xfd]) {
         let n = units.chunks_exact(2).position(|c| c == [0, 0])?;
@@ -203,6 +264,13 @@ mod tests {
             encoding_for_codepage(28599).map(|e| e.name()),
             Some("windows-1254")
         );
+        // CP437 and CP857 decode through OEM tables rather than windows-1252.
+        let cp437 = encoding_for_codepage(437).unwrap();
+        assert_eq!(cp437.name(), "cp437");
+        assert_eq!(decode_8bit(&[0xdb, 0xe3], cp437), "█π");
+        let cp857 = encoding_for(Some("cp857"));
+        assert_eq!(cp857.name(), "cp857");
+        assert_eq!(decode_8bit(&[0x98, 0x8d, 0x9e, 0x9f], cp857), "İıŞş");
     }
 
     #[test]

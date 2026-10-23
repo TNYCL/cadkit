@@ -278,10 +278,12 @@ pub(crate) fn check_chars(s: &str, offset: u64) -> Result<()> {
 struct Output {
     bytes: Vec<u8>,
     limit: u64,
+    exceeded: bool,
 }
 impl std::io::Write for Output {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
         if (self.bytes.len() as u64).saturating_add(bytes.len() as u64) > self.limit {
+            self.exceeded = true;
             return Err(std::io::Error::other("XML output byte limit"));
         }
         self.bytes.extend_from_slice(bytes);
@@ -292,24 +294,151 @@ impl std::io::Write for Output {
     }
 }
 
+fn write_xml(writer: &mut Writer<Output>, event: Event<'_>) -> Result<()> {
+    writer.write_event(event).map_err(|e| {
+        if writer.get_ref().exceeded {
+            Error::LimitExceeded("XML output byte limit".into())
+        } else {
+            Error::Io(e)
+        }
+    })
+}
+
+const XML_PREFIX_NS: &str = "http://www.w3.org/XML/1998/namespace";
+
+fn lookup_ns<'a>(scopes: &[(&'a str, &'a str)], prefix: &str) -> Option<&'a str> {
+    if prefix == "xml" {
+        return Some(XML_PREFIX_NS);
+    }
+    scopes
+        .iter()
+        .rev()
+        .find(|&&(p, _)| p == prefix)
+        .map(|&(_, uri)| uri)
+}
+
+fn validate_element_namespaces<'a>(
+    e: &'a Element,
+    scopes: &mut Vec<(&'a str, &'a str)>,
+) -> Result<()> {
+    for (idx, a) in e.attributes.iter().enumerate() {
+        let local = a
+            .name
+            .qualified
+            .rsplit(':')
+            .next()
+            .unwrap_or(&a.name.qualified);
+        for prev in e.attributes.get(..idx).unwrap_or(&[]) {
+            if prev.name.is(&a.name.namespace, local) {
+                return Err(Error::invalid(e.offset, "duplicate expanded XML attribute"));
+            }
+        }
+        if a.name.qualified == "xmlns" {
+            if a.name.namespace != XMLNS || a.value == XMLNS || a.value == XML_PREFIX_NS {
+                return Err(Error::invalid(
+                    0,
+                    "XML namespace declarations disagree with model names",
+                ));
+            }
+            scopes.push(("", a.value.as_str()));
+        } else if let Some(prefix) = a.name.qualified.strip_prefix("xmlns:") {
+            if a.name.namespace != XMLNS
+                || prefix.is_empty()
+                || prefix == "xmlns"
+                || a.value.is_empty()
+                || a.value == XMLNS
+                || (prefix == "xml") != (a.value == XML_PREFIX_NS)
+            {
+                return Err(Error::invalid(
+                    0,
+                    "XML namespace declarations disagree with model names",
+                ));
+            }
+            scopes.push((prefix, a.value.as_str()));
+        }
+    }
+
+    if let Some((prefix, _)) = e.name.qualified.split_once(':') {
+        let Some(bound) = lookup_ns(scopes, prefix) else {
+            return Err(Error::invalid(e.offset, "undeclared XML namespace prefix"));
+        };
+        if bound != e.name.namespace || bound.is_empty() {
+            return Err(Error::invalid(
+                0,
+                "XML namespace declarations disagree with model names",
+            ));
+        }
+    } else {
+        let bound = lookup_ns(scopes, "").unwrap_or("");
+        if bound != e.name.namespace {
+            return Err(Error::invalid(
+                0,
+                "XML namespace declarations disagree with model names",
+            ));
+        }
+    }
+
+    for a in &e.attributes {
+        if a.name.qualified == "xmlns" || a.name.qualified.starts_with("xmlns:") {
+            continue;
+        }
+        if a.name.namespace == XMLNS {
+            return Err(Error::invalid(
+                0,
+                "XML namespace declarations disagree with model names",
+            ));
+        }
+        if let Some((prefix, _)) = a.name.qualified.split_once(':') {
+            let Some(bound) = lookup_ns(scopes, prefix) else {
+                return Err(Error::invalid(e.offset, "undeclared XML namespace prefix"));
+            };
+            if bound != a.name.namespace || bound.is_empty() {
+                return Err(Error::invalid(
+                    0,
+                    "XML namespace declarations disagree with model names",
+                ));
+            }
+        } else if !a.name.namespace.is_empty() {
+            return Err(Error::invalid(
+                0,
+                "XML namespace declarations disagree with model names",
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn serialize(doc: &CityGmlDocument, options: &ReadOptions) -> Result<Vec<u8>> {
     // Validate tree depth and string budgets before serializing.
     crate::validate::elements(doc, &options.limits)?;
+    if !doc.root.name.is(CORE, "CityModel") {
+        return Err(Error::UnknownFormat);
+    }
     let mut writer = Writer::new(Output {
         bytes: vec![],
         limit: options.limits.max_input_bytes,
+        exceeded: false,
     });
-    writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))?;
+    write_xml(
+        &mut writer,
+        Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)),
+    )?;
     enum Action<'a> {
         Element(&'a Element),
         Node(&'a Node),
-        End(&'a str),
+        End(&'a str, usize),
     }
+    let mut scopes: Vec<(&str, &str)> = Vec::new();
     let mut todo = vec![Action::Element(&doc.root)];
     while let Some(action) = todo.pop() {
         match action {
-            Action::End(name) => writer.write_event(Event::End(BytesEnd::new(name)))?,
+            Action::End(name, saved_scope_len) => {
+                scopes.truncate(saved_scope_len);
+                write_xml(&mut writer, Event::End(BytesEnd::new(name)))?;
+            }
             Action::Element(e) | Action::Node(Node::Element(e)) => {
+                let saved_scope_len = scopes.len();
+                validate_element_namespaces(e, &mut scopes)?;
                 let mut start = BytesStart::new(e.name.qualified.as_str());
                 for a in &e.attributes {
                     // Escape whitespace control characters as numeric references so XML attribute normalization preserves them.
@@ -319,38 +448,23 @@ pub(crate) fn serialize(doc: &CityGmlDocument, options: &ReadOptions) -> Result<
                         .replace('\r', "&#13;");
                     start.push_attribute((a.name.qualified.as_bytes(), escaped.as_bytes()));
                 }
-                writer.write_event(Event::Start(start))?;
-                todo.push(Action::End(&e.name.qualified));
+                write_xml(&mut writer, Event::Start(start))?;
+                todo.push(Action::End(&e.name.qualified, saved_scope_len));
                 for child in e.children.iter().rev() {
                     todo.push(Action::Node(child));
                 }
             }
             Action::Node(Node::Text(t)) => {
                 let escaped = quick_xml::escape::escape(t).replace('\r', "&#13;");
-                writer.write_event(Event::Text(BytesText::from_escaped(&escaped)))?;
+                write_xml(&mut writer, Event::Text(BytesText::from_escaped(&escaped)))?;
             }
             Action::Node(Node::Comment(t)) => {
-                writer.write_event(Event::Comment(BytesText::from_escaped(t)))?
+                if t.contains("--") || t.ends_with('-') {
+                    return Err(Error::invalid(0, "invalid XML comment"));
+                }
+                write_xml(&mut writer, Event::Comment(BytesText::from_escaped(t)))?;
             }
         }
     }
-    let bytes = writer.into_inner().bytes;
-    let parsed = parse(&bytes, options)?;
-    if !same_names(&doc.root, &parsed.root) {
-        return Err(Error::invalid(
-            0,
-            "XML namespace declarations disagree with model names",
-        ));
-    }
-    Ok(bytes)
-}
-
-fn same_names(a: &Element, b: &Element) -> bool {
-    a.name == b.name
-        && a.attributes == b.attributes
-        && a.text() == b.text()
-        && a.elements().count() == b.elements().count()
-        && a.elements()
-            .zip(b.elements())
-            .all(|(a, b)| same_names(a, b))
+    Ok(writer.into_inner().bytes)
 }

@@ -1,5 +1,7 @@
 //! Group-code output buffer and number/text formatting.
 
+use std::fmt::Write;
+
 use cadkit_core::Point3;
 
 /// ASCII DXF output buffer.
@@ -9,23 +11,31 @@ pub(crate) struct Out {
     pub utf8: bool,
 }
 
-/// Formats a float so that it parses back to exactly the same value.
-pub(crate) fn fmt_f64(v: f64) -> String {
+fn write_f64(buf: &mut String, v: f64) {
     if !v.is_finite() || v == 0.0 {
-        return "0.0".to_owned();
+        buf.push_str("0.0");
+        return;
     }
     let a = v.abs();
     if !(1e-5..1e16).contains(&a) {
-        return format!("{v:e}");
+        let _ = write!(buf, "{v:e}");
+        return;
     }
-    let s = format!("{v}");
-    if s.contains('.') { s } else { format!("{s}.0") }
+    let start = buf.len();
+    let _ = write!(buf, "{v}");
+    if !buf.get(start..).unwrap_or("").contains('.') {
+        buf.push_str(".0");
+    }
 }
 
-/// Escapes `s` for a group value: control characters become `^X`, and on pre-2007 files
-/// every non-ASCII character becomes `\U+XXXX` (UTF-16 code units).
-pub(crate) fn escape_text(s: &str, utf8: bool) -> String {
-    let mut out = String::with_capacity(s.len());
+/// Formats a float so that it parses back to exactly the same value.
+pub(crate) fn fmt_f64(v: f64) -> String {
+    let mut out = String::with_capacity(24);
+    write_f64(&mut out, v);
+    out
+}
+
+fn write_escaped_text(out: &mut String, s: &str, utf8: bool) {
     for c in s.chars() {
         let u = c as u32;
         if u < 0x20 {
@@ -42,12 +52,19 @@ pub(crate) fn escape_text(s: &str, utf8: bool) -> String {
         } else if u > 0x7E && !utf8 {
             let mut units = [0u16; 2];
             for unit in c.encode_utf16(&mut units) {
-                out.push_str(&format!("\\U+{unit:04X}"));
+                let _ = write!(out, "\\U+{unit:04X}");
             }
         } else {
             out.push(c);
         }
     }
+}
+
+/// Escapes `s` for a group value: control characters become `^X`, and on pre-2007 files
+/// every non-ASCII character becomes `\U+XXXX` (UTF-16 code units).
+pub(crate) fn escape_text(s: &str, utf8: bool) -> String {
+    let mut out = String::with_capacity(s.len());
+    write_escaped_text(&mut out, s, utf8);
     out
 }
 
@@ -60,24 +77,22 @@ impl Out {
     }
 
     fn code(&mut self, code: i32) {
-        self.buf.push_str(&format!("{code:>3}\r\n"));
+        let _ = write!(self.buf, "{code:>3}\r\n");
     }
 
     pub fn int(&mut self, code: i32, v: i64) {
-        self.code(code);
-        self.buf.push_str(&v.to_string());
-        self.buf.push_str("\r\n");
+        let _ = write!(self.buf, "{code:>3}\r\n{v}\r\n");
     }
 
     pub fn real(&mut self, code: i32, v: f64) {
         self.code(code);
-        self.buf.push_str(&fmt_f64(v));
+        write_f64(&mut self.buf, v);
         self.buf.push_str("\r\n");
     }
 
     pub fn text(&mut self, code: i32, s: &str) {
         self.code(code);
-        self.buf.push_str(&escape_text(s, self.utf8));
+        write_escaped_text(&mut self.buf, s, self.utf8);
         self.buf.push_str("\r\n");
     }
 
@@ -89,15 +104,17 @@ impl Out {
     }
 
     pub fn handle(&mut self, code: i32, h: u64) {
-        self.code(code);
-        self.buf.push_str(&format!("{h:X}\r\n"));
+        let _ = write!(self.buf, "{code:>3}\r\n{h:X}\r\n");
     }
 
     /// Hex-encoded binary chunk (codes 310-319, 1004); split into 127-byte chunks.
     pub fn bytes(&mut self, code: i32, data: &[u8]) {
         for chunk in data.chunks(127) {
-            let hex: String = chunk.iter().map(|b| format!("{b:02X}")).collect();
-            self.word(code, &hex);
+            self.code(code);
+            for b in chunk {
+                let _ = write!(self.buf, "{b:02X}");
+            }
+            self.buf.push_str("\r\n");
         }
     }
 

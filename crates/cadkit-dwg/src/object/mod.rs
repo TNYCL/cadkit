@@ -24,10 +24,9 @@ pub mod registry;
 pub mod tables;
 
 use cadkit_core::{Error, Result, Warning};
-use encoding_rs::Encoding;
 
 use crate::bits::BitReader;
-use crate::codepage;
+use crate::codepage::{self, TextEncoding};
 use crate::crc::crc8;
 use crate::native::{
     ClassTable, CmColor, CommonData, DwgObject, EedBlock, EedItem, EntityCommon, ObjectData,
@@ -40,7 +39,7 @@ pub struct DecodeContext {
     /// File version.
     pub version: DwgVersion,
     /// Encoding of 8-bit strings (pre-R2007).
-    pub encoding: &'static Encoding,
+    pub encoding: TextEncoding,
     /// Longest accepted string in bytes.
     pub max_string: u32,
     /// Most vertices per entity.
@@ -234,7 +233,7 @@ pub fn locate_string_stream(
 pub fn decode_eed(
     data: &[u8],
     version: DwgVersion,
-    encoding: &'static Encoding,
+    encoding: TextEncoding,
 ) -> Result<Vec<EedItem>> {
     let mut r = BitReader::new(data);
     let mut items = Vec::new();
@@ -681,7 +680,7 @@ pub fn parse_object(
 /// multi-byte values little-endian).
 #[cfg(test)]
 pub(crate) mod testbits {
-    use super::{DecodeContext, Streams};
+    use super::{DecodeContext, Streams, TextEncoding};
     use crate::bits::BitReader;
     use crate::version::DwgVersion;
 
@@ -762,7 +761,7 @@ pub(crate) mod testbits {
     pub(crate) fn ctx(version: DwgVersion, max_vertices: u32) -> DecodeContext {
         DecodeContext {
             version,
-            encoding: encoding_rs::WINDOWS_1252,
+            encoding: TextEncoding::Whatwg(encoding_rs::WINDOWS_1252),
             max_string: 1 << 16,
             max_vertices,
         }
@@ -821,7 +820,8 @@ mod tests {
         data.push(40);
         data.extend(1.5f64.to_le_bytes());
         data.extend([2, 1]); // '}'
-        let items = decode_eed(&data, DwgVersion::R2000, encoding_rs::WINDOWS_1252).unwrap();
+        let win1252 = TextEncoding::Whatwg(encoding_rs::WINDOWS_1252);
+        let items = decode_eed(&data, DwgVersion::R2000, win1252).unwrap();
         assert_eq!(
             items,
             vec![
@@ -832,7 +832,7 @@ mod tests {
                 EedItem::Control(true)
             ]
         );
-        assert!(decode_eed(&[99], DwgVersion::R2000, encoding_rs::WINDOWS_1252).is_err());
+        assert!(decode_eed(&[99], DwgVersion::R2000, win1252).is_err());
     }
 
     #[test]
@@ -840,7 +840,12 @@ mod tests {
         let mut data = vec![0];
         data.extend(2u16.to_le_bytes());
         data.extend([b'h', 0, b'i', 0]);
-        let items = decode_eed(&data, DwgVersion::R2010, encoding_rs::WINDOWS_1252).unwrap();
+        let items = decode_eed(
+            &data,
+            DwgVersion::R2010,
+            TextEncoding::Whatwg(encoding_rs::WINDOWS_1252),
+        )
+        .unwrap();
         assert_eq!(items, vec![EedItem::String("hi".into())]);
     }
 }

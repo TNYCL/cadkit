@@ -13,7 +13,7 @@ use crate::native::element::{
 };
 use crate::native::linkage::{self, LinkageData};
 use crate::native::v8::RawElement;
-use crate::text;
+use crate::text::{self, TextDecoder};
 
 const HEADER_LEN: usize = 0x68;
 const FLAG_3D: u32 = 0x0800;
@@ -34,6 +34,10 @@ fn has_display_header(t: u16) -> bool {
 /// Decodes a raw V8 element. Never fails: undecodable bodies become
 /// [`ElementData::Unknown`] with `problem` set.
 pub fn decode(raw: &RawElement, enc: &'static Encoding, limits: &Limits) -> Element {
+    decode_with(raw, TextDecoder::Whatwg(enc), limits)
+}
+
+pub(crate) fn decode_with(raw: &RawElement, enc: TextDecoder, limits: &Limits) -> Element {
     let b = &raw.bytes;
     let t = raw.type_code();
     let display = has_display_header(t) && b.len() >= HEADER_LEN;
@@ -180,7 +184,7 @@ struct Decoder<'a> {
     whole: &'a [u8],
     is_3d: bool,
     limits: &'a Limits,
-    enc: &'static Encoding,
+    enc: TextDecoder,
 }
 
 type R<T> = std::result::Result<T, String>;
@@ -468,7 +472,7 @@ impl Decoder<'_> {
 }
 
 /// Decodes a tag value of `value_type` (1 text, 3 integer, 4 double, other binary).
-pub(crate) fn tag_value(value_type: u16, raw: &[u8], enc: &'static Encoding) -> TagValue {
+pub(crate) fn tag_value(value_type: u16, raw: &[u8], enc: TextDecoder) -> TagValue {
     match value_type {
         1 => TagValue::Text(text::decode_dgn_string(raw, enc).0),
         3 => le::array::<4>(raw, 0).map_or_else(
@@ -482,7 +486,8 @@ pub(crate) fn tag_value(value_type: u16, raw: &[u8], enc: &'static Encoding) -> 
 
 /// Tag definitions (V7 type 66 and V8 type 39 share this record list, GDAL dgnlib
 /// `DGNParseTagSet`): name, `u16` id, prompt, `u16` type, 5 bytes, default value.
-pub(crate) fn parse_tag_defs(b: &[u8], enc: &'static Encoding) -> Vec<TagDef> {
+pub(crate) fn parse_tag_defs(b: &[u8], enc: impl Into<TextDecoder>) -> Vec<TagDef> {
+    let enc = enc.into();
     let mut out = Vec::new();
     let mut off = 0usize;
     while off < b.len() && out.len() < 4096 {

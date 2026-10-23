@@ -6,9 +6,10 @@
 
 use std::collections::BTreeMap;
 
+use cadkit_core::text::{OemCodepage, plain_text, plain_text_in};
 use cadkit_core::{
-    Attachment, Attribute, DimensionType, Entity, EntityKind, Error, HAlign, Point3, Props,
-    ReadOptions, Result, VAlign, Value as MValue, Vec3, Vertex, Warning,
+    Attachment, Attribute, AttributeDisplay, DimensionType, Entity, EntityKind, Error, HAlign,
+    Point3, Props, ReadOptions, Result, VAlign, Value as MValue, Vec3, Vertex, Warning,
 };
 
 use super::common::{
@@ -18,22 +19,57 @@ use super::hatch;
 use super::records::{Group, Record, parse_handle};
 use crate::native::Pair;
 use crate::ocs::{Ocs, normalize_normal};
-use cadkit_core::text::plain_text;
+
+/// Resolved text encoding of the drawing for decoding legacy 8-bit `%%nnn` codes in MTEXT.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DxfEncoding {
+    Whatwg(&'static encoding_rs::Encoding),
+    Oem(OemCodepage),
+}
+
+impl DxfEncoding {
+    fn decode_byte(self, byte: u8) -> Option<char> {
+        if byte < 0x80 {
+            return Some(char::from(byte));
+        }
+        match self {
+            Self::Oem(cp) => {
+                let ch = cp.decode_byte(byte);
+                (ch != '\u{FFFD}').then_some(ch)
+            }
+            Self::Whatwg(enc) => {
+                let buf = [byte];
+                let (text, had_errors) = enc.decode_without_bom_handling(&buf);
+                (!had_errors).then(|| text.chars().next()).flatten()
+            }
+        }
+    }
+}
 
 /// Reader-wide mutable context for entity decoding.
 pub(crate) struct Ctx<'o> {
     pub opts: &'o ReadOptions,
+    pub encoding: DxfEncoding,
     pub warnings: Vec<Warning>,
     /// Unknown entity type -> (index of its warning, count).
     pub unknown: BTreeMap<String, (usize, u64)>,
 }
 
 impl<'o> Ctx<'o> {
-    pub fn new(opts: &'o ReadOptions) -> Self {
+    pub fn new(opts: &'o ReadOptions, encoding: DxfEncoding) -> Self {
         Self {
             opts,
+            encoding,
             warnings: Vec::new(),
             unknown: BTreeMap::new(),
+        }
+    }
+
+    pub fn plain_mtext(&self, value: &str) -> String {
+        if self.encoding == DxfEncoding::Whatwg(encoding_rs::UTF_8) {
+            plain_text(value)
+        } else {
+            plain_text_in(value, Some(&|b| self.encoding.decode_byte(b)))
         }
     }
 
@@ -204,7 +240,7 @@ pub(crate) fn convert(ctx: &mut Ctx, rec: &Record, children: &[Record]) -> Resul
         "POLYLINE" => polyline(ctx, g, &ocs, children, &mut props)?,
         "SPLINE" => spline(ctx, g, &mut props)?,
         "TEXT" => text(g, &ocs),
-        "MTEXT" => mtext(g, &ocs),
+        "MTEXT" => mtext(ctx, g, &ocs),
         "INSERT" => EntityKind::Insert {
             block: g.string(2).unwrap_or_default(),
             position: ocs.to_world(g.point_or_zero(10)),
@@ -277,8 +313,11 @@ pub(crate) fn convert(ctx: &mut Ctx, rec: &Record, children: &[Record]) -> Resul
     entity.props = props;
 
     if let EntityKind::Insert { .. } = entity.kind {
+        let parent_layer = entity.layer.clone();
         for child in children.iter().filter(|c| c.name == "ATTRIB") {
-            entity.attributes.push(attribute(child));
+            entity
+                .attributes
+                .push(attribute(child, parent_layer.as_deref()));
         }
     }
 
@@ -316,16 +355,46 @@ fn embedded_or(rec: &Record, g: &Group, code: i32) -> String {
     }
 }
 
-fn attribute(rec: &Record) -> Attribute {
+fn attribute(rec: &Record, parent_layer: Option<&str>) -> Attribute {
     let g = Group(rec.body());
     let ocs = Ocs::new(normal_of(g));
     let flags = g.i64_or(70, 0);
+    let h = halign(g.i64_or(72, 0));
+    let v = valign(g.i64_or(74, 0));
+    let p1 = ocs.to_world(g.point_or_zero(10));
+    let p2 = g.point(11).map(|p| ocs.to_world(p));
+    let default_align = h == HAlign::Left && v == VAlign::Baseline;
+    let two_point = matches!(h, HAlign::Aligned | HAlign::Fit);
+    let position = if default_align || two_point {
+        p1
+    } else {
+        p2.unwrap_or(p1)
+    };
+    let parent = parent_layer.unwrap_or("0");
+    let attr_layer = g.string(8).unwrap_or_else(|| "0".to_owned());
+    let layer = (!attr_layer.is_empty() && attr_layer != parent).then_some(attr_layer);
+    let height = g.f64_or(40, 0.0);
+    let width_factor = g.f64_or(41, 1.0);
+    let rotation = g.f64_or(50, 0.0).to_radians();
+    let style = g
+        .string(7)
+        .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("standard"));
+    let display = (height > 0.0).then_some(AttributeDisplay {
+        height,
+        width: height * width_factor,
+        style,
+        halign: h,
+        valign: v,
+        rotation,
+    });
     Attribute {
         tag: g.string(2).unwrap_or_default(),
         value: MValue::Text(embedded_or(rec, &g, 1)),
         set: None,
-        position: Some(ocs.to_world(g.point_or_zero(10))),
+        position: Some(position),
         invisible: flags & 1 != 0,
+        layer,
+        display,
         ..Default::default()
     }
 }
@@ -557,7 +626,7 @@ fn text(g: Group, ocs: &Ocs) -> EntityKind {
     }
 }
 
-fn mtext(g: Group, ocs: &Ocs) -> EntityKind {
+fn mtext(ctx: &Ctx, g: Group, ocs: &Ocs) -> EntityKind {
     // Continuation chunks (3) precede the final chunk (1).
     let mut value = String::new();
     for v in g.all(3) {
@@ -576,7 +645,7 @@ fn mtext(g: Group, ocs: &Ocs) -> EntityKind {
         height: g.f64_or(40, 0.0),
         width: g.f64_or(41, 0.0),
         rotation,
-        plain: plain_text(&value),
+        plain: ctx.plain_mtext(&value),
         value,
         style: g.string(7),
         attachment: attachment(g.i64_or(71, 1)),

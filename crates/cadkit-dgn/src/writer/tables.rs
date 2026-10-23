@@ -102,7 +102,7 @@ impl Tables {
         };
         let mut level_names = HashSet::new();
         let read_record = |raw: &RawElement| {
-            decode_v8::decode(
+            decode_v8::decode_with(
                 raw,
                 crate::text::encoding_for(read.fallback_codepage.as_deref()),
                 &read.limits,
@@ -244,7 +244,7 @@ impl Tables {
         read: &cadkit_core::ReadOptions,
     ) {
         for raw in records {
-            let font = match decode_v8::decode(
+            let font = match decode_v8::decode_with(
                 raw,
                 crate::text::encoding_for(read.fallback_codepage.as_deref()),
                 &read.limits,

@@ -10,6 +10,7 @@
 mod text;
 
 use cadkit_core::bytes::ByteReader;
+use cadkit_core::text::OemCodepage;
 use cadkit_core::{Error, Result};
 use encoding_rs::Encoding;
 
@@ -152,6 +153,7 @@ pub struct Tokenizer<'a> {
     binary: bool,
     wide_codes: bool,
     encoding: &'static Encoding,
+    oem: Option<OemCodepage>,
     max_string: usize,
     decode_escapes: bool,
     failed: bool,
@@ -176,6 +178,7 @@ impl<'a> Tokenizer<'a> {
             binary,
             wide_codes,
             encoding: encoding_rs::WINDOWS_1252,
+            oem: None,
             max_string: 16 << 20,
             decode_escapes: true,
             failed: false,
@@ -185,6 +188,12 @@ impl<'a> Tokenizer<'a> {
     /// Sets the text encoding for string values (UTF-8 for AC1021+ files).
     pub fn set_encoding(&mut self, encoding: &'static Encoding) {
         self.encoding = encoding;
+        self.oem = None;
+    }
+
+    /// Sets a legacy single-byte DOS/OEM code page (`DOS437`..`DOS869`) for string values.
+    pub fn set_oem_codepage(&mut self, codepage: OemCodepage) {
+        self.oem = Some(codepage);
     }
 
     /// Sets the maximum accepted length of one string value in bytes.
@@ -226,6 +235,8 @@ impl<'a> Tokenizer<'a> {
     fn decode(&self, bytes: &[u8]) -> String {
         let text = if bytes.is_ascii() {
             String::from_utf8_lossy(bytes).into_owned()
+        } else if let Some(oem) = self.oem {
+            oem.decode(bytes)
         } else {
             self.encoding
                 .decode_without_bom_handling(bytes)
@@ -513,6 +524,13 @@ mod tests {
         assert_eq!(
             t.next_pair().unwrap().unwrap().value,
             Value::Str("STR\u{dc}".into())
+        );
+
+        let mut oem = Tokenizer::new(b"1\nKat\x8d\x9f\n");
+        oem.set_oem_codepage(OemCodepage::Cp857);
+        assert_eq!(
+            oem.next_pair().unwrap().unwrap().value,
+            Value::Str("Kat\u{131}\u{15f}".into())
         );
     }
 }
