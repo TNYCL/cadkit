@@ -4,10 +4,11 @@
             ┌──────────── bindings ────────────┐
  cadkit-cli   cadkit-py (PyO3)   cadkit-wasm   cadkit-capi (C ABI + C++ header)
       └───────────────┬──────────────┴──────────────┘
-                   cadkit            facade: detect / read / open / to_json / to_svg / to_dxf
-      ┌───────────┬───┴──────┬────────────┐
- cadkit-dgn   cadkit-dwg   cadkit-dxf      format crates: native decode → Document
-      └───────────┴────┬─────┴────────────┘
+                   cadkit            facade: detect / read / open / to_json / to_svg /
+                                             to_dxf / to_dgn / to_citygml
+      ┌───────────┬───┴──────┬────────────┬────────────┐
+ cadkit-dgn   cadkit-dwg   cadkit-dxf   cadkit-gml     format crates: native I/O ↔ Document
+      └───────────┴────┬─────┴────────────┴────────────┘
                   cadkit-core         model, ByteReader, Error, Limits, ReadOptions, SVG
 ```
 
@@ -22,8 +23,10 @@ pub fn read(bytes: &[u8], options: &ReadOptions) -> Result<Document>; // full re
 
 `cadkit-dxf` exposes `write(&Document, DxfVersion) -> Result<String>`.
 `cadkit-dgn` exposes `write_v8(&Document, seed, &WriteOptions)` and `repack_v8`.
-`cadkit-gml` exposes bounded native XML read/write and a neutral geometry bridge;
-the facade offers `to_dgn` and `to_citygml`. Seed/CRS/options are explicit inputs.
+`cadkit-gml` exposes bounded native XML read/write (`CityGmlDocument`), a neutral
+geometry bridge, and optional local structural TKGM preflight (`cadkit-gml::tkgm`);
+the facade offers `to_dgn` and `to_citygml` (plus `gml::write_document_with_report`).
+Seed, CRS, and options are explicit inputs.
 
 CityGML semantics live in `cadkit-gml::CityGmlDocument`. `EntityKind::Polygon`
 is the format-neutral exception: an exterior and interior rings are necessary to
@@ -32,15 +35,18 @@ semantics are not added to core. Native CityGML, rather than a reverse-engineere
 neutral projection, is the authoritative input for preservation roundtrips.
 
 See [GML contracts](gml/FORMAT_NOTES.md) and [DGN writer limits](dgn/FORMAT_NOTES.md).
-Company/TKGM rules and Cady integration are outside this implementation.
+`cadkit::gml::tkgm` checks documented public structural subsets on native CityGML
+without certifying institutional acceptance; proprietary domain rules and host-application
+workflows live outside this repository.
 
 Format crates are layered internally:
 
 1. **container** — file framing (DGN V8: OLE compound file + zlib pages; DWG: file header,
-   sections, page maps, LZ77 / Reed-Solomon; DGN V7: flat record stream).
-2. **records** — native, lossless structures (`DgnElement`, `DwgObject`), public under a
-   `native` module so advanced users can inspect everything.
-3. **mapping** — native → `cadkit_core::Document`.
+   sections, page maps, LZ77 / Reed-Solomon; DGN V7: flat record stream; CityGML 2.0:
+   bounded UTF-8 XML token stream).
+2. **records** — native, lossless structures (`DgnElement`, `DwgObject`, `CityGmlDocument`),
+   public so advanced users can inspect or preserve native structure.
+3. **mapping** — native ↔ `cadkit_core::Document`.
 
 ## Model rules (`crates/cadkit-core/src/model.rs`)
 
@@ -63,12 +69,16 @@ against `Limits` before allocation.
 
 ## Bindings
 
-- **cadkit-py**: `cadkit.read(bytes|path) -> Document` (Python classes or dicts via JSON),
-  `doc.to_svg()`, `doc.to_dxf()`, `doc.to_json()`; built with maturin, abi3 wheels.
-- **cadkit-wasm**: `read(Uint8Array) -> object`, `toSvg`, `toDxf`; plus a static
+- **cadkit-py**: `cadkit.read(bytes|path) -> Document`, `cadkit.read_citygml(bytes) -> CityGmlDocument`
+  (Python classes and dicts via JSON), `doc.to_svg()`, `doc.to_dxf()`, `doc.to_dgn()`,
+  `doc.to_citygml()` / `doc.to_citygml_with_report()`, `doc.to_json()`, and
+  `CityGmlDocument.preflight_tkgm()`; built with maturin, abi3 wheels.
+- **cadkit-wasm**: `read(Uint8Array) -> CadDocument`, `readCityGml(Uint8Array) -> CityGmlDocument`,
+  `toSvg`, `toDxf`, `toDgn`, `toCityGml` / `toCityGmlWithReport`, `preflightTkgm`; plus a static
   drag-and-drop viewer page in `crates/cadkit-wasm/www/`.
 - **cadkit-capi**: opaque `cadkit_document*` (live-handle registry: double free returns
   `CADKIT_INVALID_HANDLE`), `cadkit_status` return codes, thread-local last-error message,
-  `cadkit_document_info` struct + JSON/SVG/DXF getters, `cadkit_status_string`, `cadkit_version`;
-  hand-written `include/cadkit.h` (a test fails on missing exports) and a header-only C++17
-  RAII wrapper `include/cadkit.hpp`. No panic crosses the boundary.
+  `cadkit_document_info` struct + JSON/SVG/DXF/DGN/CityGML exporters, native CityGML JSON I/O
+  and TKGM preflight, `cadkit_status_string`, `cadkit_version`; hand-written `include/cadkit.h`
+  (a test fails on missing exports) and a header-only C++17 RAII wrapper `include/cadkit.hpp`.
+  No panic crosses the boundary.

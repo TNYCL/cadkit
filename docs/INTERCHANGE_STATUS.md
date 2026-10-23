@@ -1,10 +1,11 @@
 # DGN V8 and CityGML implementation status
 
-Local validation record: 2026-10-01. This change is confined to cadkit. No Cady
-integration or automatic TKGM building-model generation is included. An optional
-local TKGM preflight now requires an explicit architectural city-model tender or
-Digital Building registration profile. Both check documented subsets and neither
-establishes official acceptance. Tender-year conditions remain unchecked.
+Local validation record: 2026-10-01. Automatic TKGM building-model generation from
+generic CAD geometry is out of scope for cadkit; host applications supply domain
+semantics explicitly. An optional local TKGM preflight requires an explicit
+architectural city-model tender or Digital Building registration profile. Both
+check documented subsets and neither establishes official acceptance. Tender-year
+conditions remain unchecked.
 
 Latest coverage follow-up: all 112 supplied DGN files now rewrite/read back with
 the compared geometry, attributes and layers preserved. All 56 CityGML-to-DGN
@@ -12,7 +13,8 @@ projections also pass again. This includes unchanged seed-raster retention, not
 creation or modification of arbitrary raster attachments. See the coverage
 follow-up below and [direct library integration](CADKIT_INTEGRATION.md). 0.3.1
 corrects raster frame placement and adds new attachments cloned from a seed
-attachment; see the [raster follow-up](#raster-attachment-follow-up-031).
+attachment, with a built-in fallback template added in 0.3.3; see the
+[raster follow-up](#raster-attachment-follow-up-031).
 
 The subsequent generic GML follow-up adds closed-curve handling, exact circles,
 and explicit conversion diagnostics. All 112 DGN files produced XSD-valid generic
@@ -206,7 +208,6 @@ follow-up and its limitations still apply.
 `cadkit-dgn`'s `raster_structure` example can verify structural preservation in
 memory with `CADKIT_RASTER_CORPUS` and `CADKIT_RASTER_VERIFY=1`. It prints only
 aggregate structural results and never writes source or derived drawing files.
-No Cady source files, branches or commits were created or changed by this work.
 
 ## Raster attachment follow-up (0.3.1)
 
@@ -217,7 +218,7 @@ No Cady source files, branches or commits were created or changed by this work.
 | Unchanged seed attachments (write) | Retained byte for byte, as before. |
 | New attachments (write) | Supported. A complete attachment group of the seed (`seed_has_raster_template`) is cloned, else the built-in group (corpus-invariant bytes, bitonal display, 200 DPI); only documented fields are rewritten. Synthetic round trips (2D/3D, rotated, sheared, shared file, non-ASCII path) with both, one private seed with its own group and one private seed without any read back at the written placement with no raster warning. Display of the built-in group in MicroStation not yet confirmed. |
 | Relative attachment paths (write, 0.3.4) | A `path` naming a file beside the DGN stores no machine location: a bare name writes an empty full path, `.\name` is stored as given; absolute paths keep the `file://` URL. Synthetic round trips with a template and the built-in group. MicroStation resolution of these forms from the DGN's folder not yet confirmed. |
-| Edited seed attachments, new attachments without a seed template, mixing kept and new attachments, relative paths into other folders | `Unsupported`. |
+| Edited seed attachments, mixing kept and new attachments, new attachments inside groups, relative paths into other folders | `Unsupported`. |
 | Seeds with a second level table (0.3.2) | 261 of the 293 private 3D DGN files and 3 of the 274 plan files hold a second level table that repeats level codes. The writer keeps the first definition of each code, moves later ones to free codes and keeps one table header, so new elements read back on their own level (synthetic regression). |
 | MicroStation / CityMax opening of new attachments | **Untested.** The cloned records keep every undecoded template field; whether MicroStation re-derives anything from them is unknown. |
 
@@ -233,9 +234,11 @@ supports the documented entity subset, not every neutral CAD entity. Unknown see
 streams are retained and can contain opaque references. Unsupported geometry,
 unrepresentable colors/text and invalid options return errors instead of silently
 discarding those entities. Arbitrary CAD tables and application metadata are not
-fully mapped to DGN. V7 writing and edited raster attachments are unsupported; new
-attachments need a seed attachment to clone; vendor SDKs are excluded. Retaining an unchanged attachment does not embed its
-external image or prove that the referenced image is available to a recipient.
+fully mapped to DGN. V7 writing, edited seed raster attachments, and mixing
+preserved and new raster attachments are unsupported; new attachments clone a seed
+attachment group (`seed_has_raster_template`) or fall back to the built-in template
+when the seed has none; vendor SDKs are excluded. Writing or retaining an attachment
+does not embed its external image or prove that the referenced image is available to a recipient.
 
 CityGML native preservation supports the documented CityGML 2.0 profile. It does
 not imply arbitrary GML support or automatic building semantics from linework.

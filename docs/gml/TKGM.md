@@ -116,5 +116,5 @@ cadkit validate-gml model.gml --tkgm-profile digital-building-registration
 ```
 
 This command returns nonzero for geometry findings or local profile findings;
-success is not an official TKGM approval. Cady integration remains a separate
-application change, using these cadkit APIs directly.
+success is not an official TKGM approval. Host application integration remains a
+separate application layer, using these cadkit APIs directly.

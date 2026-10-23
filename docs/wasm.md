@@ -33,11 +33,11 @@ Data crosses the boundary as JSON text parsed with `JSON.parse` (via `js-sys`) r
 CLI and Python output, and one fewer dependency keeps the module small.
 
 ```js
-import init, { detect, read } from "./pkg/cadkit_wasm.js";   // web target
+import init, { detect, read, readCityGml } from "./pkg/cadkit_wasm.js";   // web target
 await init();
-// Node: const { detect, read } = require("./pkg-node/cadkit_wasm.js");
+// Node: const { detect, read, readCityGml } = require("./pkg-node/cadkit_wasm.js");
 
-detect(bytes)                       // "dwg" | "dxf" | "dgn_v7" | "dgn_v8" | undefined
+detect(bytes)                       // "dwg" | "dxf" | "dgn_v7" | "dgn_v8" | "city_gml" | undefined
 const doc = read(bytes, { keepRaw: false, codepage: "windows-1254",
                      maxInputBytes, maxDecompressedBytes, maxObjects, maxDepth });  // all optional
 
@@ -48,6 +48,9 @@ doc.warnings()  // [{code, message, offset}]
 doc.toJSON()    // full document as an object; toJsonString(pretty) gives text
 doc.toSvg({ model: 0, widthPx: 1600, strokePx: 1, background: "#fff", text: true, images: true, expandBlocks: true })
 doc.toDxf("r2018")   // "r12" | "r2000" | "r2004" | "r2007" | "r2010" | "r2013" | "r2018"
+doc.toDgn(seedBytes, JSON.stringify({ clear_seed_model: true }))   // Uint8Array
+doc.toCityGml("urn:ogc:def:crs:EPSG::4979", 1)                     // Uint8Array (UTF-8 XML)
+doc.toCityGmlWithReport("urn:ogc:def:crs:EPSG::4979", 1, false)    // JSON string: {xml, report}
 doc.free()
 ```
 
@@ -107,12 +110,18 @@ the renderer paints on a white background (`background: "#ffffff"`).
 ## DGN V8 and CityGML
 
 `CadDocument.fromJsonString(text)` constructs a neutral model. `toDgn(seed,
-optionsJson?)` returns `Uint8Array`; `toCityGml(srsName, lod)` returns UTF-8 bytes.
-DGN options use Rust `dgn::WriteOptions` JSON, including `clear_seed_model`.
+optionsJson?)` returns `Uint8Array`; `toCityGml(srsName, lod)` returns UTF-8 XML
+bytes as `Uint8Array`; `toCityGmlWithReport(srsName, lod, metadataOnly)` returns a
+JSON string `{"xml": ..., "report": ...}` (`metadataOnly: false` rejects
+unsupported geometry; `true` retains unsupported entities as JSON metadata). DGN
+options use Rust `dgn::WriteOptions` JSON, including `clear_seed_model`.
 
 `readCityGml(bytes, optionsJson?)` returns a native `CityGmlDocument` with
 `toGml(optionsJson?)`, `toJsonString()`, static `fromJsonString(text)`,
-`toDocument(lod?)` and `validate(optionsJson?)`. Call `free()` on both document
+`toDocument(lod?)`, `validate(optionsJson?)`, and `preflightTkgm(profile)`.
+`preflightTkgm(profile)` requires an explicit profile (`"city-model-tender"` or
+`"digital-building-registration"`) and returns a local structural preflight report
+object (`acceptance_verified` is always `false`). Call `free()` on both document
 classes when done. Native read options use Rust `ReadOptions`; native write and
 validation options use `gml::ValidationOptions`.
 

@@ -1,4 +1,4 @@
-//! CityGML 2.0 için kaynak sınırları uygulayan okuma ve yazma katmanı.
+//! Bounded CityGML 2.0 reader, validator, and writer.
 
 mod curves;
 mod export;
@@ -19,7 +19,7 @@ pub use mapping::{ImportOptions, to_document};
 pub use native::CityGmlDocument;
 pub use validate::{ValidationOptions, ValidationReport, validate};
 
-/// Kökün ad alanını ve yerel adını denetler; dosya uzantısına güvenmez.
+/// Checks the root element's namespace and local name without relying on file extensions.
 pub fn sniff(bytes: &[u8]) -> bool {
     use quick_xml::{NsReader, events::Event, name::ResolveResult};
     let mut reader = NsReader::from_reader(bytes.get(..bytes.len().min(65536)).unwrap_or(&[]));
@@ -36,7 +36,7 @@ pub fn sniff(bytes: &[u8]) -> bool {
     false
 }
 
-/// Kaynak XML yapısını korur; kimlikleri ve sayısal veriyi doğrular.
+/// Parses CityGML into its native XML tree while validating IDs, references, and numeric data.
 pub fn read_native(bytes: &[u8], options: &ReadOptions) -> Result<CityGmlDocument> {
     let doc = xml::parse(bytes, options)?;
     validate(
@@ -50,7 +50,7 @@ pub fn read_native(bytes: &[u8], options: &ReadOptions) -> Result<CityGmlDocumen
     Ok(doc)
 }
 
-/// Özgün model JSON'unu girdi sınırından sonra ayrıştırır ve yapısını denetler.
+/// Parses a serialized [`CityGmlDocument`] JSON string after checking the input byte limit and validates its structure.
 pub fn read_native_json(text: &str, options: &ReadOptions) -> Result<CityGmlDocument> {
     if text.len() as u64 > options.limits.max_input_bytes {
         return Err(cadkit_core::Error::LimitExceeded(
@@ -70,7 +70,7 @@ pub fn read_native_json(text: &str, options: &ReadOptions) -> Result<CityGmlDocu
     Ok(doc)
 }
 
-/// CityGML'i nötr modele okur; özgün ilişki ağı için `read_native` kullanılır.
+/// Reads CityGML into the format-neutral [`Document`] model; use [`read_native`] to preserve the full object graph.
 pub fn read(bytes: &[u8], options: &ReadOptions) -> Result<Document> {
     to_document(
         &read_native(bytes, options)?,
@@ -79,7 +79,7 @@ pub fn read(bytes: &[u8], options: &ReadOptions) -> Result<Document> {
     )
 }
 
-/// CityGML modelini UTF-8 XML olarak yazar; bilinmeyen XML öğeleri korunur.
+/// Writes a [`CityGmlDocument`] as UTF-8 XML while preserving unknown XML elements and extensions.
 pub fn write(doc: &CityGmlDocument, options: &ValidationOptions) -> Result<Vec<u8>> {
     validate(doc, options)?;
     xml::serialize(
@@ -91,7 +91,7 @@ pub fn write(doc: &CityGmlDocument, options: &ValidationOptions) -> Result<Vec<u
     )
 }
 
-/// Nötr model geometrisini açık CRS seçimiyle CityGML'e yazar.
+/// Writes neutral [`Document`] geometry to CityGML 2.0 with an explicit CRS and LoD.
 pub fn write_document(doc: &Document, options: &ExportOptions) -> Result<Vec<u8>> {
     write(
         &from_document(doc, options)?,

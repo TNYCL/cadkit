@@ -1,4 +1,4 @@
-"""Read DWG, DGN and DXF drawings into one format-neutral model."""
+"""Read DWG, DGN, DXF, and CityGML 2.0 drawings into one format-neutral model, and write DXF, DGN V8, CityGML 2.0, SVG, and JSON."""
 
 from cadkit._cadkit import (
     CadkitError,

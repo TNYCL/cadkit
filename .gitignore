@@ -22,3 +22,4 @@ node_modules/
 /crates/cadkit-wasm/pkg-node/
 /crates/cadkit-wasm/npm/
 /out/
+/.worktree/

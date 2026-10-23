@@ -1,17 +1,17 @@
-//! Kimlik, referans, sayısal veri ve geometri denetimleri.
+//! Structural, reference, numeric, and geometric validation for CityGML documents.
 
 use crate::native::{CityGmlDocument, Element, GENERICS, GML, Node, Polygon, XLINK};
 use cadkit_core::{Error, Limits, Point3, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
-/// Yapısal ve geometrik denetim seçenekleri.
+/// Structural and geometric validation options.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ValidationOptions {
-    /// Kaynak tüketim sınırları.
+    /// Resource consumption limits.
     pub limits: Limits,
-    /// Poligon kesişimleri ve düzlemsellik denetlensin.
+    /// Validate polygon planarity, ring intersections, and solid shell closure.
     pub geometry: bool,
     /// Boundary intersection tolerance, in coordinate units.
     pub tolerance: f64,
@@ -19,7 +19,7 @@ pub struct ValidationOptions {
     /// Defaults to 0.01 (1 cm in a metric projected CRS), allowing rounded source
     /// coordinates. Geographic coordinates require an explicit, appropriate tolerance.
     pub planarity_tolerance: f64,
-    /// Tüm belge için kenar karşılaştırma bütçesi.
+    /// Total edge-comparison work budget across the document.
     pub max_geometry_work: u64,
 }
 impl Default for ValidationOptions {
@@ -34,22 +34,22 @@ impl Default for ValidationOptions {
     }
 }
 
-/// Yapısal sayaçlar; müşteri değerlerini içermez.
+/// Structural element and geometry counts (never contains source identifiers or coordinate values).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ValidationReport {
-    /// XML öğe sayısı.
+    /// Total XML elements visited.
     pub elements: u64,
-    /// Benzersiz GML kimlikleri.
+    /// Unique `gml:id` declarations.
     pub ids: u64,
-    /// Çözümlenmiş yerel referanslar.
+    /// Resolved document-local `xlink:href` references.
     pub references: u64,
-    /// Poligonlar.
+    /// `gml:Polygon` elements.
     pub polygons: u64,
-    /// İç halkalar.
+    /// Interior polygon rings.
     pub interiors: u64,
-    /// Koordinat konumları.
+    /// Coordinate positions across `gml:pos` and `gml:posList`.
     pub positions: u64,
-    /// Tipli genel öznitelikler.
+    /// Typed CityGML generic attributes.
     pub attributes: u64,
 }
 
@@ -128,7 +128,7 @@ pub(crate) fn dimension(e: &Element, inherited: usize) -> Result<usize> {
     }
 }
 
-/// `pos` veya `posList` içeriğini, bildirilen eksen sırasını değiştirmeden okur.
+/// Parses `gml:pos` or `gml:posList` coordinates without altering the declared axis order.
 pub(crate) fn positions(e: &Element, inherited: usize, limits: &Limits) -> Result<Vec<Point3>> {
     let dim = dimension(e, inherited)?;
     let text = e.text();
@@ -174,7 +174,7 @@ pub(crate) fn positions(e: &Element, inherited: usize, limits: &Limits) -> Resul
         .collect())
 }
 
-/// Bir GML poligonunu tipli dış/iç halkalara dönüştürür.
+/// Decodes a `gml:Polygon` element into typed exterior and interior rings.
 pub fn polygon(e: &Element, inherited: usize, limits: &Limits) -> Result<Polygon> {
     let dim = dimension(e, inherited)?;
     let mut exterior = None;
@@ -227,8 +227,8 @@ pub fn polygon(e: &Element, inherited: usize, limits: &Limits) -> Result<Polygon
     })
 }
 
-/// Şema doğrulamasından bağımsız yapısal ve geometrik kontrolleri çalıştırır.
-/// XSD doğrulaması ve katılar arası hacim kesişimi bu işlevin dışındadır.
+/// Runs schema-independent structural and geometric checks on `doc`.
+/// Full XSD validation and solid-to-solid volumetric intersection checks are outside this function's scope.
 pub fn validate(doc: &CityGmlDocument, options: &ValidationOptions) -> Result<ValidationReport> {
     if !doc.root.name.is(crate::native::CORE, "CityModel") {
         return Err(Error::UnknownFormat);
@@ -313,7 +313,7 @@ pub fn validate(doc: &CityGmlDocument, options: &ValidationOptions) -> Result<Va
             return Err(Error::invalid(offset, "unresolved internal GML reference"));
         }
     }
-    // Geometrinin başvurular üzerinden kendisini genişletmesi sınırlı kalmalıdır.
+    // Ensure geometry reference graphs are acyclic and bounded in depth.
     let mut graph: HashMap<&str, Vec<&str>> = HashMap::new();
     let geometry = |e: &Element| e.name.namespace == GML;
     for (&id, &e) in &ids {

@@ -33,7 +33,7 @@ CAD geometry.
 | MultiSurface, CompositeSurface, Solid, CompositeSolid | yes, including ownership | constituent polygons |
 | Shared geometry by local xlink | target and identity retained | expanded, within shared budgets |
 | Semantic group/parent xlink | retained | not expanded into geometry |
-| Curves, other GML patches | preserved as XML; no full geometric validation | explicitly unknown for unsupported geometry families |
+| Curves, other GML patches | preserved as XML; no full geometric validation | single `gml:Circle` segment → `Circle`; other curves/patches unknown |
 
 Local references must resolve. Geometry reference cycles are rejected; semantic
 parent/group cycles are not recursively expanded. Expanded work and vertices
@@ -46,14 +46,22 @@ with `ImportOptions`; otherwise all LoDs appear. It cannot reconstruct original
 semantic relationships after arbitrary CAD edits. Use the native document for
 preserving CityGML.
 
-`from_document` / `write_document` require an explicit CRS identifier and LoD.
-They produce GenericCityObject instances, not inferred buildings or rooms. Points,
-straight lines/polylines, closed polygons, faces, meshes and groups are supported.
-Bulges, widths, arcs, splines, text and other unmapped kinds fail explicitly.
+`from_document` / `write_document` (and `from_document_with_report` /
+`write_document_with_report`) require an explicit CRS identifier and LoD.
+They produce `GenericCityObject` instances, not inferred buildings or rooms. Points,
+straight lines/polylines (including closed curves), exact circles (`gml:Curve` with
+a three-point `gml:Circle` segment), closed polygons, faces, meshes, and groups are
+supported. Bulges, widths, arcs, splines, text, images, and other unmapped kinds fail
+explicitly under `UnsupportedGeometry::Reject` (the default), or can be retained
+explicitly as `cadkit.entity` JSON metadata with `cadkit.geometry_status` and an
+`ExportReport` under `UnsupportedGeometry::MetadataOnly`.
 `cadkit.entity` generic metadata retains the source entity JSON, including styles
 and nested metadata, as an annotation; it is not authoritative geometry on import.
-Document-wide CAD tables/layout semantics are not CityGML semantics. There are
-no TKGM/CityMax codes or generation rules in this crate.
+Document-wide CAD tables and layout semantics are not CityGML semantics. Generic
+CAD export never infers TKGM/CityMax semantics; separately, `cadkit::gml::tkgm::preflight`
+provides optional, read-only local structural/field preflight checks on native
+`CityGmlDocument` models for explicit public TKGM profiles (`CityModelTender` and
+`DigitalBuildingRegistration`) without certifying official acceptance.
 
 ## Validation boundary
 

@@ -1,4 +1,4 @@
-//! Seed tablolarının korunması ve yeni level/etiket tanımlarının oluşturulması.
+//! Preserves seed dictionary tables and creates new level and tag set definitions.
 
 use super::encode::*;
 use crate::native::{

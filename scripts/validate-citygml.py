@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CityGML 2.0 dosyalarını önbellekteki resmî OGC şemalarıyla denetler."""
+"""Validates CityGML 2.0 files against cached official OGC XML schemas."""
 
 import argparse
 import hashlib
@@ -57,7 +57,7 @@ def main():
         for variant in {url, url.replace("https://", "http://", 1), url.replace("http://", "https://", 1)}:
             ET.SubElement(catalog, "uri", name=variant, uri=path.as_uri())
             ET.SubElement(catalog, "system", systemId=variant, uri=path.as_uri())
-    # Şemaların namespace bildirimleri korunur; dosyaları yeniden serileştirmek yerine katalog kullanılır.
+    # Use an XML catalog instead of re-serializing schemas so namespace declarations stay intact.
     for url, (path, _, _) in seen.items():
         schema = ET.parse(path).getroot()
         for item in schema:

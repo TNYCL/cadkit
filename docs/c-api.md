@@ -61,8 +61,9 @@ With MinGW, link the DLL directly.
 
 | Object | Created by | Released by |
 |---|---|---|
-| `cadkit_document*` | `cadkit_read_file`, `cadkit_read_bytes` | `cadkit_document_free` (once; `NULL` is a no-op) |
-| `char*` | `cadkit_document_to_json`, `_to_svg`, `_to_dxf`, `_info_json` | `cadkit_string_free` (once; `NULL` is a no-op) |
+| `cadkit_document*` | `cadkit_read_file`, `cadkit_read_bytes`, `cadkit_document_from_json` | `cadkit_document_free` (once; `NULL` is a no-op) |
+| `char*` | `cadkit_document_to_json`, `_to_svg`, `_to_dxf`, `_to_citygml`, `_to_citygml_with_report`, `_info_json`, `cadkit_citygml_read_json`, `_write_json`, `_preflight_tkgm` | `cadkit_string_free` (once; `NULL` is a no-op) |
+| `uint8_t*` | `cadkit_document_to_dgn` | `cadkit_bytes_free` (`NULL` or repeated free is a no-op; never pass to `cadkit_string_free`) |
 | `const char*` | `cadkit_version`, `cadkit_status_string`, `cadkit_last_error_message` | never freed |
 
 Freeing a document twice, or using one after it was freed, is detected through a registry of
@@ -77,15 +78,23 @@ the freed address is reused by a later document the stale pointer cannot be told
 | `cadkit_status_string(status)` | Static text for a status code |
 | `cadkit_last_error_message` | Thread-local message of the last failure |
 | `cadkit_options_init`, `cadkit_svg_options_init` | Fill option structs with defaults |
-| `cadkit_detect(data, len)` | Format from the header only |
+| `cadkit_detect(data, len)` | Format from the header only (`CADKIT_FORMAT_DWG`, `_DXF`, `_DGN_V7`, `_DGN_V8`, `_CITY_GML`, or `_UNKNOWN`; `"city_gml"` in JSON) |
 | `cadkit_read_file(path, options, &doc)` | Read a drawing from a UTF-8 path |
 | `cadkit_read_bytes(data, len, options, &doc)` | Read a drawing from memory |
+| `cadkit_document_from_json(json, &doc)` | Construct a format-neutral document from JSON |
 | `cadkit_document_free(doc)` | Release a document |
 | `cadkit_document_info(doc, &info)` | Format and counts as a plain struct |
 | `cadkit_document_info_json(doc, &s)` | Summary as JSON (adds version, application, per-kind counts) |
 | `cadkit_document_to_json(doc, pretty, &s)` | Full model as JSON |
 | `cadkit_document_to_svg(doc, options, &s)` | One model rendered as SVG |
 | `cadkit_document_to_dxf(doc, version, &s)` | ASCII DXF of the given version |
+| `cadkit_document_to_dgn(doc, seed, seed_len, options_json, &bytes, &len)` | Seed-based DGN V8 binary output |
+| `cadkit_bytes_free(bytes)` | Release a binary buffer returned by `cadkit_document_to_dgn` |
+| `cadkit_document_to_citygml(doc, srs_name, lod, &s)` | Generic CityGML 2.0 XML with an explicit CRS and LoD |
+| `cadkit_document_to_citygml_with_report(doc, srs_name, lod, metadata_only, &s)` | Generic CityGML 2.0 XML + conversion `ExportReport` as JSON (`{"xml", "report"}`) |
+| `cadkit_citygml_read_json(data, len, options, &s)` | Read native CityGML 2.0 bytes into editable object-graph JSON |
+| `cadkit_citygml_write_json(json, validation_options_json, &s)` | Serialize native CityGML JSON to UTF-8 CityGML 2.0 XML |
+| `cadkit_citygml_preflight_tkgm(json, profile, &s)` | Local structural TKGM preflight report JSON for native CityGML JSON |
 | `cadkit_string_free(s)` | Release a returned string |
 
 ### Status codes
@@ -189,11 +198,19 @@ values or struct layouts. New entry points are declared in `cadkit.h`:
   never pass the binary buffer to `cadkit_string_free`.
 - `cadkit_document_to_citygml` accepts an explicit CRS and LoD, returning a UTF-8
   string to release with `cadkit_string_free`.
+- `cadkit_document_to_citygml_with_report` returns JSON `{"xml": ..., "report": ...}`
+  (release with `cadkit_string_free`). `metadata_only` must be `0` (reject
+  unsupported geometry) or `1` (retain unsupported entities as JSON metadata).
 - `cadkit_citygml_read_json` / `cadkit_citygml_write_json` expose the native
   CityGML tree without losing semantic relationships through neutral geometry.
   Write options follow Rust `gml::ValidationOptions` JSON.
+- `cadkit_citygml_preflight_tkgm` runs local structural/field preflight on native
+  CityGML JSON for an explicit `profile` (`"city-model-tender"` or
+  `"digital-building-registration"`); `acceptance_verified` in the returned JSON
+  report is always `false`.
 
 Null/error paths reset outputs. Owned binary buffers are tracked to make repeated
 free calls harmless. As with existing document handles, caller-controlled input
 pointers must remain valid for the call and live documents cannot be freed
-concurrently. C++ adds RAII `Document::from_json`, `to_dgn` and `to_citygml`.
+concurrently. C++ adds RAII `Document::from_json`, `to_dgn`, `to_citygml`, and
+`to_citygml_with_report`.

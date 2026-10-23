@@ -1,4 +1,4 @@
-"""CityGML yapısını koruma ve DGN bayt çıktısı için bütünleştirme testleri."""
+"""Integration tests for native CityGML preservation, generic export, and DGN V8 byte output."""
 import json
 from pathlib import Path
 import pytest

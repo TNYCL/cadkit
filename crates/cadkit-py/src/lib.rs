@@ -88,7 +88,7 @@ struct Document {
 
 #[pymethods]
 impl Document {
-    /// Yeni nötr modeli JSON sözleşmesinden oluşturur.
+    /// Constructs a format-neutral `Document` from its JSON contract.
     #[staticmethod]
     fn from_json(text: &str) -> PyResult<Self> {
         let doc = cadkit::export::document_from_json(text, &cadkit::Limits::default())
@@ -98,7 +98,7 @@ impl Document {
         })
     }
 
-    /// Seed baytlarıyla V8 çıktısı üretir; seçenekler Rust WriteOptions JSON sözleşmesidir.
+    /// Writes DGN V8 bytes using `seed`; `options_json` follows the Rust `dgn::WriteOptions` JSON contract.
     #[pyo3(signature=(seed, options_json=None))]
     fn to_dgn<'py>(
         &self,
@@ -117,7 +117,7 @@ impl Document {
         Ok(PyBytes::new(py, &bytes))
     }
 
-    /// Koordinatları değiştirmeden genel CityGML geometrisi üretir.
+    /// Exports generic CityGML 2.0 geometry with an explicit CRS and LoD without transforming coordinates.
     #[pyo3(signature=(srs_name, lod=1))]
     fn to_citygml<'py>(
         &self,
@@ -168,7 +168,7 @@ impl Document {
         Ok((PyBytes::new(py, &bytes), to_py(py, &report)?))
     }
 
-    /// File format family: `"dwg"`, `"dxf"`, `"dgn_v7"`, `"dgn_v8"` or `"unknown"`.
+    /// File format family: `"dwg"`, `"dxf"`, `"dgn_v7"`, `"dgn_v8"`, `"city_gml"`, or `"unknown"`.
     #[getter]
     fn format(&self, py: Python<'_>) -> PyResult<String> {
         to_py(py, &self.inner.source.format)?.extract()
@@ -317,7 +317,7 @@ impl Document {
     }
 }
 
-/// Özgün CityGML nesne ağını ve XML uzantılarını koruyan belge.
+/// Native CityGML 2.0 document preserving the object graph, IDs, references, and XML extensions.
 #[pyclass(frozen, module = "cadkit")]
 struct CityGmlDocument {
     inner: Arc<cadkit::gml::CityGmlDocument>,
@@ -338,7 +338,7 @@ impl CityGmlDocument {
             .map_err(map_err)?;
         to_py(py, &report)
     }
-    /// Yeni CityGML modelini JSON sözleşmesinden oluşturur ve yapısını denetler.
+    /// Constructs and structurally validates a native `CityGmlDocument` from its JSON contract.
     #[staticmethod]
     fn from_json(text: &str) -> PyResult<Self> {
         let doc = cadkit::gml::read_native_json(text, &cadkit::ReadOptions::default())
@@ -347,11 +347,11 @@ impl CityGmlDocument {
             inner: Arc::new(doc),
         })
     }
-    /// Özgün modeli düzenlenebilir JSON metnine dönüştürür.
+    /// Serializes the native CityGML model to an editable JSON string.
     fn to_json(&self) -> PyResult<String> {
         serde_json::to_string(&*self.inner).map_err(|e| PyValueError::new_err(e.to_string()))
     }
-    /// Yapısal/geometrik kontrolleri çalıştırıp sayaçları döndürür.
+    /// Runs structural and geometric validation checks and returns summary counters (`ValidationOptions` JSON).
     #[pyo3(signature=(options_json=None))]
     fn validate<'py>(
         &self,
@@ -368,7 +368,7 @@ impl CityGmlDocument {
             .map_err(map_err)?;
         to_py(py, &report)
     }
-    /// UTF-8 CityGML baytlarını üretir; seçenekler ValidationOptions JSON sözleşmesidir.
+    /// Serializes UTF-8 CityGML 2.0 XML bytes; `options_json` follows the Rust `gml::ValidationOptions` JSON contract.
     #[pyo3(signature=(options_json=None))]
     fn to_gml<'py>(
         &self,
@@ -385,7 +385,7 @@ impl CityGmlDocument {
             .map_err(map_err)?;
         Ok(PyBytes::new(py, &bytes))
     }
-    /// Seçilen LoD geometrisini nötr modele aktarır.
+    /// Projects native CityGML geometry (optionally filtered by `lod`) into a format-neutral `Document`.
     #[pyo3(signature=(lod=None))]
     fn to_document(&self, py: Python<'_>, lod: Option<u8>) -> PyResult<Document> {
         let doc = py
@@ -403,7 +403,7 @@ impl CityGmlDocument {
     }
 }
 
-/// CityGML baytlarını nötr modele indirgemeden okur; seçenekler ReadOptions JSON sözleşmesidir.
+/// Reads CityGML 2.0 bytes into a native `CityGmlDocument` without reducing to the neutral model (`ReadOptions` JSON).
 #[pyfunction]
 #[pyo3(signature=(data, options_json=None))]
 fn read_citygml(
@@ -481,7 +481,7 @@ fn read(
         .map_err(map_err)
 }
 
-/// Detects the format of `data` from its header; returns `None` when unrecognized.
+/// Detects the format of `data` from its header (`"dwg"`, `"dxf"`, `"dgn_v7"`, `"dgn_v8"`, or `"city_gml"`), or `None` when unrecognized.
 #[pyfunction]
 fn detect(py: Python<'_>, data: &[u8]) -> PyResult<Option<String>> {
     match py.detach(|| cadkit::detect(data)) {

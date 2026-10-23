@@ -172,6 +172,13 @@ def cmd_bump(args: argparse.Namespace) -> None:
     log, n = re.subn(r"^## \[Unreleased\]\n", f"## [Unreleased]\n\n## [{new}] - {today}\n", log, count=1, flags=re.M)
     if n != 1:
         fail("CHANGELOG.md has no '## [Unreleased]' heading")
+    log = re.sub(
+        r"^\[Unreleased\]: (https://[^\s]+/compare/)v[^.\s]+\.[^.\s]+\.[^\s.]+\.\.\.HEAD$",
+        rf"[Unreleased]: \g<1>v{new}...HEAD\n[{new}]: \g<1>v{old}...v{new}",
+        log,
+        count=1,
+        flags=re.M,
+    )
     write_text("CHANGELOG.md", log, crlf)
 
     subprocess.run(LOCK + ["cargo", "update", "--workspace"], cwd=ROOT, check=True)

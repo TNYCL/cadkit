@@ -52,18 +52,24 @@ except cadkit.UnknownFormatError:
 | Item | Description |
 | --- | --- |
 | `read(source, *, keep_raw=False, codepage=None, max_input_bytes=None, max_decompressed_bytes=None, max_objects=None, max_depth=None) -> Document` | `source` is a path (`str`/`PathLike`) or `bytes`/`bytearray`/`memoryview`. `keep_raw` keeps original record bytes in entities (`raw`). `codepage` is a WHATWG label (e.g. `"windows-1254"`) used for 8-bit text when the file declares none. The `max_*` keywords override the resource limits (`None` = default); exceeding one raises `LimitExceededError`. |
-| `detect(data: bytes) -> str \| None` | `"dwg"`, `"dxf"`, `"dgn_v7"`, `"dgn_v8"` or `None`. |
-| `Document.format / version / application / codepage` | Source info (`format` as above, `version` e.g. `"AC1032"`). |
+| `detect(data: bytes) -> str \| None` | `"dwg"`, `"dxf"`, `"dgn_v7"`, `"dgn_v8"`, `"city_gml"`, or `None`. |
+| `read_citygml(data: bytes, options_json: str \| None = None) -> CityGmlDocument` | Reads CityGML 2.0 bytes into a native `CityGmlDocument` preserving IDs, references, and XML extensions (`ReadOptions` JSON). |
+| `Document.from_json(text: str) -> Document` | Constructs a format-neutral `Document` from its JSON contract. |
+| `Document.format / version / application / codepage` | Source info (`format` as above or `"unknown"`, `version` e.g. `"AC1032"`). |
 | `Document.units` | `{"unit": "meter", "meters_per_unit": 1.0}`. |
 | `Document.layers / blocks / models / warnings` | Lists of dicts, shaped like the Rust model serialized with serde. |
 | `Document.to_dict()` | Whole document as nested dicts. |
 | `Document.to_json(pretty=False)` | Whole document as JSON text. |
 | `Document.to_svg(model=0, width=1600, stroke=1.0, background="#ffffff", text=True, expand_blocks=True, images=True)` | SVG text; `background=None` is transparent. `width` and `stroke` must be finite and > 0 (`ValueError`). Raises `IndexError` for a bad model index. |
 | `Document.to_dxf(version="r2018")` | ASCII DXF text; versions `r12`, `r2000`, `r2004`, `r2007`, `r2010`, `r2013`, `r2018`. |
+| `Document.to_dgn(seed: bytes, options_json: str \| None = None) -> bytes` | Writes seed-based DGN V8 bytes (`dgn::WriteOptions` JSON). |
+| `Document.to_citygml(srs_name: str, lod: int = 1) -> bytes` | Writes generic CityGML 2.0 XML bytes with an explicit CRS and LoD. |
+| `Document.to_citygml_with_report(srs_name: str, lod: int = 1, metadata_only: bool = False) -> tuple[bytes, dict]` | Writes generic CityGML 2.0 XML bytes and returns `(xml_bytes, report_dict)`; `metadata_only=True` retains unsupported entities as JSON metadata instead of raising `UnsupportedError`. |
 | `Document.entities(model=0)` | Iterator of entity dicts (`{"id", "layer", "color", "kind": {"type": ...}, "props", ...}`). |
+| `CityGmlDocument` | Native CityGML 2.0 model with `from_json(text)`, `to_json()`, `to_gml(options_json=None)`, `to_document(lod=None)`, `validate(options_json=None)`, and `preflight_tkgm(profile)`. |
 
 Conventions follow the model: coordinates in drawing units, angles in radians (see
-`docs/ARCHITECTURE.md`). Format-specific data is under `props` keys prefixed `dgn.`, `dwg.`, `dxf.`.
+`docs/ARCHITECTURE.md`). Format-specific data is under `props` keys prefixed `dgn.`, `dwg.`, `dxf.`, `gml.`.
 
 ### Exceptions
 
@@ -101,13 +107,20 @@ Corpus tests skip when `corpus/public` is absent.
 
 `Document.from_json(text)` constructs a neutral document. `doc.to_dgn(seed_bytes,
 options_json=None)` returns bytes; options follow Rust `dgn::WriteOptions`.
-`doc.to_citygml(srs_name, lod=1)` returns generic CityGML geometry as UTF-8 bytes.
+`doc.to_citygml(srs_name, lod=1)` returns generic CityGML geometry as UTF-8 bytes,
+and `doc.to_citygml_with_report(srs_name, lod=1, metadata_only=False)` returns
+`(xml_bytes, report_dict)` with conversion diagnostics (`metadata_only=True` opts
+in to retaining unsupported entities as JSON metadata).
 
 For semantic preservation use `read_citygml(bytes, options_json=None)` instead of
 the neutral reader. Its `CityGmlDocument` has `to_gml(options_json=None)`,
-`to_json()`, `from_json(text)`, `validate(options_json=None)` and
-`to_document(lod=None)`. Native read options use Rust `ReadOptions`; native write
-and validation options use `gml::ValidationOptions`. Defaults validate geometry;
-`{"geometry": false}` explicitly permits preserving existing geometry defects.
-No schema or CRS is downloaded. See [GML limits](gml/FORMAT_NOTES.md) and
-[DGN limits](dgn/FORMAT_NOTES.md) before choosing an export path.
+`to_json()`, `from_json(text)`, `validate(options_json=None)`,
+`preflight_tkgm(profile)`, and `to_document(lod=None)`. `preflight_tkgm(profile)`
+requires an explicit profile (`"city-model-tender"` or
+`"digital-building-registration"`) and runs local structural/field checks only
+(`report["acceptance_verified"]` is always `False`). Native read options use Rust
+`ReadOptions`; native write and validation options use `gml::ValidationOptions`.
+Defaults validate geometry; `{"geometry": false}` explicitly permits preserving
+existing geometry defects. No schema or CRS is downloaded. See
+[GML limits](gml/FORMAT_NOTES.md) and [DGN limits](dgn/FORMAT_NOTES.md) before
+choosing an export path.

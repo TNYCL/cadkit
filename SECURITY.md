@@ -2,14 +2,15 @@
 
 ## Stance on untrusted input
 
-cadkit parses binary file formats that are routinely received from third parties, so every
+cadkit parses binary and XML file formats (`DWG`, `DGN V7/V8`, `DXF`, and `CityGML 2.0`) that are routinely received from third parties, so every
 input is treated as hostile:
 
 - Library code must not panic on any input; the workspace lints deny `unwrap`, `expect`,
   `panic!` and unchecked slice indexing.
 - Every size, count and offset read from a file is validated against `ReadOptions::limits`
   (input size, decompressed size, object count, nesting depth, string length, vertex count)
-  before memory is allocated or a loop runs. Recursion is bounded by `max_depth`.
+  before memory is allocated or a loop runs. Recursion is bounded by `max_depth`, and XML
+  parsing disables external entity (XXE) and network resolution.
 - Readers fail only when no useful document can be built; recoverable damage becomes a
   `Warning` on the document.
 - Pure Rust throughout the readers. `unsafe` exists only in the FFI crates (`cadkit-py`,

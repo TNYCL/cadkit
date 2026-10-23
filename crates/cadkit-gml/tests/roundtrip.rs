@@ -1,4 +1,4 @@
-//! Sentetik CityGML, kaynak sınırları ve isteğe bağlı özel örnek kontrolleri.
+//! Synthetic CityGML round-trip, resource-limit, and optional private sample checks.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use cadkit_core::{Document, Entity, EntityKind, Error, Model, Point3, ReadOptions, Value};
 use cadkit_gml::{native::*, *};
@@ -211,7 +211,7 @@ fn private_roundtrip_when_supplied() {
     let bytes = std::fs::read(path).unwrap();
     let options = ReadOptions::default();
     let original = read_native(&bytes, &options).unwrap();
-    // Kaynak geometri bozuk olsa da XML ilişkilerinin kayıpsız korunması ayrı sınanır.
+    // Test lossless preservation of XML structure and relationships separately from source geometry validity.
     let validation = ValidationOptions {
         geometry: false,
         ..Default::default()
@@ -220,7 +220,7 @@ fn private_roundtrip_when_supplied() {
     let before = validate(&original, &validation).unwrap();
     let rewritten = write(&original, &validation).unwrap();
     let parsed = read_native(&rewritten, &options).unwrap();
-    // Bayt konumları değişebilir; hiçbir özgün değer veya ilişki değişmemelidir.
+    // Byte offsets may change, while all element names, attributes, values, and relationships must match.
     assert!(same_content(&original.root, &parsed.root));
     validate_xsd_if_cached(&bytes);
     validate_xsd_if_cached(&rewritten);
@@ -400,7 +400,7 @@ fn validate_xsd_if_cached(bytes: &[u8]) {
         .unwrap();
     child.stdin.take().unwrap().write_all(bytes).unwrap();
     let output = child.wait_with_output().unwrap();
-    // XSD hata metni müşteri değerlerini içerebilir; yalnız sonucu raporlarız.
+    // Report only the exit status so XSD error messages cannot leak private values.
     assert!(
         output.status.success(),
         "official CityGML XSD validation failed"

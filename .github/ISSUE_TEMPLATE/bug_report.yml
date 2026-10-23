@@ -1,0 +1,44 @@
+name: Bug report
+description: Report a parser, writer, SVG, CLI, or binding defect
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Important:** Never upload confidential or proprietary client drawings. Strip reproduction files down to a minimal synthetic or public sample.
+  - type: input
+    id: version
+    attributes:
+      label: cadkit version & target
+      description: Crate/package version, binding (Rust / CLI / Python / WASM / C API), and OS
+      placeholder: "cadkit 0.3.6, Rust 1.85, x86_64-unknown-linux-gnu"
+    validations:
+      required: true
+  - type: dropdown
+    id: format
+    attributes:
+      label: Format / component
+      options:
+        - DWG reader
+        - DGN V7 / V8 reader
+        - DGN V8 writer
+        - DXF reader / writer
+        - CityGML 2.0 reader / writer / validator
+        - Core model / geometry / SVG
+        - CLI / Python / WASM / C API
+    validations:
+      required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened vs. what you expected?
+      description: Describe the observed behavior, error/warning code, or geometric mismatch.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: Code snippet, CLI command, or synthetic sample steps.
+    validations:
+      required: false

@@ -1,4 +1,4 @@
-//! Sınırlı kaynaklarla rastgele girdi ve yeniden yazma denemeleri.
+//! Resource-bounded fuzzing for CityGML 2.0 reading, validation, preflight, and round-trip writing.
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 fuzz_target!(|data: &[u8]| {

@@ -1,22 +1,28 @@
 # Direct library integration
 
-Cady can call cadkit directly through its Rust, Python, WASM or C/C++ bindings.
-Format parsing, DGN record encoding, CityGML XML writing and format validation
-belong in cadkit. The consuming application supplies its drawing data, export
-settings and file destination. No separate conversion service is required.
+Downstream host applications can call cadkit directly through its Rust, Python,
+WASM, or C/C++ bindings. Format parsing, DGN record encoding, CityGML XML writing,
+and format validation belong in cadkit. The host application supplies its drawing
+data, export settings, and file destination; no separate conversion service is required.
 
 ## DGN export
 
-The application supplies a neutral `Document`, a compatible DGN V8 seed and
+The host application supplies a neutral `Document`, a compatible DGN V8 seed, and
 `dgn::WriteOptions` to `cadkit::to_dgn`. Bindings expose the same operation; the
-existing JSON options accept `preserve_seed_rasters` without a new C ABI function.
-Units, dimension, palette and font tables must match the seed. A production seed
+JSON options accept `preserve_seed_rasters` without a separate C ABI function.
+Units, dimension, palette, and font tables must match the seed. A production seed
 should be an approved blank template rather than an arbitrary client drawing.
 
 When opening and rewriting an existing DGN, passing its original bytes as the
-seed can preserve unchanged raster attachments. New or edited images need a
-native attachment encoder that has not yet been implemented. Callers must retain
-external image files; copying the DGN alone does not embed those files.
+seed preserves unchanged raster attachments (`preserve_seed_rasters`, enabled by
+default). New raster attachments (`Image` entities without an `id`, with `path`
+and `size_px`) are written by cloning a complete attachment group from the seed
+(`dgn::seed_has_raster_template`), or falling back to cadkit's built-in attachment
+template when the seed has none. Editing existing seed attachments in place or
+mixing preserved and newly added attachments in a single write is not supported;
+rewrite all attachments as new `Image` entities or keep the seed's attachments
+unchanged. Callers must retain external image files alongside or at the referenced
+paths, as DGN raster attachments reference external files rather than embedding pixel data.
 
 Center/right text requires measured `dgn.text_length` in drawing units. The
 application must update that value when text or its font metrics change.
@@ -40,9 +46,10 @@ whether it represents a room, floor, roof or parcel. Imported CityGML should kee
 its native model as the source of identity and relationships; the neutral drawing
 view is a geometric projection, not a replacement for that model.
 
-No Cady source files were changed in this cadkit correction work. The eventual
-adapter needs to marshal application objects, select the appropriate library
-path, surface export errors, and save the returned bytes.
+A host-application adapter should marshal application objects into either the
+format-neutral `Document` or native `CityGmlDocument`, select the appropriate
+export path, surface validation and conversion diagnostics to the user, and write
+the returned bytes to the destination.
 
 ## Conversion diagnostics and TKGM preflight
 
@@ -61,7 +68,7 @@ method and CLI `convert --gml-metadata-only`. Python returns `(bytes, report)`;
 C/C++ and WASM return JSON with `xml` and `report` fields. Metadata-only mode is
 opt-in in every interface. Display the report to the application user.
 
-For the requested city-model tender, the [production guide](https://cbs.tkgm.gov.tr/3d/html/giris.html)
+For the public TKGM 3D city-model tender workflow, the [production guide](https://cbs.tkgm.gov.tr/3d/html/giris.html)
 uses CityGML **2.0**; its latest listed revision is **v2.50** (6 May 2025).
 The separate Digital Building registration guide is TKGMCityGML 3.0.3.
 Buildings are `Building`,

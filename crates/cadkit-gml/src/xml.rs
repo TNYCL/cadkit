@@ -1,4 +1,4 @@
-//! Dış kaynak çözümlemeyen ve ağaç boyutunu sınırlayan XML katmanı.
+//! Bounded XML parser and serializer that forbids DTDs and external entity resolution.
 
 use crate::native::{CORE, CityGmlDocument, Element, Name, Node, XmlAttribute};
 use cadkit_core::{Error, ReadOptions, Result};
@@ -45,7 +45,7 @@ pub(crate) fn parse(bytes: &[u8], options: &ReadOptions) -> Result<CityGmlDocume
         let event = reader
             .read_event()
             .map_err(|e| Error::invalid(offset, e.to_string()))?;
-        // Metin normalizasyonu kopya ayırmadan önce ham parça bütçeye sığmalıdır.
+        // Check the raw slice against the string and document budgets before unescaping allocates.
         let raw_text_len = match &event {
             Event::Text(e) | Event::Comment(e) => Some(e.len()),
             Event::CData(e) => Some(e.len()),
@@ -293,7 +293,7 @@ impl std::io::Write for Output {
 }
 
 pub(crate) fn serialize(doc: &CityGmlDocument, options: &ReadOptions) -> Result<Vec<u8>> {
-    // Ağacı klonlamadan önce derinlik ve bütün metin bütçeleri denetlenir.
+    // Validate tree depth and string budgets before serializing.
     crate::validate::elements(doc, &options.limits)?;
     let mut writer = Writer::new(Output {
         bytes: vec![],
@@ -312,7 +312,7 @@ pub(crate) fn serialize(doc: &CityGmlDocument, options: &ReadOptions) -> Result<
             Action::Element(e) | Action::Node(Node::Element(e)) => {
                 let mut start = BytesStart::new(e.name.qualified.as_str());
                 for a in &e.attributes {
-                    // XML öznitelik normalizasyonunun sayısal referansları değiştirmesi önlenir.
+                    // Escape whitespace control characters as numeric references so XML attribute normalization preserves them.
                     let escaped = quick_xml::escape::escape(&a.value)
                         .replace('\t', "&#9;")
                         .replace('\n', "&#10;")

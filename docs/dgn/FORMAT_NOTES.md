@@ -703,10 +703,14 @@ records (90..93), and their auxiliary payloads retain their bytes and IDs; other
 graphics and attached tags are regenerated. `preserve_seed_controls` (default true)
 keeps every other seed control record (coordinate system, model settings and the like)
 and its auxiliary data byte for byte, unless the record holds the id of a seed graphic;
-the control auxiliary page counter is kept while all of its pages are. Incomplete auxiliary pages, mixed/new/deleted raster
-sets, or edited attachment settings are rejected. An output is still dependent
-on its external raster file; no raster bytes are embedded or fabricated. New attachments
-are clones of a seed attachment, not a general native raster encoder.
+the control auxiliary page counter is kept while all of its pages are. Incomplete
+auxiliary pages, mixing preserved and new attachments, partial deletion of preserved
+seed attachments, or edited preserved attachment settings are rejected. An output is
+still dependent on its external raster file; no raster bytes are embedded or
+fabricated. New attachments clone a seed attachment group (`seed_has_raster_template`)
+or fall back to the built-in template group added in 0.3.3 when the seed has none,
+rewriting only the documented placement, path, and resolution fields rather than
+encoding arbitrary raster display settings from scratch.
 
 Level names, tag sets and attached text/integer/double values are writable.
 Unnamed tag sets remain unnamed rather than being silently renamed to `CADKIT`.

@@ -1,4 +1,4 @@
-//! Sınırlı kaynaklarla rastgele girdi ve yeniden yazma denemeleri.
+//! Resource-bounded fuzzing for DGN V8 reading, writing, and CFB repacking.
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 fuzz_target!(|data: &[u8]| {

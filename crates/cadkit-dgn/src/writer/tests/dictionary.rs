@@ -593,6 +593,12 @@ fn public_seed_dictionary_is_kept_byte_for_byte() {
     let mut doc = crate::read(&seed, &ReadOptions::default()).unwrap();
     let mut e = line();
     e.layer = doc.layers.first().map(|l| l.name.clone());
+    // The reader also infers placeholder layers for undeclared level references in the
+    // original graphics. This fixture replaces those graphics and requests no new levels:
+    // retain only the chosen seed-defined level, rather than asking the writer to add them.
+    doc.layers
+        .retain(|layer| Some(layer.name.as_str()) == e.layer.as_deref());
+    assert_eq!(doc.layers.len(), 1);
     doc.models[0].entities = vec![e];
     let options = WriteOptions {
         clear_seed_model: true,

@@ -3,8 +3,8 @@
 //! This is a bounded subset of the public production guide, not TKGM acceptance.
 //! Geometry validation, official XSD validation, identifiers checked against MAKS /
 //! TAKBIS, naming rules, all code lists and the online rule engine remain separate.
-//! Source: https://cbs.tkgm.gov.tr/surdurulebilirlik/ (retrieved 2026-10-01).
-//! Tender source: https://cbs.tkgm.gov.tr/3d/html/ (retrieved 2026-10-01).
+//! Source: <https://cbs.tkgm.gov.tr/surdurulebilirlik/> (retrieved 2026-10-01).
+//! Tender source: <https://cbs.tkgm.gov.tr/3d/html/> (retrieved 2026-10-01).
 
 use crate::{
     CityGmlDocument, ValidationOptions,

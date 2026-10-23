@@ -1,4 +1,4 @@
-//! Sentetik seed ile yeni V8 dosyası üretimi ve bağımsız CFB denetimi.
+//! Synthetic seed DGN V8 generation and independent CFB validation tests.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 use super::*;
 use cadkit_core::{Attribute, Color, Model};
