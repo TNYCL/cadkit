@@ -855,10 +855,10 @@ pub fn interpolate_fit_points(
         return None;
     }
     let is_loop = if closed {
-        if let (Some(&first), Some(&last)) = (pts.first(), pts.last()) {
-            if first.distance_to(last) > 1e-12 {
-                pts.push(first);
-            }
+        if let (Some(&first), Some(&last)) = (pts.first(), pts.last())
+            && first.distance_to(last) > 1e-12
+        {
+            pts.push(first);
         }
         pts.len() >= 4
     } else {

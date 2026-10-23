@@ -875,13 +875,11 @@ fn tessellate_entity_in_place(entity: &mut Entity, tolerance: f64) {
                         out.push(Vertex { bulge: 0.0, ..*a });
                     }
                 }
-                if !*closed {
-                    if let Some(last) = vertices.last() {
-                        out.push(Vertex {
-                            bulge: 0.0,
-                            ..*last
-                        });
-                    }
+                if !*closed && let Some(last) = vertices.last() {
+                    out.push(Vertex {
+                        bulge: 0.0,
+                        ..*last
+                    });
                 }
                 *vertices = out;
             }
@@ -904,10 +902,10 @@ fn flatten_list(
     out: &mut Vec<Entity>,
 ) {
     for mut e in entities {
-        if matches!(e.layer.as_deref(), None | Some("0")) {
-            if let Some(l) = inherited_layer {
-                e.layer = Some(l.to_owned());
-            }
+        if matches!(e.layer.as_deref(), None | Some("0"))
+            && let Some(l) = inherited_layer
+        {
+            e.layer = Some(l.to_owned());
         }
         if e.color == Color::ByBlock && inherited_color != Color::ByBlock {
             e.color = inherited_color;
@@ -956,10 +954,10 @@ fn collect_refs<'a>(
                 if let Some(al) = attr.layer.as_deref() {
                     layers.insert(al);
                 }
-                if let Some(disp) = &attr.display {
-                    if let Some(st) = disp.style.as_deref() {
-                        styles.insert(st);
-                    }
+                if let Some(disp) = &attr.display
+                    && let Some(st) = disp.style.as_deref()
+                {
+                    styles.insert(st);
                 }
             }
             match &e.kind {

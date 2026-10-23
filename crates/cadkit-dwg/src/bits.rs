@@ -255,7 +255,7 @@ impl<'a> BitReader<'a> {
     pub fn bytes(&mut self, n: usize) -> Result<Vec<u8>> {
         self.need(bits_of(n))?;
         let mut out = Vec::with_capacity(n);
-        if self.pos % 8 == 0 {
+        if self.pos.is_multiple_of(8) {
             let start =
                 usize::try_from(self.pos / 8).map_err(|_| self.invalid("position overflow"))?;
             let slice = start

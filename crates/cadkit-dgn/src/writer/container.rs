@@ -137,18 +137,20 @@ pub(super) fn rewrite(
                     match replacements.get(&key) {
                         Some(None) => {}
                         Some(Some(bytes)) => {
-                            if let Some(parent) = entry.path().parent() {
-                                if parent != Path::new("/") && !parent.as_os_str().is_empty() {
-                                    output.create_storage_all(parent)?;
-                                }
+                            if let Some(parent) = entry.path().parent()
+                                && parent != Path::new("/")
+                                && !parent.as_os_str().is_empty()
+                            {
+                                output.create_storage_all(parent)?;
                             }
                             output.create_stream(entry.path())?.write_all(bytes)?;
                         }
                         None => {
-                            if let Some(parent) = entry.path().parent() {
-                                if parent != Path::new("/") && !parent.as_os_str().is_empty() {
-                                    output.create_storage_all(parent)?;
-                                }
+                            if let Some(parent) = entry.path().parent()
+                                && parent != Path::new("/")
+                                && !parent.as_os_str().is_empty()
+                            {
+                                output.create_storage_all(parent)?;
                             }
                             let mut src = source.open_stream(entry.path())?;
                             let mut dst = output.create_stream(entry.path())?;
@@ -158,10 +160,10 @@ pub(super) fn rewrite(
                 }
                 Item::New(name, data) => {
                     let path = format!("/{name}");
-                    if let Some((parent, _)) = path.rsplit_once('/') {
-                        if !parent.is_empty() {
-                            output.create_storage_all(parent)?;
-                        }
+                    if let Some((parent, _)) = path.rsplit_once('/')
+                        && !parent.is_empty()
+                    {
+                        output.create_storage_all(parent)?;
                     }
                     output.create_stream(&path)?.write_all(data)?;
                 }
@@ -523,10 +525,10 @@ fn rb_fixup(nodes: &mut BTreeMap<u32, RbNode>, root: &mut Option<u32>, mut z: u3
 /// red-black insertion in directory slot order, matching Windows Structured Storage (`ole32`).
 fn balance_directory(data: &mut [u8], root_color: u8) -> Result<()> {
     let offsets = directory_entry_offsets(data)?;
-    if let Some(&root_off) = offsets.first() {
-        if let Some(color_byte) = data.get_mut(root_off + 67) {
-            *color_byte = root_color;
-        }
+    if let Some(&root_off) = offsets.first()
+        && let Some(color_byte) = data.get_mut(root_off + 67)
+    {
+        *color_byte = root_color;
     }
     for &storage_off in &offsets {
         let kind = data.get(storage_off + 66).copied().unwrap_or(0);

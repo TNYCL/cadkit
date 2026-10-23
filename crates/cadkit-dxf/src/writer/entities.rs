@@ -296,18 +296,19 @@ fn escaped_token_len(s: &str, at: usize) -> usize {
         None => 0,
         Some(b'^') => 2.min(s.len().saturating_sub(at)),
         Some(b'\\') => {
-            if matches!(bytes.get(at + 1), Some(b'U' | b'u')) && bytes.get(at + 2) == Some(&b'+') {
-                if let Some(unit) = parse_hex4(bytes, at + 3) {
-                    if (0xD800..0xDC00).contains(&unit)
-                        && bytes.get(at + 7) == Some(&b'\\')
-                        && matches!(bytes.get(at + 8), Some(b'U' | b'u'))
-                        && bytes.get(at + 9) == Some(&b'+')
-                        && parse_hex4(bytes, at + 10).is_some()
-                    {
-                        return 14;
-                    }
-                    return 7;
+            if matches!(bytes.get(at + 1), Some(b'U' | b'u'))
+                && bytes.get(at + 2) == Some(&b'+')
+                && let Some(unit) = parse_hex4(bytes, at + 3)
+            {
+                if (0xD800..0xDC00).contains(&unit)
+                    && bytes.get(at + 7) == Some(&b'\\')
+                    && matches!(bytes.get(at + 8), Some(b'U' | b'u'))
+                    && bytes.get(at + 9) == Some(&b'+')
+                    && parse_hex4(bytes, at + 10).is_some()
+                {
+                    return 14;
                 }
+                return 7;
             }
             if bytes.get(at + 1) == Some(&b'M')
                 && bytes.get(at + 2) == Some(&b'+')
@@ -412,10 +413,10 @@ impl Writer<'_> {
                 out.int(370, lw);
             }
         }
-        if self.ge2004 {
-            if let Some(v) = c420 {
-                out.int(420, v);
-            }
+        if self.ge2004
+            && let Some(v) = c420
+        {
+            out.int(420, v);
         }
         if !a.visible && !self.r12 {
             out.int(60, 1);

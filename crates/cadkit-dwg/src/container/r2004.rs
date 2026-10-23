@@ -412,7 +412,12 @@ fn read_data_page(
     let raw = r.array::<32>()?;
     let mask = 0x4164_536B_u32 ^ (address as u32);
     let mut header = [0u8; 32];
-    for (dst, chunk) in header.chunks_exact_mut(4).zip(raw.chunks_exact(4)) {
+    for (dst, chunk) in header
+        .as_chunks_mut::<4>()
+        .0
+        .iter_mut()
+        .zip(raw.as_chunks::<4>().0)
+    {
         let mut word = [0u8; 4];
         word.copy_from_slice(chunk);
         dst.copy_from_slice(&(u32::from_le_bytes(word) ^ mask).to_le_bytes());

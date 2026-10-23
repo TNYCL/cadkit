@@ -127,7 +127,9 @@ pub(crate) fn decode_8bit(bytes: &[u8], enc: impl Into<TextDecoder>) -> String {
 /// Decodes UTF-16LE units, stopping at the first NUL unit. Odd trailing bytes are ignored.
 pub(crate) fn decode_utf16(bytes: &[u8]) -> String {
     let units: Vec<u16> = bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| {
             u16::from_le_bytes([
                 c.first().copied().unwrap_or(0),
@@ -166,7 +168,7 @@ pub(crate) fn decode_v7_text(
         return (decode_8bit(bytes, enc), StringEncoding::CodePage);
     };
     let mut out = Vec::with_capacity(rest.len());
-    for c in rest.chunks_exact(2) {
+    for c in rest.as_chunks::<2>().0 {
         let u = u16::from_le_bytes([
             c.first().copied().unwrap_or(0),
             c.get(1).copied().unwrap_or(0),
@@ -207,7 +209,7 @@ pub(crate) fn dgn_cstr_at(
     let enc = enc.into();
     let rest = b.get(off..)?;
     if let Some(units) = rest.strip_prefix(&[0xff, 0xfd]) {
-        let n = units.chunks_exact(2).position(|c| c == [0, 0])?;
+        let n = units.as_chunks::<2>().0.iter().position(|c| *c == [0, 0])?;
         let text = decode_utf16(units.get(..2 * n)?);
         return Some((text, off.checked_add(2 + 2 * n + 2)?));
     }

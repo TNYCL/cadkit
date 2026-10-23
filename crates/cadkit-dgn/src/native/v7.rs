@@ -635,7 +635,7 @@ impl V7<'_> {
         // First triple is color 255, then colors 0..=254 (GDAL `DGNParseColorTable`).
         let rgb = le::bytes(self.b, 38, 768).ok_or_else(short)?;
         let mut colors = vec![[0u8; 3]; 256];
-        for (i, c) in rgb.chunks_exact(3).enumerate() {
+        for (i, c) in rgb.as_chunks::<3>().0.iter().enumerate() {
             let slot = if i == 0 { 255 } else { i - 1 };
             if let (Some(dst), [r, g, b]) = (colors.get_mut(slot), c) {
                 *dst = [*r, *g, *b];

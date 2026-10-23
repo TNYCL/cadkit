@@ -191,10 +191,9 @@ fn map_file(file: &V8File, options: &ReadOptions, enc: TextDecoder) -> Document 
             if let (Some(frame), Some(reference)) = (
                 linkage::dependency_root(&it.el.linkages, DEP_RASTER_FRAME),
                 le::u64_at(it.raw, 0x30),
-            ) {
-                if let Some(paths) = references.get(&reference) {
-                    m.raster_paths.insert(frame, paths.clone());
-                }
+            ) && let Some(paths) = references.get(&reference)
+            {
+                m.raster_paths.insert(frame, paths.clone());
             }
         }
 
@@ -206,12 +205,12 @@ fn map_file(file: &V8File, options: &ReadOptions, enc: TextDecoder) -> Document 
         m.pending_tags.clear();
         m.attached.clear();
         for (i, it) in graphic.iter().enumerate() {
-            if let ElementData::Tag(t) = &it.el.data {
-                if let Some(target) = t.target.filter(|&tg| Some(tg) != it.el.header.id) {
-                    let attr = m.attribute(t, &it.el.header, &xf);
-                    m.pending_tags.entry(target).or_default().push((i, attr));
-                    m.attached.insert(i);
-                }
+            if let ElementData::Tag(t) = &it.el.data
+                && let Some(target) = t.target.filter(|&tg| Some(tg) != it.el.header.id)
+            {
+                let attr = m.attribute(t, &it.el.header, &xf);
+                m.pending_tags.entry(target).or_default().push((i, attr));
+                m.attached.insert(i);
             }
         }
         let tree = tree_v8(&graphic, options.limits.max_depth);
@@ -367,10 +366,10 @@ fn map_file(file: &V8File, options: &ReadOptions, enc: TextDecoder) -> Document 
     if let Some(cp) = file.summary.codepage {
         props.insert("dgn.summary_codepage".into(), Value::Int(i64::from(cp)));
     }
-    if let Some(h) = first {
-        if let (Some(mm), Some(sm)) = (h.master.meters(), h.sub.meters()) {
-            props.insert("dgn.sub_units_per_master".into(), Value::Float(mm / sm));
-        }
+    if let Some(h) = first
+        && let (Some(mm), Some(sm)) = (h.master.meters(), h.sub.meters())
+    {
+        props.insert("dgn.sub_units_per_master".into(), Value::Float(mm / sm));
     }
     let text_styles = m.text_styles();
     let linetypes = m.linetypes();

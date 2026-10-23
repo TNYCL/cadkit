@@ -1168,21 +1168,19 @@ impl<'a> Renderer<'a> {
                     .collect();
                 if v.len() >= 2 {
                     pb.polyline(&v, false);
-                    if *arrowhead {
-                        if let (Some(&tip), Some(&from)) = (v.first(), v.get(1)) {
-                            let (dx, dy) = (from.0 - tip.0, from.1 - tip.1);
-                            let seg_len = dx.hypot(dy);
-                            if seg_len > 1e-9 {
-                                let alen = (self.cross * 2.5).min(seg_len * 0.45);
-                                let (ux, uy) = (dx / seg_len, dy / seg_len);
-                                let (px, py) = (-uy, ux);
-                                let hw = alen * 0.35;
-                                let w1 = (tip.0 + ux * alen + px * hw, tip.1 + uy * alen + py * hw);
-                                let w2 = (tip.0 + ux * alen - px * hw, tip.1 + uy * alen - py * hw);
-                                pb.move_to(w1);
-                                pb.line_to(tip);
-                                pb.line_to(w2);
-                            }
+                    if *arrowhead && let (Some(&tip), Some(&from)) = (v.first(), v.get(1)) {
+                        let (dx, dy) = (from.0 - tip.0, from.1 - tip.1);
+                        let seg_len = dx.hypot(dy);
+                        if seg_len > 1e-9 {
+                            let alen = (self.cross * 2.5).min(seg_len * 0.45);
+                            let (ux, uy) = (dx / seg_len, dy / seg_len);
+                            let (px, py) = (-uy, ux);
+                            let hw = alen * 0.35;
+                            let w1 = (tip.0 + ux * alen + px * hw, tip.1 + uy * alen + py * hw);
+                            let w2 = (tip.0 + ux * alen - px * hw, tip.1 + uy * alen - py * hw);
+                            pb.move_to(w1);
+                            pb.line_to(tip);
+                            pb.line_to(w2);
                         }
                     }
                     self.stroke_path(&layer, &pb, e, ctx, color);
@@ -1644,13 +1642,16 @@ fn render_internal(doc: &Document, options: &SvgOptions, include_hidden_layers: 
         doc.walk_while(options.model, &walk_opts, visit)
     };
     let mut truncated = stats.truncated;
-    if !truncated && options.expand_blocks && options.text && !doc.blocks.is_empty() {
-        if let Some(m) = doc.models.get(options.model) {
-            let mut stack = Vec::new();
-            r.render_expanded_insert_attributes(&m.entities, &WalkContext::root(), &mut stack, cap);
-            if r.layers.bytes > cap {
-                truncated = true;
-            }
+    if !truncated
+        && options.expand_blocks
+        && options.text
+        && !doc.blocks.is_empty()
+        && let Some(m) = doc.models.get(options.model)
+    {
+        let mut stack = Vec::new();
+        r.render_expanded_insert_attributes(&m.entities, &WalkContext::root(), &mut stack, cap);
+        if r.layers.bytes > cap {
+            truncated = true;
         }
     }
 

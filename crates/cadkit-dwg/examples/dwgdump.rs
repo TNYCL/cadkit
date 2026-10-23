@@ -132,12 +132,11 @@ fn main() {
             }
         }
     }
-    if let Some(pos) = args.iter().position(|a| a == "--handle") {
-        if let Some(h) = args
+    if let Some(pos) = args.iter().position(|a| a == "--handle")
+        && let Some(h) = args
             .get(pos + 1)
             .and_then(|s| u64::from_str_radix(s, 16).ok())
-        {
-            println!("{:#?}", file.objects.get(&h));
-        }
+    {
+        println!("{:#?}", file.objects.get(&h));
     }
 }

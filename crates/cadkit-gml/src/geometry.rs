@@ -64,18 +64,17 @@ pub(crate) fn inspect(
                 }),
                 Err(other) => return Err(other),
                 Ok(()) => {
-                    if let Some(n) = cadkit_core::polygon::normal(&p.exterior) {
-                        if p.interiors
+                    if let Some(n) = cadkit_core::polygon::normal(&p.exterior)
+                        && p.interiors
                             .iter()
                             .filter_map(|r| cadkit_core::polygon::normal(r))
                             .any(|h| n.x * h.x + n.y * h.y + n.z * h.z >= 0.0)
-                        {
-                            issues.push(GeometryIssue {
-                                offset: e.offset,
-                                code: "gml.ring_orientation".into(),
-                                message: "interior ring orientation must oppose exterior".into(),
-                            });
-                        }
+                    {
+                        issues.push(GeometryIssue {
+                            offset: e.offset,
+                            code: "gml.ring_orientation".into(),
+                            message: "interior ring orientation must oppose exterior".into(),
+                        });
                     }
                 }
             }

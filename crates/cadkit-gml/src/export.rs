@@ -177,10 +177,11 @@ fn geometry(kind: &EntityKind) -> Result<Element> {
                 ));
             }
             let mut points: Vec<_> = vertices.iter().map(|v| v.position).collect();
-            if *closed && points.first() != points.last() {
-                if let Some(first) = points.first().copied() {
-                    points.push(first);
-                }
+            if *closed
+                && points.first() != points.last()
+                && let Some(first) = points.first().copied()
+            {
+                points.push(first);
             }
             // Closure alone does not assert a planar surface. CAD paths may cross
             // themselves or leave the plane; only explicit Polygon/Face means area.
@@ -201,10 +202,10 @@ fn geometry(kind: &EntityKind) -> Result<Element> {
         .to_element()),
         EntityKind::Face { points, .. } => {
             let mut ring = points.clone();
-            if ring.first() != ring.last() {
-                if let Some(first) = ring.first().copied() {
-                    ring.push(first);
-                }
+            if ring.first() != ring.last()
+                && let Some(first) = ring.first().copied()
+            {
+                ring.push(first);
             }
             Ok(Polygon {
                 id: None,
@@ -224,10 +225,10 @@ fn geometry(kind: &EntityKind) -> Result<Element> {
                             .ok_or_else(|| Error::invalid(0, "mesh face index outside vertices"))?,
                     );
                 }
-                if ring.first() != ring.last() {
-                    if let Some(first) = ring.first().copied() {
-                        ring.push(first);
-                    }
+                if ring.first() != ring.last()
+                    && let Some(first) = ring.first().copied()
+                {
+                    ring.push(first);
                 }
                 let mut member = Element::new(GML, "gml:surfaceMember");
                 member.push(

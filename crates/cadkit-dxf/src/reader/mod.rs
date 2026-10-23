@@ -164,10 +164,10 @@ pub(crate) fn inspect(bytes: &[u8], options: &ReadOptions) -> Result<Summary> {
             }
         };
         if pair.code == 999 {
-            if comment.is_none() {
-                if let Value::Str(s) = pair.value {
-                    comment = Some(s);
-                }
+            if comment.is_none()
+                && let Value::Str(s) = pair.value
+            {
+                comment = Some(s);
             }
             continue;
         }
@@ -377,10 +377,10 @@ impl State<'_> {
             if name.is_empty() {
                 continue;
             }
-            if name.eq_ignore_ascii_case("$INSUNITS") {
-                if let Some(v) = items.first().and_then(|p| p.value.as_i64()) {
-                    self.doc.units = length_unit(v);
-                }
+            if name.eq_ignore_ascii_case("$INSUNITS")
+                && let Some(v) = items.first().and_then(|p| p.value.as_i64())
+            {
+                self.doc.units = length_unit(v);
             }
             let value = match items.as_slice() {
                 [] => continue,
@@ -484,10 +484,10 @@ impl State<'_> {
                     let flags = g.i64_or(70, 0);
                     let entities = self.entity_list(rr)?;
                     // Consume ENDBLK when present.
-                    if let Some(end) = rr.next_record()? {
-                        if end.name != "ENDBLK" {
-                            rr.push_back(end);
-                        }
+                    if let Some(end) = rr.next_record()?
+                        && end.name != "ENDBLK"
+                    {
+                        rr.push_back(end);
                     }
                     if is_model_space(&name) {
                         self.placed
@@ -686,10 +686,10 @@ impl State<'_> {
         // Resolve IMAGE -> IMAGEDEF paths.
         let defs = std::mem::take(&mut self.imagedefs);
         let fix = |e: &mut Entity| {
-            if let EntityKind::Image { path, .. } = &mut e.kind {
-                if let Some(MValue::Text(h)) = e.props.get("dxf.imagedef") {
-                    *path = parse_handle(h).and_then(|h| defs.get(&h)).cloned();
-                }
+            if let EntityKind::Image { path, .. } = &mut e.kind
+                && let Some(MValue::Text(h)) = e.props.get("dxf.imagedef")
+            {
+                *path = parse_handle(h).and_then(|h| defs.get(&h)).cloned();
             }
         };
         for m in &mut self.doc.models {

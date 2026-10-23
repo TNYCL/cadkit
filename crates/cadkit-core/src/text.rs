@@ -436,21 +436,22 @@ pub fn decode_escapes(s: &str, mbcs: &dyn Fn(u8, [u8; 2]) -> Option<String>) -> 
                     let low_follows = bytes.get(i + 7) == Some(&b'\\')
                         && matches!(bytes.get(i + 8), Some(b'U' | b'u'))
                         && bytes.get(i + 9) == Some(&b'+');
-                    if let Some(low) = hex4(bytes, i + 10).filter(|_| low_follows) {
-                        if let Some(Ok(c)) = char::decode_utf16([unit as u16, low as u16]).next() {
-                            decoded = Some((c.to_string(), 14));
-                        }
+                    if let Some(low) = hex4(bytes, i + 10).filter(|_| low_follows)
+                        && let Some(Ok(c)) = char::decode_utf16([unit as u16, low as u16]).next()
+                    {
+                        decoded = Some((c.to_string(), 14));
                     }
                 } else if let Some(c) = char::from_u32(unit) {
                     decoded = Some((c.to_string(), 7));
                 }
             }
-        } else if escape && kind == Some(b'M') {
-            if let (Some(n), Some(code)) = (bytes.get(i + 3).copied(), hex4(bytes, i + 4)) {
-                let pair = [(code >> 8) as u8, code as u8];
-                if let Some(text) = mbcs(n, pair).filter(|t| !t.is_empty()) {
-                    decoded = Some((text, 8));
-                }
+        } else if escape
+            && kind == Some(b'M')
+            && let (Some(n), Some(code)) = (bytes.get(i + 3).copied(), hex4(bytes, i + 4))
+        {
+            let pair = [(code >> 8) as u8, code as u8];
+            if let Some(text) = mbcs(n, pair).filter(|t| !t.is_empty()) {
+                decoded = Some((text, 8));
             }
         }
         match decoded {

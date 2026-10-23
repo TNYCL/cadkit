@@ -62,10 +62,10 @@ pub fn parse(data: &[u8], base: u64, max_objects: u64, max_entries: usize) -> Re
             out.truncated_at = Some(base + pos as u64);
         }
         let crc_bytes = data.get(body_end..body_end + 2);
-        if let (Some(&[hi, lo]), Some(chunk)) = (crc_bytes, data.get(pos..body_end)) {
-            if crc8(0xC0C1, chunk) != u16::from_be_bytes([hi, lo]) {
-                out.crc_failures += 1;
-            }
+        if let (Some(&[hi, lo]), Some(chunk)) = (crc_bytes, data.get(pos..body_end))
+            && crc8(0xC0C1, chunk) != u16::from_be_bytes([hi, lo])
+        {
+            out.crc_failures += 1;
         }
         let mut r = BitReader::with_base(body, base + body_start as u64);
         let mut handle: u64 = 0;

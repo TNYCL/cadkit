@@ -403,18 +403,17 @@ pub fn validate(doc: &CityGmlDocument, options: &ValidationOptions) -> Result<Va
         }
         if e.name.is(GML, "Circle") {
             // Native XML can retain coordinate encodings outside the neutral subset.
-            if let Err(error) = crate::curves::read_segment(e, *dim, &options.limits) {
-                if !matches!(error, Error::Unsupported(_)) {
-                    return Err(error);
-                }
+            if let Err(error) = crate::curves::read_segment(e, *dim, &options.limits)
+                && !matches!(error, Error::Unsupported(_))
+            {
+                return Err(error);
             }
         }
-        if e.name.is(GML, "Arc") {
-            if let Err(error) = crate::curves::read_arc_segment(e, *dim, &options.limits) {
-                if !matches!(error, Error::Unsupported(_)) {
-                    return Err(error);
-                }
-            }
+        if e.name.is(GML, "Arc")
+            && let Err(error) = crate::curves::read_arc_segment(e, *dim, &options.limits)
+            && !matches!(error, Error::Unsupported(_))
+        {
+            return Err(error);
         }
         if e.name.namespace == GENERICS
             && matches!(
@@ -498,10 +497,10 @@ pub fn validate(doc: &CityGmlDocument, options: &ValidationOptions) -> Result<Va
             }
         }
     }
-    if options.geometry {
-        if let Some(issue) = crate::geometry::inspect(&nodes, options)?.first() {
-            return Err(Error::invalid(issue.offset, &issue.message));
-        }
+    if options.geometry
+        && let Some(issue) = crate::geometry::inspect(&nodes, options)?.first()
+    {
+        return Err(Error::invalid(issue.offset, &issue.message));
     }
     Ok(report)
 }

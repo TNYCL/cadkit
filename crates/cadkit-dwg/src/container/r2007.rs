@@ -193,7 +193,9 @@ fn parse_section_map(data: &[u8], max_pages: usize) -> Result<BTreeMap<String, S
             .ok_or_else(|| r.invalid("section name length"))?;
         let name_bytes = r.bytes(name_len)?;
         let units: Vec<u16> = name_bytes
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|c| {
                 u16::from_le_bytes([
                     c.first().copied().unwrap_or(0),
