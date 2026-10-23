@@ -82,3 +82,11 @@ against `Limits` before allocation.
   and TKGM preflight, `cadkit_status_string`, `cadkit_version`; hand-written `include/cadkit.h`
   (a test fails on missing exports) and a header-only C++17 RAII wrapper `include/cadkit.hpp`.
   No panic crosses the boundary.
+
+
+Bindings expose header-only inspection and neutral document operations. Python and C/C++
+unit conversion/block expansion return new immutable documents; WASM performs the same
+operations in-place. C additions use separate entry points without enlarging existing ABI
+structs. The CLI accepts bounded stdin, explicit stdout formats, legacy DXF output code
+pages, and transform/filter options. SVG hidden-layer inclusion is a separate render/walk
+entry point, preserving the existing Rust option-struct layouts.

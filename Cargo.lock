@@ -159,6 +159,7 @@ version = "0.3.6"
 dependencies = [
  "cadkit",
  "js-sys",
+ "serde",
  "serde_json",
  "wasm-bindgen",
 ]

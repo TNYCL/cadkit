@@ -1,6 +1,8 @@
 from cadkit._cadkit import (
     CadkitError as CadkitError,
     Document as Document,
+    V8Seed as V8Seed,
+    inspect as inspect,
     CityGmlDocument as CityGmlDocument,
     read_citygml as read_citygml,
     InvalidDataError as InvalidDataError,

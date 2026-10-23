@@ -7,8 +7,8 @@
 
 use std::sync::Arc;
 
-use cadkit::{DxfVersion, Error, ReadOptions, SvgOptions};
-use pyo3::exceptions::{PyIndexError, PyValueError};
+use cadkit::{DxfVersion, Error, LengthUnit, ReadOptions, SvgOptions};
+use pyo3::exceptions::{PyIndexError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyByteArray, PyBytes};
 use pyo3::{create_exception, intern};
@@ -80,6 +80,192 @@ fn model_range_error(index: usize, count: usize) -> PyErr {
     ))
 }
 
+fn parse_dxf_version(version: &str) -> PyResult<DxfVersion> {
+    match version.to_ascii_lowercase().as_str() {
+        "r12" => Ok(DxfVersion::R12),
+        "r2000" => Ok(DxfVersion::R2000),
+        "r2004" => Ok(DxfVersion::R2004),
+        "r2007" => Ok(DxfVersion::R2007),
+        "r2010" => Ok(DxfVersion::R2010),
+        "r2013" => Ok(DxfVersion::R2013),
+        "r2018" => Ok(DxfVersion::R2018),
+        other => Err(PyValueError::new_err(format!(
+            "unknown DXF version {other:?}; expected r12, r2000, r2004, r2007, r2010, r2013 or r2018"
+        ))),
+    }
+}
+
+fn build_read_options(
+    keep_raw: bool,
+    codepage: Option<String>,
+    max_input_bytes: Option<u64>,
+    max_decompressed_bytes: Option<u64>,
+    max_objects: Option<u64>,
+    max_depth: Option<u32>,
+) -> ReadOptions {
+    let mut options = ReadOptions {
+        keep_raw,
+        fallback_codepage: codepage,
+        ..ReadOptions::default()
+    };
+    let limits = &mut options.limits;
+    limits.max_input_bytes = max_input_bytes.unwrap_or(limits.max_input_bytes);
+    limits.max_decompressed_bytes = max_decompressed_bytes.unwrap_or(limits.max_decompressed_bytes);
+    limits.max_objects = max_objects.unwrap_or(limits.max_objects);
+    limits.max_depth = max_depth.unwrap_or(limits.max_depth);
+    options
+}
+
+fn extract_buffer_bytes(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Option<PyResult<Vec<u8>>> {
+    if let Ok(b) = obj.cast::<PyBytes>() {
+        return Some(Ok(b.as_bytes().to_vec()));
+    }
+    let builtins = match py.import(intern!(py, "builtins")) {
+        Ok(b) => b,
+        Err(e) => return Some(Err(e)),
+    };
+    let is_memview = builtins
+        .getattr(intern!(py, "memoryview"))
+        .and_then(|mv| obj.is_instance(&mv))
+        .unwrap_or(false);
+    if obj.is_instance_of::<PyByteArray>() || is_memview {
+        let res = builtins
+            .getattr(intern!(py, "bytes"))
+            .and_then(|bytes_fn| bytes_fn.call1((obj,)))
+            .and_then(|b| b.extract::<Vec<u8>>());
+        return Some(res);
+    }
+    None
+}
+
+/// Pre-parsed single-model DGN V8 seed file for repeated `Document.to_dgn` calls and document preparation.
+#[pyclass(frozen, module = "cadkit")]
+struct V8Seed {
+    inner: Arc<cadkit::dgn::V8Seed>,
+}
+
+#[pymethods]
+impl V8Seed {
+    #[new]
+    #[pyo3(signature = (source, *, codepage=None, max_input_bytes=None, max_decompressed_bytes=None, max_objects=None, max_depth=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        py: Python<'_>,
+        source: &Bound<'_, PyAny>,
+        codepage: Option<String>,
+        max_input_bytes: Option<u64>,
+        max_decompressed_bytes: Option<u64>,
+        max_objects: Option<u64>,
+        max_depth: Option<u32>,
+    ) -> PyResult<Self> {
+        if let Ok(existing) = source.cast::<V8Seed>() {
+            return Ok(Self {
+                inner: Arc::clone(&existing.get().inner),
+            });
+        }
+        let input = source_input(py, source)?;
+        let options = build_read_options(
+            true,
+            codepage,
+            max_input_bytes,
+            max_decompressed_bytes,
+            max_objects,
+            max_depth,
+        );
+        let seed = py
+            .detach(|| match input {
+                Ok(bytes) => cadkit::dgn::V8Seed::parse(&bytes, &options),
+                Err(path) => {
+                    let file = std::fs::File::open(path)?;
+                    let len = file.metadata()?.len();
+                    if len > options.limits.max_input_bytes {
+                        return Err(Error::LimitExceeded(format!(
+                            "input is {len} bytes, limit is {}",
+                            options.limits.max_input_bytes
+                        )));
+                    }
+                    let mut bytes = Vec::new();
+                    use std::io::Read as _;
+                    file.take(options.limits.max_input_bytes.saturating_add(1))
+                        .read_to_end(&mut bytes)?;
+                    if bytes.len() as u64 > options.limits.max_input_bytes {
+                        return Err(Error::LimitExceeded(format!(
+                            "input is {} bytes, limit is {}",
+                            bytes.len(),
+                            options.limits.max_input_bytes
+                        )));
+                    }
+                    cadkit::dgn::V8Seed::parse(&bytes, &options)
+                }
+            })
+            .map_err(map_err)?;
+        Ok(Self {
+            inner: Arc::new(seed),
+        })
+    }
+
+    /// Whether the seed's single design model is 3D (`False` = 2D).
+    #[getter]
+    fn is_3d(&self) -> bool {
+        self.inner.is_3d()
+    }
+
+    /// Master units of the seed's design model (`{"unit": ..., "meters_per_unit": ...}`).
+    #[getter]
+    fn units<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        to_py(py, &self.inner.units())
+    }
+
+    /// Whether the seed model already contains graphic or control records.
+    #[getter]
+    fn is_nonempty(&self) -> bool {
+        self.inner.is_nonempty()
+    }
+
+    /// Whether the seed holds a complete raster attachment template.
+    #[getter]
+    fn has_raster_template(&self) -> bool {
+        self.inner.has_raster_template()
+    }
+
+    /// Raw bytes of the underlying DGN V8 seed file.
+    fn to_bytes<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
+        PyBytes::new(py, self.inner.as_bytes())
+    }
+
+    /// Returns a prepared copy of `doc` normalized to this seed's units, 2D/3D dimension, and DGN V8 symbology.
+    #[pyo3(signature = (doc, options_json=None))]
+    fn prepare_document(
+        &self,
+        py: Python<'_>,
+        doc: &Document,
+        options_json: Option<&str>,
+    ) -> PyResult<Document> {
+        let options: cadkit::dgn::SeedPrepareOptions = options_json
+            .map(serde_json::from_str)
+            .transpose()
+            .map_err(|e| PyValueError::new_err(e.to_string()))?
+            .unwrap_or_default();
+        let seed = Arc::clone(&self.inner);
+        let src = Arc::clone(&doc.inner);
+        let prepared = py
+            .detach(|| seed.prepare_document(&src, &options))
+            .map_err(map_err)?;
+        Ok(Document {
+            inner: Arc::new(prepared),
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "<cadkit.V8Seed dim={} unit={} nonempty={}>",
+            if self.inner.is_3d() { "3D" } else { "2D" },
+            self.inner.units().unit.as_str(),
+            self.inner.is_nonempty()
+        )
+    }
+}
+
 /// A drawing in the format-neutral model.
 #[pyclass(frozen, module = "cadkit")]
 struct Document {
@@ -98,12 +284,50 @@ impl Document {
         })
     }
 
-    /// Writes DGN V8 bytes using `seed`; `options_json` follows the Rust `dgn::WriteOptions` JSON contract.
+    /// Returns a new `Document` with `Insert` block references expanded into world-space entities.
+    #[pyo3(signature = (max_depth=32))]
+    fn explode_inserts(&self, py: Python<'_>, max_depth: u32) -> PyResult<Self> {
+        let src = Arc::clone(&self.inner);
+        let next = py
+            .detach(|| {
+                let mut copy = (*src).clone();
+                if copy.explode_inserts(max_depth).truncated {
+                    return Err(Error::LimitExceeded(
+                        "block expansion work limit exceeded".into(),
+                    ));
+                }
+                Ok(copy)
+            })
+            .map_err(map_err)?;
+        Ok(Self {
+            inner: Arc::new(next),
+        })
+    }
+
+    /// Returns a new `Document` converted to `unit` (e.g. `"mm"`, `"meter"`, `"ft"`).
+    fn convert_units(&self, py: Python<'_>, unit: &str) -> PyResult<Self> {
+        let target = LengthUnit::from_name(unit)
+            .ok_or_else(|| PyValueError::new_err(format!("unknown length unit {unit:?}")))?;
+        let src = Arc::clone(&self.inner);
+        let next = py
+            .detach(|| {
+                let mut copy = (*src).clone();
+                copy.convert_units(target)?;
+                Ok::<_, Error>(copy)
+            })
+            .map_err(map_err)?;
+        Ok(Self {
+            inner: Arc::new(next),
+        })
+    }
+
+    /// Writes DGN V8 bytes using `seed` (`V8Seed` or raw bytes); `options_json` follows the Rust
+    /// `dgn::WriteOptions` JSON contract.
     #[pyo3(signature=(seed, options_json=None))]
     fn to_dgn<'py>(
         &self,
         py: Python<'py>,
-        seed: &[u8],
+        seed: &Bound<'py, PyAny>,
         options_json: Option<&str>,
     ) -> PyResult<Bound<'py, PyBytes>> {
         let options: cadkit::dgn::WriteOptions = options_json
@@ -111,8 +335,22 @@ impl Document {
             .transpose()
             .map_err(|e| PyValueError::new_err(e.to_string()))?
             .unwrap_or_default();
+        if let Ok(parsed_seed) = seed.cast::<V8Seed>() {
+            let seed_arc = Arc::clone(&parsed_seed.get().inner);
+            let doc_arc = Arc::clone(&self.inner);
+            let bytes = py
+                .detach(|| cadkit::to_dgn_with_seed(&doc_arc, &seed_arc, &options))
+                .map_err(map_err)?;
+            return Ok(PyBytes::new(py, &bytes));
+        }
+        let Some(seed_bytes_res) = extract_buffer_bytes(py, seed) else {
+            return Err(PyTypeError::new_err(
+                "seed must be a V8Seed, bytes, bytearray, or memoryview",
+            ));
+        };
+        let seed_bytes = seed_bytes_res?;
         let bytes = py
-            .detach(|| cadkit::to_dgn(&self.inner, seed, &options))
+            .detach(|| cadkit::to_dgn(&self.inner, &seed_bytes, &options))
             .map_err(map_err)?;
         Ok(PyBytes::new(py, &bytes))
     }
@@ -236,7 +474,7 @@ impl Document {
 
     /// Renders one model as an SVG string.
     #[allow(clippy::too_many_arguments, clippy::needless_update)]
-    #[pyo3(signature = (model=0, width=1600.0, stroke=1.0, background="#ffffff", text=true, expand_blocks=true, images=true))]
+    #[pyo3(signature = (model=0, width=1600.0, stroke=1.0, background="#ffffff", text=true, expand_blocks=true, images=true, include_hidden_layers=false))]
     fn to_svg(
         &self,
         py: Python<'_>,
@@ -247,6 +485,7 @@ impl Document {
         text: bool,
         expand_blocks: bool,
         images: bool,
+        include_hidden_layers: bool,
     ) -> PyResult<String> {
         if model >= self.inner.models.len() {
             return Err(model_range_error(model, self.inner.models.len()));
@@ -269,28 +508,38 @@ impl Document {
             ..SvgOptions::default()
         };
         let doc = &self.inner;
-        Ok(py.detach(|| cadkit::to_svg(doc, &options)))
+        Ok(py.detach(|| {
+            if include_hidden_layers {
+                cadkit::to_svg_all_layers(doc, &options)
+            } else {
+                cadkit::to_svg(doc, &options)
+            }
+        }))
     }
 
     /// Writes the document as ASCII DXF text.
     #[pyo3(signature = (version="r2018"))]
     fn to_dxf(&self, py: Python<'_>, version: &str) -> PyResult<String> {
-        let v = match version.to_ascii_lowercase().as_str() {
-            "r12" => DxfVersion::R12,
-            "r2000" => DxfVersion::R2000,
-            "r2004" => DxfVersion::R2004,
-            "r2007" => DxfVersion::R2007,
-            "r2010" => DxfVersion::R2010,
-            "r2013" => DxfVersion::R2013,
-            "r2018" => DxfVersion::R2018,
-            other => {
-                return Err(PyValueError::new_err(format!(
-                    "unknown DXF version {other:?}; expected r12, r2000, r2004, r2007, r2010, r2013 or r2018"
-                )));
-            }
-        };
+        let v = parse_dxf_version(version)?;
         let doc = &self.inner;
         py.detach(|| cadkit::to_dxf(doc, v)).map_err(map_err)
+    }
+
+    /// Writes the document as DXF bytes with an optional legacy 8-bit `codepage` (e.g. `"DOS857"`).
+    #[pyo3(signature = (version="r2018", codepage=None))]
+    fn to_dxf_bytes<'py>(
+        &self,
+        py: Python<'py>,
+        version: &str,
+        codepage: Option<&str>,
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        let v = parse_dxf_version(version)?;
+        let opts = cadkit::dxf::WriteOptions::new(v).with_codepage(codepage.map(str::to_owned));
+        let doc = &self.inner;
+        let bytes = py
+            .detach(|| cadkit::to_dxf_bytes(doc, &opts))
+            .map_err(map_err)?;
+        Ok(PyBytes::new(py, &bytes))
     }
 
     /// Iterates over the entities of one model as dicts.
@@ -424,20 +673,10 @@ fn read_citygml(
     })
 }
 
-/// Resolves a `read()` argument: `Ok(bytes)` for buffers, `Err(path)` for path-likes.
+/// Resolves a `read()`/`inspect()` argument: `Ok(bytes)` for buffers, `Err(path)` for path-likes.
 fn source_input(py: Python<'_>, source: &Bound<'_, PyAny>) -> PyResult<Result<Vec<u8>, String>> {
-    if let Ok(b) = source.cast::<PyBytes>() {
-        return Ok(Ok(b.as_bytes().to_vec()));
-    }
-    let builtins = py.import(intern!(py, "builtins"))?;
-    if source.is_instance_of::<PyByteArray>()
-        || source.is_instance(&builtins.getattr(intern!(py, "memoryview"))?)?
-    {
-        let b: Vec<u8> = builtins
-            .getattr(intern!(py, "bytes"))?
-            .call1((source,))?
-            .extract()?;
-        return Ok(Ok(b));
+    if let Some(res) = extract_buffer_bytes(py, source) {
+        return Ok(Ok(res?));
     }
     let os = py.import(intern!(py, "os"))?;
     let fspath = os.call_method1(intern!(py, "fspath"), (source,))?;
@@ -445,6 +684,37 @@ fn source_input(py: Python<'_>, source: &Bound<'_, PyAny>) -> PyResult<Result<Ve
         .call_method1(intern!(py, "fsdecode"), (fspath,))?
         .extract()?;
     Ok(Err(path))
+}
+
+/// Inspects a drawing header from a path or bytes without decoding full entity streams.
+#[pyfunction]
+#[pyo3(signature = (source, *, codepage=None, max_input_bytes=None, max_decompressed_bytes=None, max_objects=None, max_depth=None))]
+#[allow(clippy::too_many_arguments)]
+fn inspect<'py>(
+    py: Python<'py>,
+    source: &Bound<'py, PyAny>,
+    codepage: Option<String>,
+    max_input_bytes: Option<u64>,
+    max_decompressed_bytes: Option<u64>,
+    max_objects: Option<u64>,
+    max_depth: Option<u32>,
+) -> PyResult<Bound<'py, PyAny>> {
+    let input = source_input(py, source)?;
+    let options = build_read_options(
+        false,
+        codepage,
+        max_input_bytes,
+        max_decompressed_bytes,
+        max_objects,
+        max_depth,
+    );
+    let summary = py
+        .detach(|| match input {
+            Ok(bytes) => cadkit::inspect_with(&bytes, &options),
+            Err(path) => cadkit::inspect_file_with(path, &options),
+        })
+        .map_err(map_err)?;
+    to_py(py, &summary)
 }
 
 /// Reads a drawing from a path or from bytes.
@@ -462,16 +732,14 @@ fn read(
     max_depth: Option<u32>,
 ) -> PyResult<Document> {
     let input = source_input(py, source)?;
-    let mut options = ReadOptions {
+    let options = build_read_options(
         keep_raw,
-        fallback_codepage: codepage,
-        ..ReadOptions::default()
-    };
-    let limits = &mut options.limits;
-    limits.max_input_bytes = max_input_bytes.unwrap_or(limits.max_input_bytes);
-    limits.max_decompressed_bytes = max_decompressed_bytes.unwrap_or(limits.max_decompressed_bytes);
-    limits.max_objects = max_objects.unwrap_or(limits.max_objects);
-    limits.max_depth = max_depth.unwrap_or(limits.max_depth);
+        codepage,
+        max_input_bytes,
+        max_decompressed_bytes,
+        max_objects,
+        max_depth,
+    );
     let result = py.detach(|| match input {
         Ok(bytes) => cadkit::read_with(&bytes, &options),
         Err(path) => cadkit::open_with(path, &options),
@@ -493,6 +761,8 @@ fn detect(py: Python<'_>, data: &[u8]) -> PyResult<Option<String>> {
 #[pymodule]
 fn _cadkit(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Document>()?;
+    m.add_class::<V8Seed>()?;
+    m.add_function(wrap_pyfunction!(inspect, m)?)?;
     m.add_function(wrap_pyfunction!(read, m)?)?;
     m.add_function(wrap_pyfunction!(detect, m)?)?;
     m.add_function(wrap_pyfunction!(read_citygml, m)?)?;

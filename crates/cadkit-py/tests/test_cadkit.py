@@ -165,3 +165,81 @@ def test_to_svg_options(dxf_doc):
     for bad in (0, -1.0, float("nan"), float("inf")):
         with pytest.raises(ValueError):
             dxf_doc.to_svg(stroke=bad)
+
+
+def test_inspect_buffers_paths_and_limits(dxf_bytes, tmp_path):
+    path = tmp_path / "header.dxf"
+    path.write_bytes(dxf_bytes)
+    for source in (dxf_bytes, bytearray(dxf_bytes), memoryview(dxf_bytes), path, str(path)):
+        summary = cadkit.inspect(source)
+        assert summary["format"] == "dxf"
+        assert summary["version"] == "AC1015"
+        assert summary["units"]["unit"] == "millimeter"
+        with pytest.raises(cadkit.LimitExceededError):
+            cadkit.inspect(source, max_input_bytes=1)
+
+
+def test_document_operations_are_immutable(dxf_doc):
+    original = dxf_doc.to_dict()
+    converted = dxf_doc.convert_units("meter")
+    assert converted.units["unit"] == "meter"
+    line = next(e for e in converted.entities() if e["kind"]["type"] == "line")
+    assert line["kind"]["end"]["x"] == pytest.approx(0.1)
+    assert dxf_doc.to_dict() == original
+    assert dxf_doc.explode_inserts().to_dict() == original
+    with pytest.raises(ValueError):
+        dxf_doc.convert_units("invalid-unit")
+
+
+def test_explode_insert_geometry():
+    data = b"0\nSECTION\n2\nBLOCKS\n0\nBLOCK\n2\nB\n10\n0\n20\n0\n0\nLINE\n10\n0\n20\n0\n11\n2\n21\n0\n0\nENDBLK\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n0\nINSERT\n2\nB\n10\n10\n20\n0\n0\nENDSEC\n0\nEOF\n"
+    doc = cadkit.read(data)
+    expanded = doc.explode_inserts()
+    assert next(doc.entities())["kind"]["type"] == "insert"
+    line = next(expanded.entities())["kind"]
+    assert line["type"] == "line"
+    assert line["start"]["x"] == pytest.approx(10)
+    assert line["end"]["x"] == pytest.approx(12)
+
+
+def test_dxf_bytes_codepage_and_hidden_svg(dxf_bytes):
+    data = dxf_bytes.replace(b"WALLS\n70\n0", b"WALLS\n70\n1")
+    doc = cadkit.read(data)
+    assert 'data-layer="WALLS"' not in doc.to_svg()
+    assert 'data-layer="WALLS"' in doc.to_svg(include_hidden_layers=True)
+    out = doc.to_dxf_bytes("r2000", codepage="DOS857")
+    assert isinstance(out, bytes)
+    assert cadkit.read(out).format == "dxf"
+    with pytest.raises(ValueError):
+        doc.to_dxf_bytes("unknown")
+
+
+def test_v8seed_validation():
+    with pytest.raises(cadkit.CadkitError):
+        cadkit.V8Seed(b"not a seed")
+    assert "V8Seed" in cadkit.__all__ and "inspect" in cadkit.__all__
+
+
+def test_v8seed_public_roundtrip(dxf_doc):
+    path = REPO / "corpus/public/gdal/test_dgnv8.dgn"
+    if not path.exists():
+        pytest.skip("public seed missing")
+    seed = cadkit.V8Seed(path)
+    assert cadkit.V8Seed(seed).to_bytes() == seed.to_bytes() == path.read_bytes()
+    assert isinstance(seed.units, dict)
+    assert isinstance(seed.is_3d, bool)
+    assert isinstance(seed.is_nonempty, bool)
+    assert isinstance(seed.has_raster_template, bool)
+    prepared = seed.prepare_document(dxf_doc)
+    options = json.dumps({"clear_seed_model": True})
+    encoded = prepared.to_dgn(seed, options)
+    assert encoded == prepared.to_dgn(seed.to_bytes(), options)
+    assert cadkit.read(encoded).format == "dgn_v8"
+
+
+def test_legacy_dxf_bytes_preserve_turkish_text():
+    drawing = "0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1021\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n0\nTEXT\n10\n0\n20\n0\n40\n1\n1\nŞğİı\n0\nENDSEC\n0\nEOF\n"
+    encoded = cadkit.read(drawing.encode()).to_dxf_bytes("r2000", "DOS857")
+    assert "Şğİı".encode("cp857") in encoded
+    decoded = cadkit.read(encoded)
+    assert next(decoded.entities())["kind"]["value"] == "Şğİı"

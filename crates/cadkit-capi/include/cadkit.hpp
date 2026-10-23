@@ -125,6 +125,43 @@ public:
         return read_bytes(bytes.data(), bytes.size(), options);
     }
 
+    /// Header-only summary JSON without decoding entities.
+    static std::string inspect_file(const std::string& path, const ReadOptions& options = {}) {
+        cadkit_options c = convert(options);
+        char* out = nullptr;
+        detail::check(cadkit_inspect_file(path.c_str(), &c, &out));
+        return detail::take(out);
+    }
+    static std::string inspect_bytes(const std::vector<std::uint8_t>& bytes, const ReadOptions& options = {}) {
+        cadkit_options c = convert(options);
+        char* out = nullptr;
+        detail::check(cadkit_inspect_bytes(bytes.data(), bytes.size(), &c, &out));
+        return detail::take(out);
+    }
+
+    /// Returns a new document; this document remains unchanged.
+    Document explode_inserts(std::uint32_t max_depth = 32) const {
+        cadkit_document* out = nullptr;
+        detail::check(cadkit_document_explode_inserts(require(), max_depth, &out));
+        return Document(out);
+    }
+    Document convert_units(const std::string& unit) const {
+        cadkit_document* out = nullptr;
+        detail::check(cadkit_document_convert_units(require(), unit.c_str(), &out));
+        return Document(out);
+    }
+
+    /// DXF bytes with an optional legacy code page; the buffer is released even on allocation failure.
+    std::vector<std::uint8_t> to_dxf_bytes(cadkit_dxf_version version = CADKIT_DXF_R2018, const std::string& codepage = "") const {
+        std::uint8_t* out = nullptr;
+        std::size_t len = 0;
+        detail::check(cadkit_document_to_dxf_bytes(require(), version,
+            codepage.empty() ? nullptr : codepage.c_str(), &out, &len));
+        auto deleter = [](std::uint8_t* p) { cadkit_bytes_free(p); };
+        std::unique_ptr<std::uint8_t, decltype(deleter)> owned(out, deleter);
+        return len == 0 ? std::vector<std::uint8_t>{} : std::vector<std::uint8_t>(out, out + len);
+    }
+
     /// True if this object owns a document.
     explicit operator bool() const noexcept { return handle_ != nullptr; }
     const cadkit_document* get() const noexcept { return handle_; }

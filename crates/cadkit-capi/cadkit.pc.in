@@ -1,0 +1,9 @@
+prefix=${pcfiledir}/@CADKIT_PC_PREFIX@
+libdir=${prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+
+Name: cadkit
+Description: CAD format readers and exporters with a stable C ABI
+Version: @PROJECT_VERSION@
+Libs: -L${libdir} -lcadkit_capi
+Cflags: -I${includedir}

@@ -83,13 +83,18 @@ std::fs::write("plan.svg", cadkit::to_svg(&doc, &cadkit::SvgOptions::default()))
 CLI:
 
 ```sh
-cadkit info plan.dxf
+cadkit inspect plan.dxf --json
+cadkit info plan.dxf --json
+cadkit blocks plan.dxf --json
 cadkit layers plan.dxf
 cadkit convert plan.dxf plan.svg --width 1200
 cadkit convert plan.dxf plan.json --pretty
 cadkit convert plan.dxf plan.dgn --seed blank.dgn
 cadkit convert surfaces.dxf model.gml --crs "YOUR_EXPLICIT_CRS" --lod 1
 cadkit validate-gml model.gml
+cadkit convert plan.dxf - --to dxf --dxf-version r2000 --output-codepage DOS857 > legacy.dxf
+cadkit convert - plan.svg --explode-inserts --units meter --layer WALLS < plan.dxf
+cadkit completions bash > cadkit.bash
 ```
 
 Python:

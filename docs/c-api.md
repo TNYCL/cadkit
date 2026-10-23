@@ -61,9 +61,9 @@ With MinGW, link the DLL directly.
 
 | Object | Created by | Released by |
 |---|---|---|
-| `cadkit_document*` | `cadkit_read_file`, `cadkit_read_bytes`, `cadkit_document_from_json` | `cadkit_document_free` (once; `NULL` is a no-op) |
+| `cadkit_document*` | `cadkit_read_file`, `cadkit_read_bytes`, `cadkit_document_from_json`, `_explode_inserts`, `_convert_units` | `cadkit_document_free` (once; `NULL` is a no-op) |
 | `char*` | `cadkit_document_to_json`, `_to_svg`, `_to_dxf`, `_to_citygml`, `_to_citygml_with_report`, `_info_json`, `cadkit_citygml_read_json`, `_write_json`, `_preflight_tkgm` | `cadkit_string_free` (once; `NULL` is a no-op) |
-| `uint8_t*` | `cadkit_document_to_dgn` | `cadkit_bytes_free` (`NULL` or repeated free is a no-op; never pass to `cadkit_string_free`) |
+| `uint8_t*` | `cadkit_document_to_dgn`, `_to_dxf_bytes` | `cadkit_bytes_free` (`NULL` or repeated free is a no-op; never pass to `cadkit_string_free`) |
 | `const char*` | `cadkit_version`, `cadkit_status_string`, `cadkit_last_error_message` | never freed |
 
 Freeing a document twice, or using one after it was freed, is detected through a registry of
@@ -89,7 +89,7 @@ the freed address is reused by a later document the stale pointer cannot be told
 | `cadkit_document_to_svg(doc, options, &s)` | One model rendered as SVG |
 | `cadkit_document_to_dxf(doc, version, &s)` | ASCII DXF of the given version |
 | `cadkit_document_to_dgn(doc, seed, seed_len, options_json, &bytes, &len)` | Seed-based DGN V8 binary output |
-| `cadkit_bytes_free(bytes)` | Release a binary buffer returned by `cadkit_document_to_dgn` |
+| `cadkit_bytes_free(bytes)` | Release a binary buffer returned by `cadkit_document_to_dgn`, `_to_dxf_bytes` |
 | `cadkit_document_to_citygml(doc, srs_name, lod, &s)` | Generic CityGML 2.0 XML with an explicit CRS and LoD |
 | `cadkit_document_to_citygml_with_report(doc, srs_name, lod, metadata_only, &s)` | Generic CityGML 2.0 XML + conversion `ExportReport` as JSON (`{"xml", "report"}`) |
 | `cadkit_citygml_read_json(data, len, options, &s)` | Read native CityGML 2.0 bytes into editable object-graph JSON |
@@ -214,3 +214,44 @@ free calls harmless. As with existing document handles, caller-controlled input
 pointers must remain valid for the call and live documents cannot be freed
 concurrently. C++ adds RAII `Document::from_json`, `to_dgn`, `to_citygml`, and
 `to_citygml_with_report`.
+
+
+## Header inspection and immutable operations
+
+`cadkit_inspect_file(path, options, &json)` and
+`cadkit_inspect_bytes(data, len, options, &json)` return header-only summary JSON.
+Release each returned string with `cadkit_string_free`. Resource limits use the existing
+`cadkit_options` contract.
+
+`cadkit_document_explode_inserts(doc, max_depth, &copy)` and
+`cadkit_document_convert_units(doc, "meter", &copy)` return a new document handle.
+The source remains immutable and safe for concurrent readers; release the copy with
+`cadkit_document_free`. Missing, cyclic or deeper block references remain as inserts.
+
+`cadkit_document_to_dxf_bytes(doc, version, codepage, &data, &len)` supports legacy output
+encodings such as `DOS857`; `codepage=NULL` selects the default. Release the byte buffer
+with `cadkit_bytes_free`. On failure the pointer and length are reset to NULL/zero.
+The existing structs and enum values remain unchanged (64-bit layouts: options 48 bytes,
+SVG options 40 bytes, info 48 bytes). The C++17 wrapper exposes `inspect_file`,
+`inspect_bytes`, `explode_inserts`, `convert_units`, and `to_dxf_bytes` with RAII ownership.
+
+## Install for CMake and pkg-config consumers
+
+After building the shared library:
+
+```sh
+cmake -S crates/cadkit-capi -B build/capi -DCADKIT_LIB_DIR="$PWD/target/release" \
+  -DCMAKE_INSTALL_PREFIX="$PWD/build/cadkit-install"
+cmake --build build/capi
+ctest --test-dir build/capi --output-on-failure
+cmake --install build/capi
+```
+
+Consumers use `find_package(cadkit CONFIG REQUIRED)` and link `cadkit::cadkit`, or set
+`PKG_CONFIG_PATH` to the installed `lib/pkgconfig` and use `pkg-config --cflags --libs cadkit`.
+On Unix, configure the runtime library path/rpath for the installed shared library. On
+Windows, ship the DLL next to the consuming executable or put its directory on PATH.
+The installer packages the already-built shared library and headers; it does not run Cargo.
+
+Block expansion raises a limit error if its work budget is exhausted; it does not return
+a silently partial copy. Missing, cyclic and deeper references remain as inserts.

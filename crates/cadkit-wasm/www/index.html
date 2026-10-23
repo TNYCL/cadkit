@@ -15,7 +15,8 @@
     <div class="brand"><span class="logo" aria-hidden="true"></span><h1>cadkit viewer</h1></div>
     <div class="bar-actions">
       <button type="button" id="open-btn" class="primary">Open file</button>
-      <input type="file" id="file-input" accept=".dwg,.dgn,.dxf" hidden>
+      <input type="file" id="file-input" accept=".dwg,.dgn,.dxf,.gml,.xml,.citygml" hidden>
+      <button type="button" id="theme-btn" title="Switch sheet background between light and dark">Dark sheet</button>
       <button type="button" id="fit-btn" disabled title="Fit drawing to view (0)">Fit</button>
       <button type="button" id="panel-btn" class="only-narrow" aria-expanded="false" aria-controls="side">Panels</button>
     </div>
@@ -23,16 +24,17 @@
 
   <main class="main">
     <section class="stage-wrap" id="stage-wrap">
-      <div id="stage" class="stage" tabindex="0" role="application" aria-label="Drawing canvas. Arrow keys pan, plus and minus zoom, 0 fits the view."></div>
-      <div id="drop" class="drop" role="button" tabindex="0" aria-label="Drop a DWG, DGN or DXF file here, or press Enter to choose one">
+      <div id="stage" class="stage" tabindex="0" role="application" aria-label="Drawing canvas. Arrow keys pan, plus and minus zoom, 0 fits the view, click an entity to inspect."></div>
+      <div id="drop" class="drop" role="button" tabindex="0" aria-label="Drop a DWG, DGN, DXF or CityGML file here, or press Enter to choose one">
         <div class="drop-card">
           <svg viewBox="0 0 48 48" width="48" height="48" aria-hidden="true"><path d="M24 33V9m0 0-9 9m9-9 9 9M8 31v7a2 2 0 0 0 2 2h28a2 2 0 0 0 2-2v-7" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
           <p class="drop-title">Drop a drawing here</p>
-          <p class="drop-sub">.dwg, .dgn or .dxf &middot; or click to choose a file</p>
+          <p class="drop-sub">.dwg, .dgn, .dxf or .gml &middot; or click to choose a file</p>
           <p class="privacy">Files are opened locally in your browser and never leave this machine.</p>
         </div>
       </div>
       <div id="busy" class="busy" hidden>Reading&hellip;</div>
+      <div id="coords" class="coords" aria-hidden="true" hidden>X: 0, Y: 0</div>
       <div id="status" class="status" role="status" aria-live="polite" hidden></div>
       <div class="zoom">
         <button type="button" id="zoom-in" aria-label="Zoom in" disabled>+</button>
@@ -42,11 +44,37 @@
 
     <aside class="side" id="side" aria-label="Drawing details">
       <section class="card" id="model-card" hidden>
-        <h2>Model</h2>
-        <label class="sr-only" for="model-select">Model</label>
+        <h2>Display</h2>
+        <label class="field-label" for="model-select">Model</label>
         <select id="model-select"></select>
+        <label class="field-label" for="codepage-select">Fallback 8-bit code page</label>
+        <select id="codepage-select">
+          <option value="">Auto (file header / UTF-8)</option>
+          <option value="windows-1252">Western (windows-1252)</option>
+          <option value="windows-1254">Turkish (windows-1254)</option>
+          <option value="cp857">Turkish DOS (cp857)</option>
+          <option value="windows-1250">Central European (windows-1250)</option>
+          <option value="cp852">Central European DOS (cp852)</option>
+          <option value="windows-1251">Cyrillic (windows-1251)</option>
+          <option value="cp866">Cyrillic DOS (cp866)</option>
+          <option value="cp437">US OEM (cp437)</option>
+          <option value="cp850">Multilingual OEM (cp850)</option>
+          <option value="shift_jis">Japanese (shift_jis)</option>
+          <option value="gbk">Simplified Chinese (gbk)</option>
+          <option value="euc-kr">Korean (euc-kr)</option>
+        </select>
         <label class="check"><input type="checkbox" id="text-toggle" checked> Show text</label>
         <label class="check"><input type="checkbox" id="images-toggle" checked> Images / raster frames</label>
+        <label class="check"><input type="checkbox" id="hidden-layers-toggle"> Include hidden layers</label>
+      </section>
+
+      <section class="card" id="sel-card" hidden>
+        <div class="row">
+          <h2>Selection</h2>
+          <span class="spacer"></span>
+          <button type="button" id="sel-clear" class="small">Clear</button>
+        </div>
+        <dl id="sel-info" class="info"></dl>
       </section>
 
       <section class="card">
@@ -73,9 +101,13 @@
         <div class="export">
           <button type="button" id="exp-svg" disabled>SVG</button>
           <button type="button" id="exp-dxf" disabled>DXF</button>
+          <button type="button" id="exp-gml" disabled>GML</button>
           <button type="button" id="exp-json" disabled>JSON</button>
         </div>
-        <p class="hint">Exports are generated in your browser.</p>
+        <label class="field-label" for="gml-crs">GML CRS of existing coordinates</label>
+        <input id="gml-crs" type="text" placeholder="CRS identifier" autocomplete="off">
+        <label class="check"><input type="checkbox" id="gml-metadata"> Keep unsupported GML geometry as metadata</label>
+        <p class="hint">Exports are generated locally in your browser.</p>
       </section>
     </aside>
   </main>

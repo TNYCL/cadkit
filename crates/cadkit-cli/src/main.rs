@@ -5,12 +5,12 @@
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
-use std::io::Write as _;
+use std::io::{IsTerminal as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use cadkit::{Color, Document, DxfVersion, Entity, EntityKind, ReadOptions, SvgOptions};
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 
 /// Inspect and convert DWG, DGN, DXF, and CityGML 2.0 drawings.
 #[derive(Parser, Debug)]
@@ -46,8 +46,41 @@ struct Cli {
     command: Command,
 }
 
+#[derive(Args, Debug, Default)]
+struct TransformOptions {
+    /// Expand block references before filtering.
+    #[arg(long)]
+    explode_inserts: bool,
+    /// Convert drawing units (e.g. mm, meter, ft).
+    #[arg(long, value_name = "UNIT")]
+    units: Option<String>,
+    /// Keep only entities on this layer (exact name).
+    #[arg(long, value_name = "NAME")]
+    layer: Option<String>,
+    /// Keep only this entity kind (e.g. line, circle, insert).
+    #[arg(long, value_name = "KIND")]
+    kind: Option<String>,
+}
+
 #[derive(Subcommand, Debug)]
 enum Command {
+    /// Read header metadata without decoding entity streams. Use - for stdin.
+    Inspect {
+        file: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    /// List block definitions. Use - for stdin.
+    Blocks {
+        file: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print a shell completion script without extra dependencies.
+    Completions {
+        #[arg(value_parser = ["bash", "zsh", "fish", "powershell"])]
+        shell: String,
+    },
     /// Summarize a drawing: format, units, models, layers, entity histogram.
     Info {
         /// Input DWG, DGN, DXF, or CityGML 2.0 file.
@@ -58,9 +91,13 @@ enum Command {
         /// Number of warnings to list with --warnings.
         #[arg(long, default_value_t = 20, value_name = "N")]
         max_warnings: usize,
+        #[arg(long)]
+        json: bool,
     },
     /// List the layers with their state and entity counts.
     Layers {
+        #[arg(long)]
+        json: bool,
         /// Input DWG, DGN, DXF, or CityGML 2.0 file.
         file: PathBuf,
     },
@@ -70,6 +107,14 @@ enum Command {
         input: PathBuf,
         /// Output file; its extension selects the format.
         output: PathBuf,
+        /// Output format; required with stdout (-).
+        #[arg(long, value_parser = ["json", "svg", "dxf", "dgn", "gml"])]
+        to: Option<String>,
+        /// Legacy DXF output code page (independent of --codepage input decoding).
+        #[arg(long, value_name = "LABEL")]
+        output_codepage: Option<String>,
+        #[command(flatten)]
+        transform: TransformOptions,
         /// Model to render (SVG only).
         #[arg(long, default_value_t = 0, value_name = "N")]
         model: usize,
@@ -120,6 +165,8 @@ enum Command {
     },
     /// Print one line per entity, or the full document as JSON.
     Dump {
+        #[command(flatten)]
+        transform: TransformOptions,
         /// Input DWG, DGN, DXF, or CityGML 2.0 file.
         file: PathBuf,
         /// Print the whole document as pretty JSON instead.
@@ -183,11 +230,11 @@ fn main() -> ExitCode {
     match run(&cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(CliError::Usage(msg)) => {
-            eprintln!("error: {msg}");
+            eprintln!("error: {}", clean(&msg));
             ExitCode::from(2)
         }
         Err(CliError::Failure(msg)) => {
-            eprintln!("error: {msg}");
+            eprintln!("error: {}", clean(&msg));
             ExitCode::from(1)
         }
     }
@@ -195,26 +242,76 @@ fn main() -> ExitCode {
 
 fn run(cli: &Cli) -> Result<(), CliError> {
     match &cli.command {
+        Command::Inspect { file, json } => {
+            let options = read_options(cli);
+            let summary = if file == Path::new("-") {
+                let bytes = load_bytes(file, options.limits.max_input_bytes)?;
+                cadkit::inspect_with(&bytes, &options)
+            } else {
+                cadkit::inspect_file_with(file, &options)
+            }
+            .map_err(|e| failure(file, &e))?;
+            if *json {
+                print_json(&serde_json::json!(summary))?;
+            } else {
+                print_out(&strip_controls(&format!(
+                    "Format: {:?}\nVersion: {}\n3D: {:?}\nUnits: {:?}\nCodepage: {}\nApplication: {}\n",
+                    summary.format,
+                    summary.version,
+                    summary.is_3d,
+                    summary.units,
+                    summary.codepage.as_deref().unwrap_or("-"),
+                    summary.application.as_deref().unwrap_or("-")
+                )));
+            }
+        }
+        Command::Blocks { file, json } => {
+            let doc = load(cli, file)?;
+            if *json {
+                print_json(&serde_json::json!(doc.blocks))?;
+            } else {
+                for block in &doc.blocks {
+                    print_out(&format!(
+                        "{}\t{} entities\n",
+                        clean(&block.name),
+                        block.entities.len()
+                    ));
+                }
+            }
+        }
+        Command::Completions { shell } => print_out(&completions(shell)),
         Command::Info {
             file,
             warnings,
             max_warnings,
+            json,
         } => {
             let doc = load(cli, file)?;
-            print_out(&strip_controls(&info_text(
-                file,
-                &doc,
-                *warnings,
-                *max_warnings,
-            )));
+            if *json {
+                print_json(&info_json(&doc))?;
+            } else {
+                print_out(&strip_controls(&info_text(
+                    file,
+                    &doc,
+                    *warnings,
+                    *max_warnings,
+                )));
+            }
         }
-        Command::Layers { file } => {
+        Command::Layers { file, json } => {
             let doc = load(cli, file)?;
-            print_out(&strip_controls(&layers_text(&doc)));
+            if *json {
+                print_json(&serde_json::json!(doc.layers))?;
+            } else {
+                print_out(&strip_controls(&layers_text(&doc)));
+            }
         }
         Command::Convert {
             input,
             output,
+            to,
+            output_codepage,
+            transform,
             model,
             dxf_version,
             width,
@@ -226,11 +323,31 @@ fn run(cli: &Cli) -> Result<(), CliError> {
             preserve_invalid_geometry,
             gml_metadata_only,
         } => {
-            let target = OutputKind::from_path(output)?;
+            let target = if let Some(to) = to {
+                OutputKind::from_path(Path::new(&format!("out.{to}")))?
+            } else {
+                OutputKind::from_path(output)?
+            };
+            if input == Path::new("-") && seed.as_deref() == Some(Path::new("-")) {
+                return Err(CliError::Usage(
+                    "input and seed cannot both use stdin".into(),
+                ));
+            }
+            if output_codepage.is_some() && !matches!(target, OutputKind::Dxf) {
+                return Err(CliError::Usage(
+                    "--output-codepage requires DXF output".into(),
+                ));
+            }
             let options = read_options(cli);
             if matches!(target, OutputKind::Gml) {
                 let bytes = load_bytes(input, options.limits.max_input_bytes)?;
                 let output_bytes = if cadkit::gml::sniff(&bytes) {
+                    if transform.active() {
+                        return Err(CliError::Usage(
+                            "native GML-to-GML preservation does not support document transforms"
+                                .into(),
+                        ));
+                    }
                     if *gml_metadata_only {
                         return Err(CliError::Usage(
                             "--gml-metadata-only requires CAD input".into(),
@@ -249,8 +366,9 @@ fn run(cli: &Cli) -> Result<(), CliError> {
                             "--preserve-invalid-geometry requires CityGML input".into(),
                         ));
                     }
-                    let doc =
+                    let mut doc =
                         cadkit::read_with(&bytes, &options).map_err(|e| failure(input, &e))?;
+                    apply_transforms(&mut doc, transform)?;
                     let srs_name = crs.clone().ok_or_else(|| {
                         CliError::Usage("new CityGML output requires --crs".into())
                     })?;
@@ -277,7 +395,7 @@ fn run(cli: &Cli) -> Result<(), CliError> {
                     }
                     bytes
                 };
-                std::fs::write(output, output_bytes).map_err(|e| failure(output, &e))?;
+                write_output(output, &output_bytes)?;
                 return Ok(());
             }
             if *gml_metadata_only {
@@ -285,7 +403,8 @@ fn run(cli: &Cli) -> Result<(), CliError> {
                     "--gml-metadata-only requires GML output".into(),
                 ));
             }
-            let doc = load(cli, input)?;
+            let mut doc = load(cli, input)?;
+            apply_transforms(&mut doc, transform)?;
             if matches!(target, OutputKind::Dgn) {
                 let seed = seed
                     .as_ref()
@@ -302,12 +421,24 @@ fn run(cli: &Cli) -> Result<(), CliError> {
                 }
                 let bytes =
                     cadkit::to_dgn(&doc, &bytes, &options).map_err(|e| failure(output, &e))?;
-                std::fs::write(output, bytes).map_err(|e| failure(output, &e))?;
+                write_output(output, &bytes)?;
+                return Ok(());
+            }
+            if matches!(target, OutputKind::Dxf) {
+                let opts = cadkit::dxf::WriteOptions::new(dxf_version.unwrap_or_default())
+                    .with_codepage(output_codepage.clone());
+                let bytes = cadkit::to_dxf_bytes(&doc, &opts).map_err(|e| failure(output, &e))?;
+                write_output(output, &bytes)?;
                 return Ok(());
             }
             let text = match target {
                 OutputKind::Json => {
-                    cadkit::to_json(&doc, *pretty).map_err(|e| failure(output, &e))?
+                    let json = cadkit::to_json(&doc, *pretty).map_err(|e| failure(output, &e))?;
+                    if output == Path::new("-") && std::io::stdout().is_terminal() {
+                        json_for_terminal(&json)
+                    } else {
+                        json
+                    }
                 }
                 OutputKind::Svg => {
                     if *model >= doc.models.len() {
@@ -333,7 +464,7 @@ fn run(cli: &Cli) -> Result<(), CliError> {
                     ));
                 }
             };
-            std::fs::write(output, text).map_err(|e| failure(output, &e))?;
+            write_output(output, text.as_bytes())?;
         }
         Command::ValidateGml { file, tkgm_profile } => {
             let options = read_options(cli);
@@ -373,8 +504,13 @@ fn run(cli: &Cli) -> Result<(), CliError> {
             let bytes = cadkit::dgn::repack_v8(&bytes, &options).map_err(|e| failure(input, &e))?;
             std::fs::write(output, bytes).map_err(|e| failure(output, &e))?;
         }
-        Command::Dump { file, json } => {
-            let doc = load(cli, file)?;
+        Command::Dump {
+            file,
+            json,
+            transform,
+        } => {
+            let mut doc = load(cli, file)?;
+            apply_transforms(&mut doc, transform)?;
             if *json {
                 let text = cadkit::to_json(&doc, true).map_err(|e| failure(file, &e))?;
                 print_out(&format!("{}\n", json_for_terminal(&text)));
@@ -391,11 +527,28 @@ fn failure(path: &Path, e: &dyn std::fmt::Display) -> CliError {
 }
 
 fn load(cli: &Cli, path: &Path) -> Result<Document, CliError> {
-    cadkit::open_with(path, &read_options(cli)).map_err(|e| failure(path, &e))
+    let options = read_options(cli);
+    if path == Path::new("-") {
+        cadkit::read_from(std::io::stdin().lock(), &options).map_err(|e| failure(path, &e))
+    } else {
+        cadkit::open_with(path, &options).map_err(|e| failure(path, &e))
+    }
 }
 
 fn load_bytes(path: &Path, max: u64) -> Result<Vec<u8>, CliError> {
     use std::io::Read;
+    if path == Path::new("-") {
+        let mut bytes = Vec::new();
+        std::io::stdin()
+            .lock()
+            .take(max.saturating_add(1))
+            .read_to_end(&mut bytes)
+            .map_err(|e| failure(path, &e))?;
+        if bytes.len() as u64 > max {
+            return Err(CliError::Failure("input byte limit exceeded".into()));
+        }
+        return Ok(bytes);
+    }
     let file = std::fs::File::open(path).map_err(|e| failure(path, &e))?;
     if file.metadata().map_err(|e| failure(path, &e))?.len() > max {
         return Err(CliError::Failure("input byte limit exceeded".into()));
@@ -506,7 +659,7 @@ impl OutputKind {
             Some("dgn") => Ok(Self::Dgn),
             Some("gml") | Some("citygml") => Ok(Self::Gml),
             _ => Err(CliError::Usage(format!(
-                "cannot choose an output format for `{}`: use .json, .svg, .dxf, .dgn or .gml",
+                "cannot choose an output format for `{}`: use .json, .svg, .dxf, .dgn or .gml (stdout requires --to)",
                 path.display()
             ))),
         }
@@ -878,6 +1031,116 @@ fn dump_text(doc: &Document) -> String {
         });
     }
     out
+}
+
+fn print_json(value: &serde_json::Value) -> Result<(), CliError> {
+    let text = serde_json::to_string_pretty(value).map_err(|e| CliError::Failure(e.to_string()))?;
+    std::io::stdout()
+        .lock()
+        .write_all(format!("{}\n", json_for_terminal(&text)).as_bytes())
+        .map_err(|e| CliError::Failure(e.to_string()))
+}
+
+fn info_json(doc: &Document) -> serde_json::Value {
+    let mut kinds = BTreeMap::<&str, usize>::new();
+    for model in &doc.models {
+        for_each_entity(&model.entities, 0, &mut |e, _| {
+            *kinds.entry(e.kind.type_name()).or_default() += 1;
+        });
+    }
+    serde_json::json!({"source":doc.source, "units":doc.units, "models":doc.models.len(),
+        "layers":doc.layers.len(), "blocks":doc.blocks.len(), "entity_kinds":kinds, "warnings":doc.warnings})
+}
+
+fn write_output(path: &Path, bytes: &[u8]) -> Result<(), CliError> {
+    if path != Path::new("-") {
+        return std::fs::write(path, bytes).map_err(|e| failure(path, &e));
+    }
+    let stdout = std::io::stdout();
+    if stdout.is_terminal() {
+        let text = std::str::from_utf8(bytes)
+            .map_err(|_| CliError::Usage("redirect binary output to a file or pipe".into()))?;
+        stdout
+            .lock()
+            .write_all(strip_controls(text).as_bytes())
+            .map_err(|e| failure(path, &e))
+    } else {
+        stdout
+            .lock()
+            .write_all(bytes)
+            .map_err(|e| failure(path, &e))
+    }
+}
+
+impl TransformOptions {
+    fn active(&self) -> bool {
+        self.explode_inserts || self.units.is_some() || self.layer.is_some() || self.kind.is_some()
+    }
+}
+
+fn apply_transforms(doc: &mut Document, options: &TransformOptions) -> Result<(), CliError> {
+    if let Some(unit) = &options.units {
+        let target = cadkit::LengthUnit::from_name(unit)
+            .ok_or_else(|| CliError::Usage(format!("unknown length unit {unit:?}")))?;
+        doc.convert_units(target)
+            .map_err(|e| CliError::Failure(e.to_string()))?;
+    }
+    if options.explode_inserts {
+        let stats = doc.explode_inserts(32);
+        if stats.truncated {
+            return Err(CliError::Failure(
+                "block expansion work limit exceeded".into(),
+            ));
+        }
+    }
+    if let Some(layer) = &options.layer {
+        doc.retain_layers(|name| name == layer);
+    }
+    if let Some(kind) = &options.kind {
+        fn retain(entities: &mut Vec<Entity>, kind: &str) {
+            entities.retain_mut(|e| {
+                if let EntityKind::Group { children, .. } = &mut e.kind {
+                    retain(children, kind);
+                    if !children.is_empty() {
+                        return true;
+                    }
+                }
+                e.kind.type_name() == kind
+            });
+        }
+        for model in &mut doc.models {
+            retain(&mut model.entities, kind);
+        }
+        for block in &mut doc.blocks {
+            retain(&mut block.entities, kind);
+        }
+    }
+    Ok(())
+}
+
+fn completions(shell: &str) -> String {
+    let commands =
+        "inspect info layers blocks convert dump validate-gml repack-dgn completions help";
+    let flags = "--help --version --keep-raw --codepage --max-input-bytes --max-decompressed-bytes --max-objects --planarity-tolerance --json --warnings --max-warnings --to --output-codepage --explode-inserts --units --layer --kind --model --dxf-version --width --pretty --seed --clear-seed-model --crs --lod --preserve-invalid-geometry --gml-metadata-only --tkgm-profile";
+    match shell {
+        "bash" => format!(
+            "_cadkit() {{ local cur=\"${{COMP_WORDS[COMP_CWORD]}}\"; COMPREPLY=( $(compgen -W '{commands} {flags}' -- \"$cur\") ); if [[ $cur != -* ]]; then COMPREPLY+=( $(compgen -f -- \"$cur\") ); fi; }}\ncomplete -F _cadkit cadkit\n"
+        ),
+        "zsh" => format!(
+            "#compdef cadkit\n_arguments '*:argument:(({commands} {flags}))' '*:file:_files'\n"
+        ),
+        "fish" => format!(
+            "complete -c cadkit -f -a '{commands}'\n{}",
+            flags
+                .split_whitespace()
+                .map(|f| format!("complete -c cadkit -l {}\n", f.trim_start_matches('-')))
+                .collect::<String>()
+        ),
+        "powershell" => format!(
+            "Register-ArgumentCompleter -Native -CommandName cadkit -ScriptBlock {{ param($wordToComplete, $commandAst, $cursorPosition)\n'{commands} {flags}'.Split(' ') | Where-Object {{ $_ -like \"$wordToComplete*\" }} | ForEach-Object {{ [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }}\n}}\n"
+        ),
+        _ => String::new(),
+    }
 }
 
 #[cfg(test)]
