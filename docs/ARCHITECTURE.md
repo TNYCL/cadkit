@@ -12,6 +12,26 @@
                   cadkit-core         model, ByteReader, Error, Limits, ReadOptions, SVG
 ```
 
+## Analytic geometry
+
+`cadkit-geom` is an independent `f64` analytic geometry crate, alongside the format
+stack above:
+
+```text
+cadkit-geom       analytic curves, polygons, booleans, calibration, NURBS
+    |            no dependencies on any other cadkit crate
+    +-- serde, thiserror, i_overlay, robust, optional schemars
+```
+
+The facade and format crates do not depend on future scene or GPU crates. Future
+scene/GPU layers may consume geometry; reading a format must not pull in a GPU
+runtime. Geometry coordinates and tolerances belong to the caller; see
+[geometry contracts](geom/NOTES.md).
+
+The curve and NURBS helpers in `cadkit-core` are a **known overlap; consolidation
+is a separate decision**. They remain separate; the MSRV lint updates do not
+consolidate them or change their algorithms.
+
 ## Contracts
 
 Each format crate exposes at least:
