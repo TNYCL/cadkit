@@ -1,0 +1,31 @@
+[package]
+name = "cadkit-geom"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Independent f64 analytic geometry, polygon booleans and certified NURBS operations"
+keywords = ["cad", "geometry", "nurbs", "polygon", "boolean"]
+categories = ["mathematics", "graphics"]
+
+[features]
+default = []
+schemars = ["dep:schemars"]
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+schemars = { workspace = true, optional = true }
+i_overlay.workspace = true
+robust.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true
+
+[package.metadata.docs.rs]
+all-features = true

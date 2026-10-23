@@ -3,6 +3,7 @@ resolver = "3"
 members = ["crates/*"]
 # cadkit-py and cadkit-wasm need their own toolchains (maturin / wasm32); build them explicitly.
 default-members = [
+    "crates/cadkit-geom",
     "crates/cadkit-core",
     "crates/cadkit-dgn",
     "crates/cadkit-dwg",
@@ -17,7 +18,7 @@ exclude = ["fuzz"]
 [workspace.package]
 version = "0.3.7"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/TNYCL/cadkit"
 authors = ["TNYCL"]
@@ -25,6 +26,10 @@ keywords = ["cad", "dwg", "dgn", "dxf", "citygml"]
 categories = ["parser-implementations", "graphics", "encoding", "science::geo"]
 
 [workspace.dependencies]
+cadkit-geom = { path = "crates/cadkit-geom", version = "0.3.7" }
+i_overlay = "=9.0.0"
+robust = "=1.2.0"
+schemars = "1.2.2"
 cadkit-core = { path = "crates/cadkit-core", version = "0.3.7" }
 cadkit-dgn = { path = "crates/cadkit-dgn", version = "0.3.7", default-features = false }
 cadkit-dwg = { path = "crates/cadkit-dwg", version = "0.3.7" }
