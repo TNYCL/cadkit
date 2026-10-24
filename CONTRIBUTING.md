@@ -53,7 +53,7 @@ Public samples for corpus tests:
 python scripts/fetch-corpus.py
 ```
 
-Code rules in short: edition 2024, MSRV 1.85, clippy clean with `-D warnings`, no `unwrap`,
+Code rules in short: edition 2024, MSRV 1.88, clippy clean with `-D warnings`, no `unwrap`,
 `expect`, `panic!` or slice indexing in library code, every file-provided size checked
 against `ReadOptions::limits` before allocating, recoverable problems become warnings.
 `unsafe` is allowed only in `cadkit-py`, `cadkit-wasm` and `cadkit-capi`, each block with a
