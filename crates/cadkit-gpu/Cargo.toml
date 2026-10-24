@@ -1,0 +1,24 @@
+[package]
+name = "cadkit-gpu"
+description = "wgpu renderers for cadkit-scene: analytic 2D lines and arcs, lit 3D meshes, offscreen rendering."
+version.workspace = true
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords = ["cad", "wgpu", "rendering", "gpu", "plan"]
+categories = ["graphics", "rendering"]
+
+[dependencies]
+cadkit-scene.workspace = true
+glam.workspace = true
+thiserror.workspace = true
+wgpu.workspace = true
+
+[dev-dependencies]
+cadkit-geom.workspace = true
+
+[lints]
+workspace = true
