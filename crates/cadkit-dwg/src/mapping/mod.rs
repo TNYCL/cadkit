@@ -205,11 +205,10 @@ impl<'f> Mapper<'f> {
     }
 
     fn warn(&mut self, code: &str, message: String, object: Option<u64>) {
-        self.warnings.push(Warning {
-            code: code.into(),
-            message,
-            offset: None,
-            object,
+        self.warnings.push({
+            let mut warning = Warning::new(code, message);
+            warning.object = object;
+            warning
         });
     }
 
@@ -657,14 +656,11 @@ pub fn to_document(file: &DwgFile, options: &ReadOptions) -> Result<Document> {
         warnings: Vec::new(),
         unsupported: BTreeMap::new(),
     };
-    let mut doc = Document {
-        source: SourceInfo {
-            format: Format::Dwg,
-            version: file.version.magic().to_owned(),
-            application: None,
-            codepage: Some(file.encoding.to_owned()),
-        },
-        ..Document::default()
+    let mut doc = {
+        let mut doc = Document::default();
+        doc.source = SourceInfo::new(Format::Dwg, file.version.magic().to_owned())
+            .with_codepage(file.encoding.to_owned());
+        doc
     };
     doc.units = file
         .header
@@ -710,18 +706,19 @@ pub fn to_document(file: &DwgFile, options: &ReadOptions) -> Result<Document> {
             Color::ByLayer | Color::ByBlock => Color::Aci { index: 7 },
             c => c,
         };
-        doc.layers.push(Layer {
-            name: l.entry.name.clone(),
-            id: Some(h),
-            color,
-            linetype: l.linetype.and_then(|t| m.names.linetypes.get(&t)).cloned(),
-            lineweight: lineweight(l.lineweight),
-            visible: l.on && l.color.index >= 0,
-            frozen: l.frozen,
-            locked: l.locked,
-            plottable: l.plot,
-            description,
-            props,
+        doc.layers.push({
+            let mut layer = Layer::new(l.entry.name.clone())
+                .with_id(h)
+                .with_color(color)
+                .with_lineweight(lineweight(l.lineweight))
+                .with_visible(l.on && l.color.index >= 0)
+                .with_frozen(l.frozen)
+                .with_locked(l.locked)
+                .with_plottable(l.plot)
+                .with_props(props);
+            layer.linetype = l.linetype.and_then(|t| m.names.linetypes.get(&t)).cloned();
+            layer.description = description;
+            layer
         });
     }
 
@@ -735,11 +732,14 @@ pub fn to_document(file: &DwgFile, options: &ReadOptions) -> Result<Document> {
         if l.dashes.iter().any(|d| d.shape_flags != 0) {
             props.insert("dwg.complex".into(), Value::Bool(true));
         }
-        doc.linetypes.push(Linetype {
-            name: l.entry.name.clone(),
-            description: Some(l.description.clone()).filter(|d| !d.is_empty()),
-            pattern: l.dashes.iter().map(|d| d.length).collect(),
-            props,
+        doc.linetypes.push({
+            let mut linetype = Linetype::new(
+                l.entry.name.clone(),
+                l.dashes.iter().map(|d| d.length).collect(),
+            )
+            .with_props(props);
+            linetype.description = Some(l.description.clone()).filter(|d| !d.is_empty());
+            linetype
         });
     }
 
@@ -761,13 +761,14 @@ pub fn to_document(file: &DwgFile, options: &ReadOptions) -> Result<Document> {
         if s.generation != 0 {
             props.insert("dwg.generation".into(), Value::Int(i64::from(s.generation)));
         }
-        doc.text_styles.push(TextStyle {
-            name: s.entry.name.clone(),
-            font: Some(s.font.clone()).filter(|f| !f.is_empty()),
-            height: s.fixed_height,
-            width_factor: s.width_factor,
-            oblique: s.oblique,
-            props,
+        doc.text_styles.push({
+            let mut style = TextStyle::new(s.entry.name.clone())
+                .with_height(s.fixed_height)
+                .with_width_factor(s.width_factor)
+                .with_oblique(s.oblique)
+                .with_props(props);
+            style.font = Some(s.font.clone()).filter(|f| !f.is_empty());
+            style
         });
     }
 
@@ -803,8 +804,8 @@ pub fn to_document(file: &DwgFile, options: &ReadOptions) -> Result<Document> {
                 });
             let mut props = Props::new();
             props.insert("dwg.block".into(), Value::Text(name.clone()));
-            let model = Model {
-                name: layout.map_or_else(
+            let model = Model::new(
+                layout.map_or_else(
                     || {
                         if is_model {
                             "Model".to_owned()
@@ -814,16 +815,15 @@ pub fn to_document(file: &DwgFile, options: &ReadOptions) -> Result<Document> {
                     },
                     |l| l.name.clone(),
                 ),
-                id: Some(h),
-                kind: if is_model {
+                if is_model {
                     ModelKind::Model
                 } else {
                     ModelKind::Layout
                 },
-                is_3d: false,
-                entities,
-                props,
-            };
+            )
+            .with_id(h)
+            .with_entities(entities)
+            .with_props(props);
             let order = if is_model {
                 i32::MIN
             } else {
@@ -849,15 +849,16 @@ pub fn to_document(file: &DwgFile, options: &ReadOptions) -> Result<Document> {
             if bh.entry.xref_dependent {
                 props.insert("dwg.xref_dependent".into(), Value::Bool(true));
             }
-            doc.blocks.push(Block {
-                name,
-                id: Some(h),
-                base_point: p3(bh.base_point),
-                entities,
-                is_xref: bh.is_xref || bh.is_overlaid,
-                xref_path: Some(bh.xref_path.clone()).filter(|p| !p.is_empty()),
-                description: Some(bh.description.clone()).filter(|d| !d.is_empty()),
-                props,
+            doc.blocks.push({
+                let mut block = Block::new(name)
+                    .with_id(h)
+                    .with_base_point(p3(bh.base_point))
+                    .with_entities(entities)
+                    .with_is_xref(bh.is_xref || bh.is_overlaid)
+                    .with_props(props);
+                block.xref_path = Some(bh.xref_path.clone()).filter(|p| !p.is_empty());
+                block.description = Some(bh.description.clone()).filter(|d| !d.is_empty());
+                block
             });
         }
     }

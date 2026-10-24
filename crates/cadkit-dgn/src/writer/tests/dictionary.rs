@@ -311,9 +311,11 @@ fn a_table_past_256_kib_stays_on_one_page_up_to_the_decompression_limit() {
         .sum();
     let names: Vec<String> = (0..1000).map(|i| format!("New {i:04}")).collect();
     let mut doc = lines_on(&seed, &["Seed 000"]);
-    doc.layers.extend(names.iter().map(|n| cadkit_core::Layer {
-        name: n.clone(),
-        ..Default::default()
+    doc.layers.extend(names.iter().map(|n| {
+        let mut layer = cadkit_core::Layer::new(n.clone());
+        layer.visible = false;
+        layer.plottable = false;
+        layer
     }));
     doc.models[0].entities[0].layer = Some(names[999].clone());
 
@@ -348,10 +350,7 @@ fn a_table_past_256_kib_stays_on_one_page_up_to_the_decompression_limit() {
 
     // Only the decompression limit bounds a page: past it the write fails, nothing splits.
     let options = WriteOptions {
-        limits: Limits {
-            max_decompressed_bytes: 2 * seed_len,
-            ..Limits::default()
-        },
+        limits: Limits::default().with_max_decompressed_bytes(2 * seed_len),
         ..Default::default()
     };
     assert!(seed_len < 256 * 1024 && 2 * seed_len < (page.inflated_len as u64));
@@ -373,13 +372,11 @@ fn new_tables_and_tag_sets_go_to_one_new_page() {
     );
     let mut e = line();
     e.layer = Some("Rooms".into());
-    e.attributes.push(Attribute {
-        tag: "Name".into(),
-        value: Value::Text("Hall".into()),
-        set: Some("Room".into()),
-        invisible: true,
-        ..Default::default()
-    });
+    e.attributes.push(
+        Attribute::new("Name", Value::Text("Hall".into()))
+            .with_set("Room")
+            .with_invisible(true),
+    );
     let bytes = write_v8(&document(false, vec![e]), &seed, &WriteOptions::default()).unwrap();
     let (before, after) = (streams(&seed, "Dgn^Nm"), streams(&bytes, "Dgn^Nm"));
     for key in before.keys() {
@@ -415,9 +412,11 @@ fn a_seed_without_dictionary_pages_gets_one_page_past_256_kib() {
     let mut doc = document(false, entities);
     doc.layers = layers
         .iter()
-        .map(|n| cadkit_core::Layer {
-            name: n.clone(),
-            ..Default::default()
+        .map(|n| {
+            let mut layer = cadkit_core::Layer::new(n.clone());
+            layer.visible = false;
+            layer.plottable = false;
+            layer
         })
         .collect();
     let bytes = write_v8(&doc, &seed(false), &WriteOptions::default()).unwrap();

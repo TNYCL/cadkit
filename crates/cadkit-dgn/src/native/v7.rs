@@ -145,12 +145,13 @@ pub(crate) fn scan<'a>(
         let words = usize::from(le::u16_at(head, 2).unwrap_or(0));
         let len = 4 + 2 * words;
         let Some(rec) = le::bytes(bytes, off, len) else {
-            warnings.push(Warning {
-                code: "dgn.v7_truncated".into(),
-                message: format!("record at {off} declares {len} bytes but the file ends"),
-                offset: Some(off as u64),
-                object: None,
-            });
+            warnings.push(
+                Warning::new(
+                    "dgn.v7_truncated",
+                    format!("record at {off} declares {len} bytes but the file ends"),
+                )
+                .with_offset(off as u64),
+            );
             break;
         };
         budget.charge_objects(1)?;
@@ -210,14 +211,8 @@ pub(crate) fn inspect(bytes: &[u8], options: &ReadOptions) -> Result<Summary> {
         .as_ref()
         .and_then(|t| crate::map::unit_from_label(&t.master_label))
     {
-        Some((unit, meters)) => Units {
-            unit,
-            meters_per_unit: Some(meters),
-        },
-        None => Units {
-            unit: LengthUnit::Unitless,
-            meters_per_unit: None,
-        },
+        Some((unit, meters)) => Units::new(unit).with_meters_per_unit(meters),
+        None => Units::new(LengthUnit::Unitless),
     };
     Ok(Summary::new(Format::DgnV7, "V7")
         .with_is_3d(Some(is_3d))

@@ -31,6 +31,7 @@ pub enum DimensionPolicy {
 /// Options for [`V8Seed::prepare_document`].
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct SeedPrepareOptions {
     /// Specific model index to select; `None` selects the first [`ModelKind::Model`].
     pub model_index: Option<usize>,
@@ -60,6 +61,13 @@ impl Default for SeedPrepareOptions {
 }
 
 impl SeedPrepareOptions {
+    /// Default preparation: first design model, 2D promoted to 3D, inserts exploded,
+    /// units converted and symbology normalized for DGN.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     /// Selects a specific model index to export.
     #[must_use]
     pub fn with_model_index(mut self, index: Option<usize>) -> Self {
@@ -562,6 +570,8 @@ fn entity_has_nonzero_z(entity: &Entity) -> bool {
             origin, children, ..
         } => origin.is_some_and(nz) || children.iter().any(entity_has_nonzero_z),
         EntityKind::Dimension { .. } | EntityKind::Unknown { .. } => false,
+        // A kind added after this function was written has no known coordinates.
+        _ => false,
     }
 }
 
@@ -736,6 +746,8 @@ fn project_entity_2d(entity: &mut Entity) {
             }
         }
         EntityKind::Dimension { .. } | EntityKind::Unknown { .. } => {}
+        // A kind added after this function was written is left as is.
+        _ => {}
     }
 }
 
@@ -1309,5 +1321,7 @@ fn normalize_entity_for_dgn(
         | EntityKind::Polygon { .. }
         | EntityKind::Mesh { .. }
         | EntityKind::Image { .. } => Some(entity),
+        // A kind added after this function was written is left to the writer to accept or skip.
+        _ => Some(entity),
     }
 }

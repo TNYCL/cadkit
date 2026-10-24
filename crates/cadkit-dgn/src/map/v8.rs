@@ -79,14 +79,10 @@ fn map_file(file: &V8File, options: &ReadOptions, enc: TextDecoder) -> Document 
         if l.parent != u32::MAX {
             props.insert("dgn.parent_level".into(), Value::Int(i64::from(l.parent)));
         }
-        layers.push(Layer {
-            name,
-            id: Some(u64::from(l.id)),
-            visible: true,
-            plottable: true,
-            description: l.description.clone(),
-            props,
-            ..Layer::default()
+        layers.push({
+            let mut layer = Layer::new(name).with_id(u64::from(l.id)).with_props(props);
+            layer.description = l.description.clone();
+            layer
         });
     }
 
@@ -134,15 +130,14 @@ fn map_file(file: &V8File, options: &ReadOptions, enc: TextDecoder) -> Document 
             "dgn.matrix".into(),
             Value::List(c.matrix.iter().map(|v| Value::Float(*v)).collect()),
         );
-        blocks.push(Block {
-            name,
-            id: it.el.header.id,
-            base_point: def_xf.pt(c.origin),
-            entities,
-            is_xref: false,
-            xref_path: None,
-            description: linkage::string(&it.el.linkages, 2),
-            props,
+        blocks.push({
+            let mut block = Block::new(name)
+                .with_base_point(def_xf.pt(c.origin))
+                .with_entities(entities)
+                .with_props(props);
+            block.id = it.el.header.id;
+            block.description = linkage::string(&it.el.linkages, 2);
+            block
         });
     }
 
@@ -315,13 +310,13 @@ fn map_file(file: &V8File, options: &ReadOptions, enc: TextDecoder) -> Document 
         );
         let is_3d = header.map_or_else(|| graphic.iter().any(|it| it.el.header.is_3d), |h| h.is_3d);
         let id = md.storage.trim_start_matches('#').parse::<u64>().ok();
-        models.push(Model {
-            name,
-            id,
-            kind: ModelKind::Model,
-            is_3d,
-            entities,
-            props,
+        models.push({
+            let mut model = Model::new(name, ModelKind::Model)
+                .with_is_3d(is_3d)
+                .with_entities(entities)
+                .with_props(props);
+            model.id = id;
+            model
         });
     }
 
@@ -333,13 +328,7 @@ fn map_file(file: &V8File, options: &ReadOptions, enc: TextDecoder) -> Document 
         }
         let name = m.level_name(id);
         if names.insert(name.clone()) {
-            layers.push(Layer {
-                name,
-                id: Some(u64::from(id)),
-                visible: true,
-                plottable: true,
-                ..Layer::default()
-            });
+            layers.push(Layer::new(name).with_id(u64::from(id)));
         }
     }
 
@@ -375,21 +364,23 @@ fn map_file(file: &V8File, options: &ReadOptions, enc: TextDecoder) -> Document 
     let linetypes = m.linetypes();
     let mut warnings = file.warnings.clone();
     warnings.extend(m.finish_warnings());
-    Document {
-        source: SourceInfo {
-            format: Format::DgnV8,
-            version: "V8".into(),
-            application: file.summary.application.clone(),
-            codepage: Some(enc.name().to_ascii_lowercase()),
-        },
-        units,
-        layers,
-        linetypes,
-        text_styles,
-        blocks,
-        models,
-        props,
-        warnings,
+    {
+        let mut doc = Document::default();
+        doc.source = {
+            let mut source =
+                SourceInfo::new(Format::DgnV8, "V8").with_codepage(enc.name().to_ascii_lowercase());
+            source.application = file.summary.application.clone();
+            source
+        };
+        doc.units = units;
+        doc.layers = layers;
+        doc.linetypes = linetypes;
+        doc.text_styles = text_styles;
+        doc.blocks = blocks;
+        doc.models = models;
+        doc.props = props;
+        doc.warnings = warnings;
+        doc
     }
 }
 
@@ -399,30 +390,12 @@ pub(crate) fn units_of(h: Option<&ModelHeader>) -> (Units, Option<f64>) {
         return (Units::default(), None);
     };
     if let Some(m) = h.master.meters() {
-        return (
-            Units {
-                unit: length_unit(m),
-                meters_per_unit: Some(m),
-            },
-            Some(m),
-        );
+        return (Units::new(length_unit(m)).with_meters_per_unit(m), Some(m));
     }
     if let Some((unit, m)) = h.master.label.as_deref().and_then(unit_from_label) {
-        return (
-            Units {
-                unit,
-                meters_per_unit: Some(m),
-            },
-            Some(m),
-        );
+        return (Units::new(unit).with_meters_per_unit(m), Some(m));
     }
-    (
-        Units {
-            unit: LengthUnit::Unitless,
-            meters_per_unit: None,
-        },
-        None,
-    )
+    (Units::new(LengthUnit::Unitless), None)
 }
 
 /// UOR -> document units for one model.

@@ -481,12 +481,7 @@ struct Ctx<'a, 'b> {
 
 impl Ctx<'_, '_> {
     fn warn(&mut self, code: &str, message: String) {
-        self.warnings.push(Warning {
-            code: code.into(),
-            message,
-            offset: None,
-            object: None,
-        });
+        self.warnings.push(Warning::new(code, message));
     }
 
     /// Reads a stream by path; a missing or unreadable stream is a warning, not an error.
@@ -744,12 +739,10 @@ fn parse_model_index(
     let mut out = Vec::new();
     if le::u32_at(b, 0) != Some(MODEL_INDEX_MAGIC) {
         if !b.is_empty() {
-            warnings.push(Warning {
-                code: "dgn.model_index".into(),
-                message: "model index has an unexpected signature".into(),
-                offset: Some(0),
-                object: None,
-            });
+            warnings.push(
+                Warning::new("dgn.model_index", "model index has an unexpected signature")
+                    .with_offset(0),
+            );
         }
         return out;
     }
@@ -959,10 +952,7 @@ pub(crate) mod tests {
 
     #[test]
     fn object_limit_is_enforced() {
-        let mut budget = Budget::new(Limits {
-            max_objects: 1,
-            ..Limits::default()
-        });
+        let mut budget = Budget::new(Limits::default().with_max_objects(1));
         let mut data = Vec::new();
         for _ in 0..2 {
             data.extend_from_slice(&[0, 0, 0, 0]);
@@ -1051,13 +1041,8 @@ pub(crate) mod tests {
                 file[at..at + 4].copy_from_slice(&first.to_le_bytes());
             }
         }
-        let tight = ReadOptions {
-            limits: Limits {
-                max_decompressed_bytes: 200_000,
-                ..Limits::default()
-            },
-            ..ReadOptions::default()
-        };
+        let tight = ReadOptions::default()
+            .with_limits(Limits::default().with_max_decompressed_bytes(200_000));
         assert!(matches!(read(&file, &tight), Err(Error::LimitExceeded(_))));
         // With room for the copies the file reads (its pages are garbage: warnings only).
         let f = read(&file, &ReadOptions::default()).unwrap();

@@ -34,6 +34,7 @@ use tables::Tables;
 /// Options for DGN V8 export; each call writes a single model.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct WriteOptions {
     /// Resource limits for input, output, elements, and coordinates.
     pub limits: Limits,
@@ -71,6 +72,12 @@ impl Default for WriteOptions {
 }
 
 impl WriteOptions {
+    /// Default export options: UTF-16LE text, zero timestamp, seed rasters and controls kept.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     /// Sets resource limits for reading the seed and encoding output records.
     #[must_use]
     pub fn with_limits(mut self, limits: Limits) -> Self {
@@ -209,10 +216,12 @@ fn validate_doc_and_options(doc: &Document, options: &WriteOptions) -> Result<()
 /// Source units and 2D/3D dimension must match the seed's master units and dimension; Z coordinates and attributes are never silently dropped.
 pub fn write_v8(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<Vec<u8>> {
     validate_doc_and_options(doc, options)?;
-    let read = ReadOptions {
-        limits: options.limits,
-        fallback_codepage: options.codepage.clone(),
-        keep_raw: true,
+    let read = {
+        let mut new_options = ReadOptions::default()
+            .with_limits(options.limits)
+            .with_keep_raw(true);
+        new_options.fallback_codepage = options.codepage.clone();
+        new_options
     };
     let parsed_seed = V8Seed::parse(seed, &read)?;
     write_v8_with_seed(doc, &parsed_seed, options)
@@ -229,10 +238,12 @@ pub fn write_v8_with_seed(
     if seed.bytes.len() as u64 > options.limits.max_input_bytes {
         return Err(Error::LimitExceeded("DGN seed input bytes".into()));
     }
-    let read = ReadOptions {
-        limits: options.limits,
-        fallback_codepage: options.codepage.clone(),
-        keep_raw: true,
+    let read = {
+        let mut new_options = ReadOptions::default()
+            .with_limits(options.limits)
+            .with_keep_raw(true);
+        new_options.fallback_codepage = options.codepage.clone();
+        new_options
     };
     let native = &seed.native;
     let model = seed.model()?;
@@ -1360,9 +1371,10 @@ impl State<'_> {
             let widened;
             let a = match a.value {
                 Value::Int(n) if self.wide_tags.contains(&tag_key(a)) => {
-                    widened = Attribute {
-                        value: Value::Float(exact_f64(n)?),
-                        ..a.clone()
+                    widened = {
+                        let mut attribute = a.clone();
+                        attribute.value = Value::Float(exact_f64(n)?);
+                        attribute
                     };
                     &widened
                 }

@@ -75,26 +75,18 @@ fn map_file(file: &V7View<'_>, options: &ReadOptions, enc: TextDecoder) -> Docum
         .map(|t| f64::from(t.subunits_per_master) * f64::from(t.uor_per_subunit))
         .filter(|v| v.is_finite() && *v > 0.0);
     if upm.is_none() {
-        warnings.push(cadkit_core::Warning {
-            code: "dgn.v7_units".into(),
-            message: "design header has no usable units; coordinates are in UOR".into(),
-            offset: None,
-            object: None,
-        });
+        warnings.push(cadkit_core::Warning::new(
+            "dgn.v7_units",
+            "design header has no usable units; coordinates are in UOR",
+        ));
     }
     let xf = Xf {
         origin: tcb.map_or([0.0; 3], |t| t.origin),
         scale: upm.map_or(1.0, |u| 1.0 / u),
     };
     let units = match tcb.and_then(|t| unit_from_label(&t.master_label)) {
-        Some((unit, meters)) => Units {
-            unit,
-            meters_per_unit: Some(meters),
-        },
-        None => Units {
-            unit: LengthUnit::Unitless,
-            meters_per_unit: None,
-        },
+        Some((unit, meters)) => Units::new(unit).with_meters_per_unit(meters),
+        None => Units::new(LengthUnit::Unitless),
     };
 
     // Drawn records only: deleted and control records do not take part in the hierarchy.
@@ -123,13 +115,12 @@ fn map_file(file: &V7View<'_>, options: &ReadOptions, enc: TextDecoder) -> Docum
                 .collect();
             let mut props = Props::new();
             props.insert("dgn.type".into(), Value::Int(34));
-            blocks.push(Block {
-                name,
-                base_point: rel.pt(c.origin),
-                entities,
-                props,
-                ..Block::default()
-            });
+            blocks.push(
+                Block::new(name)
+                    .with_base_point(rel.pt(c.origin))
+                    .with_entities(entities)
+                    .with_props(props),
+            );
             continue;
         }
         if let Some(e) = m.entity(&items, node, &xf, 0) {
@@ -140,13 +131,7 @@ fn map_file(file: &V7View<'_>, options: &ReadOptions, enc: TextDecoder) -> Docum
     let levels: BTreeSet<u32> = m.used_levels.clone();
     let layers = levels
         .into_iter()
-        .map(|l| Layer {
-            name: m.level_name(l),
-            id: Some(u64::from(l)),
-            visible: true,
-            plottable: true,
-            ..Layer::default()
-        })
+        .map(|l| Layer::new(m.level_name(l)).with_id(u64::from(l)))
         .collect();
 
     let mut model_props = Props::new();
@@ -182,28 +167,25 @@ fn map_file(file: &V7View<'_>, options: &ReadOptions, enc: TextDecoder) -> Docum
     let text_styles = m.text_styles();
     let linetypes = m.linetypes();
     warnings.extend(m.finish_warnings());
-    Document {
-        source: SourceInfo {
-            format: Format::DgnV7,
-            version: "V7".into(),
-            application: None,
-            codepage: Some(enc.name().to_ascii_lowercase()),
-        },
-        units,
-        layers,
-        linetypes,
-        text_styles,
-        blocks,
-        models: vec![Model {
-            name: "Default".into(),
-            id: Some(0),
-            kind: ModelKind::Model,
-            is_3d: file.is_3d,
-            entities,
-            props: model_props,
-        }],
-        props,
-        warnings,
+    {
+        let mut doc = Document::default();
+        doc.source =
+            SourceInfo::new(Format::DgnV7, "V7").with_codepage(enc.name().to_ascii_lowercase());
+        doc.units = units;
+        doc.layers = layers;
+        doc.linetypes = linetypes;
+        doc.text_styles = text_styles;
+        doc.blocks = blocks;
+        doc.models = vec![
+            Model::new("Default", ModelKind::Model)
+                .with_id(0)
+                .with_is_3d(file.is_3d)
+                .with_entities(entities)
+                .with_props(model_props),
+        ];
+        doc.props = props;
+        doc.warnings = warnings;
+        doc
     }
 }
 

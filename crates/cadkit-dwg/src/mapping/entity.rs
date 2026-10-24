@@ -433,23 +433,22 @@ impl Mapper<'_> {
                         .and_then(|sh| self.names.styles.get(&sh))
                         .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("standard"))
                         .cloned();
-                    let display = (t.height > 0.0).then_some(AttributeDisplay {
-                        height: t.height,
-                        width: t.height * t.width_factor,
-                        style,
-                        halign: h_align,
-                        valign: v_align,
-                        rotation: t.rotation,
+                    let display = (t.height > 0.0).then_some({
+                        let mut display =
+                            AttributeDisplay::new(t.height, t.height * t.width_factor)
+                                .with_halign(h_align)
+                                .with_valign(v_align)
+                                .with_rotation(t.rotation);
+                        display.style = style;
+                        display
                     });
-                    out.push(Attribute {
-                        tag: a.tag.clone(),
-                        value: Value::Text(value),
-                        set: None,
-                        position: Some(pos),
-                        invisible: a.flags & 1 != 0,
-                        layer,
-                        display,
-                        ..Default::default()
+                    out.push({
+                        let mut attribute = Attribute::new(a.tag.clone(), Value::Text(value))
+                            .with_position(pos)
+                            .with_invisible(a.flags & 1 != 0);
+                        attribute.layer = layer;
+                        attribute.display = display;
+                        attribute
                     });
                 }
                 _ => {

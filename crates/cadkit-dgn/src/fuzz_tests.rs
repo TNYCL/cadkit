@@ -104,14 +104,16 @@ fn element_offsets(page: &[u8]) -> Vec<(usize, usize)> {
 }
 
 fn options() -> ReadOptions {
-    ReadOptions {
-        limits: Limits {
-            max_decompressed_bytes: 256 << 20,
-            max_vertices: 200_000,
-            ..Limits::default()
-        },
-        keep_raw: false,
-        fallback_codepage: None,
+    {
+        let mut options = ReadOptions::default()
+            .with_limits(
+                Limits::default()
+                    .with_max_decompressed_bytes(256 << 20)
+                    .with_max_vertices(200_000),
+            )
+            .with_keep_raw(false);
+        options.fallback_codepage = None;
+        options
     }
 }
 

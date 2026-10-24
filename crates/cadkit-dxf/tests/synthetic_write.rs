@@ -58,84 +58,48 @@ fn tilted() -> (Vec3, impl Fn(Point3) -> Point3) {
 /// A document with every kind of entity; `sample_models()` lists the entities that must
 /// survive a round trip unchanged.
 fn sample_doc() -> Document {
-    let mut doc = Document {
-        units: Units {
-            unit: LengthUnit::Millimeter,
-            meters_per_unit: Some(0.001),
-        },
-        ..Document::default()
+    let mut doc = {
+        let mut doc = Document::default();
+        doc.units = Units::new(LengthUnit::Millimeter).with_meters_per_unit(0.001);
+        doc
     };
     doc.layers = vec![
-        Layer {
-            name: "0".into(),
-            color: Color::Aci { index: 7 },
-            visible: true,
-            plottable: true,
-            lineweight: Lineweight::Default,
-            ..Layer::default()
-        },
-        Layer {
-            name: "Walls".into(),
-            color: Color::Aci { index: 1 },
-            linetype: Some("DASHED".into()),
-            lineweight: Lineweight::Millimeters(0.5),
-            visible: true,
-            plottable: true,
-            ..Layer::default()
-        },
-        Layer {
-            name: "Frozen".into(),
-            color: Color::Rgb {
+        Layer::new("0")
+            .with_color(Color::Aci { index: 7 })
+            .with_lineweight(Lineweight::Default),
+        Layer::new("Walls")
+            .with_color(Color::Aci { index: 1 })
+            .with_linetype("DASHED")
+            .with_lineweight(Lineweight::Millimeters(0.5)),
+        Layer::new("Frozen")
+            .with_color(Color::Rgb {
                 r: 10,
                 g: 200,
                 b: 30,
-            },
-            visible: false,
-            frozen: true,
-            locked: true,
-            plottable: false,
-            lineweight: Lineweight::Default,
-            ..Layer::default()
-        },
-        Layer {
-            name: "\u{c7}al\u{131}\u{15f}ma".into(),
-            color: Color::Aci { index: 3 },
-            visible: true,
-            plottable: true,
-            lineweight: Lineweight::Default,
-            ..Layer::default()
-        },
+            })
+            .with_visible(false)
+            .with_frozen(true)
+            .with_locked(true)
+            .with_plottable(false)
+            .with_lineweight(Lineweight::Default),
+        Layer::new("\u{c7}al\u{131}\u{15f}ma")
+            .with_color(Color::Aci { index: 3 })
+            .with_lineweight(Lineweight::Default),
     ];
-    doc.linetypes = vec![Linetype {
-        name: "DASHED".into(),
-        description: Some("Dashed __ __".into()),
-        pattern: vec![12.5, -6.25],
-        props: Props::new(),
-    }];
+    doc.linetypes =
+        vec![Linetype::new("DASHED", vec![12.5, -6.25]).with_description("Dashed __ __")];
     doc.text_styles = vec![
-        TextStyle {
-            name: "Standard".into(),
-            font: Some("arial.ttf".into()),
-            height: 0.0,
-            width_factor: 1.0,
-            oblique: 0.0,
-            props: Props::new(),
-        },
-        TextStyle {
-            name: "Narrow".into(),
-            font: Some("romans.shx".into()),
-            height: 2.5,
-            width_factor: 0.8,
-            oblique: 0.2,
-            props: Props::new(),
-        },
+        TextStyle::new("Standard")
+            .with_font("arial.ttf")
+            .with_width_factor(1.0),
+        TextStyle::new("Narrow")
+            .with_font("romans.shx")
+            .with_height(2.5)
+            .with_width_factor(0.8)
+            .with_oblique(0.2),
     ];
 
-    let mut door = Block {
-        name: "Door".into(),
-        base_point: p(1.0, 2.0, 0.0),
-        ..Block::default()
-    };
+    let mut door = Block::new("Door").with_base_point(p(1.0, 2.0, 0.0));
     door.entities.push(on_layer(
         Entity::new(EntityKind::Line {
             start: p(0.0, 0.0, 0.0),
@@ -170,25 +134,14 @@ fn sample_doc() -> Document {
     }
     door.entities.push(attdef);
     doc.blocks.push(door);
-    doc.blocks.push(Block {
-        name: "*U1".into(),
-        entities: vec![Entity::new(EntityKind::Point {
+    doc.blocks.push(
+        Block::new("*U1").with_entities(vec![Entity::new(EntityKind::Point {
             position: p(1.0, 1.0, 0.0),
-        })],
-        ..Block::default()
-    });
+        })]),
+    );
 
-    let model = Model {
-        name: "Model".into(),
-        kind: ModelKind::Model,
-        entities: model_entities(),
-        ..Model::default()
-    };
-    let mut sheet_a = Model {
-        name: "Sheet A".into(),
-        kind: ModelKind::Layout,
-        ..Model::default()
-    };
+    let model = Model::new("Model", ModelKind::Model).with_entities(model_entities());
+    let mut sheet_a = Model::new("Sheet A", ModelKind::Layout);
     sheet_a.entities.push(Entity::new(EntityKind::Viewport {
         center: p(148.0, 105.0, 0.0),
         width: 200.0,
@@ -212,15 +165,12 @@ fn sample_doc() -> Document {
         }),
         "Walls",
     ));
-    let sheet_b = Model {
-        name: "Sheet B".into(),
-        kind: ModelKind::Layout,
-        entities: vec![Entity::new(EntityKind::Line {
+    let sheet_b = Model::new("Sheet B", ModelKind::Layout).with_entities(vec![Entity::new(
+        EntityKind::Line {
             start: p(0.0, 0.0, 0.0),
             end: p(1.0, 1.0, 0.0),
-        })],
-        ..Model::default()
-    };
+        },
+    )]);
     doc.models = vec![model, sheet_a, sheet_b];
     doc
 }
@@ -404,22 +354,10 @@ fn model_entities() -> Vec<Entity> {
         row_spacing: 25.0,
     });
     insert.attributes = vec![
-        Attribute {
-            tag: "TAG".into(),
-            value: Value::Text("v\u{e9}".into()),
-            set: None,
-            position: Some(p(10.0, 20.0, 0.0)),
-            invisible: false,
-            ..Default::default()
-        },
-        Attribute {
-            tag: "HIDDEN".into(),
-            value: Value::Text("2".into()),
-            set: None,
-            position: Some(p(11.0, 21.0, 0.0)),
-            invisible: true,
-            ..Default::default()
-        },
+        Attribute::new("TAG", Value::Text("v\u{e9}".into())).with_position(p(10.0, 20.0, 0.0)),
+        Attribute::new("HIDDEN", Value::Text("2".into()))
+            .with_position(p(11.0, 21.0, 0.0))
+            .with_invisible(true),
     ];
     v.push(insert);
     v.push(Entity::new(EntityKind::Hatch {
@@ -814,12 +752,8 @@ fn groups_are_flattened_with_their_name_in_xdata() {
         origin: Some(p(0.0, 0.0, 0.0)),
         children: vec![child1.clone(), nested],
     });
-    doc.models.push(Model {
-        name: "Model".into(),
-        kind: ModelKind::Model,
-        entities: vec![group],
-        ..Model::default()
-    });
+    doc.models
+        .push(Model::new("Model", ModelKind::Model).with_entities(vec![group]));
     for v in ALL {
         let text = cadkit_dxf::write(&doc, v).unwrap();
         let back = read(text.as_bytes());
@@ -844,19 +778,18 @@ fn groups_are_flattened_with_their_name_in_xdata() {
 #[test]
 fn ellipse_with_ratio_above_one_is_normalised() {
     let mut doc = Document::default();
-    doc.models.push(Model {
-        name: "Model".into(),
-        kind: ModelKind::Model,
-        entities: vec![Entity::new(EntityKind::Ellipse {
-            center: p(1.0, 2.0, 0.0),
-            major_axis: Vec3::new(2.0, 0.0, 0.0),
-            ratio: 2.0,
-            start_param: 0.5,
-            end_param: 2.0,
-            normal: Vec3::Z,
-        })],
-        ..Model::default()
-    });
+    doc.models.push(
+        Model::new("Model", ModelKind::Model).with_entities(vec![Entity::new(
+            EntityKind::Ellipse {
+                center: p(1.0, 2.0, 0.0),
+                major_axis: Vec3::new(2.0, 0.0, 0.0),
+                ratio: 2.0,
+                start_param: 0.5,
+                end_param: 2.0,
+                normal: Vec3::Z,
+            },
+        )]),
+    );
     let text = cadkit_dxf::write(&doc, DxfVersion::R2013).unwrap();
     let back = read(text.as_bytes());
     let EntityKind::Ellipse {
@@ -891,42 +824,19 @@ fn ellipse_with_ratio_above_one_is_normalised() {
 fn names_are_cleaned_and_duplicates_dropped() {
     let mut doc = Document::default();
     doc.layers = vec![
-        Layer {
-            name: "Bad:Name*?".into(),
-            color: Color::Aci { index: 2 },
-            visible: true,
-            plottable: true,
-            ..Layer::default()
-        },
-        Layer {
-            name: "bad:name*?".into(),
-            color: Color::Aci { index: 5 },
-            visible: true,
-            plottable: true,
-            ..Layer::default()
-        },
+        Layer::new("Bad:Name*?").with_color(Color::Aci { index: 2 }),
+        Layer::new("bad:name*?").with_color(Color::Aci { index: 5 }),
     ];
-    doc.models.push(Model {
-        name: "Model".into(),
-        kind: ModelKind::Model,
-        entities: vec![on_layer(
+    doc.models.push(
+        Model::new("Model", ModelKind::Model).with_entities(vec![on_layer(
             Entity::new(EntityKind::Point {
                 position: p(0.0, 0.0, 0.0),
             }),
             "Bad:Name*?",
-        )],
-        ..Model::default()
-    });
-    doc.models.push(Model {
-        name: "Model".into(),
-        kind: ModelKind::Layout,
-        ..Model::default()
-    });
-    doc.models.push(Model {
-        name: "Model".into(),
-        kind: ModelKind::Layout,
-        ..Model::default()
-    });
+        )]),
+    );
+    doc.models.push(Model::new("Model", ModelKind::Layout));
+    doc.models.push(Model::new("Model", ModelKind::Layout));
     let back = read(
         cadkit_dxf::write(&doc, DxfVersion::R2018)
             .unwrap()
@@ -956,10 +866,7 @@ fn empty_documents_and_all_unknown_do_not_panic() {
         let back = read(text.as_bytes());
         assert!(back.models[0].entities.is_empty());
         let mut doc = Document::default();
-        doc.models.push(Model {
-            entities: extras(),
-            ..Model::default()
-        });
+        doc.models.push(Model::default().with_entities(extras()));
         assert!(cadkit_dxf::write(&doc, v).is_ok());
     }
 }
@@ -969,15 +876,12 @@ fn numbers_keep_full_precision() {
     let mut doc = Document::default();
     let x = 123_456.789_012_345_67_f64;
     let tiny = 1.234_567_890_123_456e-9_f64;
-    doc.models.push(Model {
-        name: "Model".into(),
-        kind: ModelKind::Model,
-        entities: vec![Entity::new(EntityKind::Line {
+    doc.models.push(
+        Model::new("Model", ModelKind::Model).with_entities(vec![Entity::new(EntityKind::Line {
             start: p(x, tiny, -0.1),
             end: p(1e300, -1e-300, std::f64::consts::PI),
-        })],
-        ..Model::default()
-    });
+        })]),
+    );
     for v in ALL {
         let back = read(cadkit_dxf::write(&doc, v).unwrap().as_bytes());
         let EntityKind::Line { start, end } = back.models[0].entities[0].kind else {
@@ -1004,14 +908,14 @@ fn polygon_interiors_are_hatch_boundaries_or_r12_outlines() {
         ]
     };
     let mut doc = Document::default();
-    doc.models.push(Model {
-        is_3d: true,
-        entities: vec![Entity::new(EntityKind::Polygon {
-            exterior: ring(0., 10.),
-            interiors: vec![ring(2., 3.)],
-        })],
-        ..Default::default()
-    });
+    doc.models.push(
+        Model::default()
+            .with_is_3d(true)
+            .with_entities(vec![Entity::new(EntityKind::Polygon {
+                exterior: ring(0., 10.),
+                interiors: vec![ring(2., 3.)],
+            })]),
+    );
     for version in [DxfVersion::R12, DxfVersion::R2018] {
         let output = cadkit_dxf::write(&doc, version).unwrap();
         let read = cadkit_dxf::read(output.as_bytes(), &ReadOptions::default()).unwrap();

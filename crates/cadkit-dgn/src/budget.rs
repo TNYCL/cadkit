@@ -67,11 +67,9 @@ mod tests {
 
     #[test]
     fn limits_are_enforced() {
-        let limits = Limits {
-            max_decompressed_bytes: 10,
-            max_objects: 2,
-            ..Limits::default()
-        };
+        let limits = Limits::default()
+            .with_max_decompressed_bytes(10)
+            .with_max_objects(2);
         let mut b = Budget::new(limits);
         assert!(b.charge_bytes(10).is_ok());
         assert_eq!(b.remaining_bytes(), 0);

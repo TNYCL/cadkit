@@ -8,6 +8,7 @@ use std::collections::{HashMap, HashSet};
 /// Structural and geometric validation options.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct ValidationOptions {
     /// Resource consumption limits.
     pub limits: Limits,
@@ -35,6 +36,12 @@ impl Default for ValidationOptions {
 }
 
 impl ValidationOptions {
+    /// Default validation: geometry checks on, 1e-6 intersection and 0.01 planarity tolerance.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     /// Sets resource consumption limits.
     #[must_use]
     pub fn with_limits(mut self, limits: Limits) -> Self {

@@ -89,12 +89,8 @@ impl<'a> Streams<'a> {
 
     /// Records a recoverable problem of the object being decoded.
     pub fn warn(&mut self, code: &str, message: String) {
-        self.warnings.push(Warning {
-            code: code.to_owned(),
-            message,
-            offset: None,
-            object: Some(self.own_handle),
-        });
+        self.warnings
+            .push(Warning::new(code.to_owned(), message).with_object(self.own_handle));
     }
 
     /// `TV`: 8-bit text from the main stream before R2007, UTF-16 text from the

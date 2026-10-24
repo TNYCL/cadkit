@@ -258,40 +258,38 @@ unsafe fn convert_options(opts: *const cadkit_options) -> Result<ReadOptions, ca
         return Ok(out);
     };
     let d = Limits::default();
-    out.limits = Limits {
-        max_input_bytes: if o.max_input_bytes == 0 {
+    out.limits = Limits::default()
+        .with_max_input_bytes(if o.max_input_bytes == 0 {
             d.max_input_bytes
         } else {
             o.max_input_bytes
-        },
-        max_decompressed_bytes: if o.max_decompressed_bytes == 0 {
+        })
+        .with_max_decompressed_bytes(if o.max_decompressed_bytes == 0 {
             d.max_decompressed_bytes
         } else {
             o.max_decompressed_bytes
-        },
-        max_objects: if o.max_objects == 0 {
+        })
+        .with_max_objects(if o.max_objects == 0 {
             d.max_objects
         } else {
             o.max_objects
-        },
-        max_depth: if o.max_depth == 0 {
+        })
+        .with_max_depth(if o.max_depth == 0 {
             d.max_depth
         } else {
             o.max_depth
-        },
-        max_string_bytes: if o.max_string_bytes == 0 {
+        })
+        .with_max_string_bytes(if o.max_string_bytes == 0 {
             d.max_string_bytes
         } else {
             o.max_string_bytes
-        },
-        max_vertices: if o.max_vertices == 0 {
+        })
+        .with_max_vertices(if o.max_vertices == 0 {
             d.max_vertices
         } else {
             o.max_vertices
-        },
-        // Not exposed in the C options struct yet (keeps the ABI stable); default applies.
-        max_total_vertices: d.max_total_vertices,
-    };
+        })
+        .with_max_total_vertices(d.max_total_vertices);
     out.keep_raw = o.keep_raw != 0;
     // SAFETY: the string pointer is NULL or NUL-terminated per the function contract.
     out.fallback_codepage =
@@ -678,14 +676,15 @@ unsafe fn convert_svg_options(
             "width_px and stroke_px must be finite and > 0",
         ));
     }
-    Ok(SvgOptions {
-        model: o.model_index as usize,
-        width_px: o.width_px,
-        stroke_px: o.stroke_px,
-        background: bg.map(str::to_owned),
-        text: o.text != 0,
-        expand_blocks: o.expand_blocks != 0,
-        ..SvgOptions::default()
+    Ok({
+        let mut options = SvgOptions::default()
+            .with_model(o.model_index as usize)
+            .with_width_px(o.width_px)
+            .with_stroke_px(o.stroke_px)
+            .with_text(o.text != 0)
+            .with_expand_blocks(o.expand_blocks != 0);
+        options.background = bg.map(str::to_owned);
+        options
     })
 }
 
@@ -943,11 +942,8 @@ pub unsafe extern "C" fn cadkit_document_to_citygml(
             string_getter(doc, out, |d| {
                 String::from_utf8(cadkit::to_citygml(
                     d,
-                    &cadkit::gml::ExportOptions {
-                        srs_name: srs,
-                        lod,
-                        limits: cadkit::Limits::default(),
-                    },
+                    &cadkit::gml::ExportOptions::new(srs, lod)
+                        .with_limits(cadkit::Limits::default()),
                 )?)
                 .map_err(|e| Error::invalid(0, e.to_string()))
             })
@@ -998,11 +994,8 @@ pub unsafe extern "C" fn cadkit_document_to_citygml_with_report(
             string_getter(doc, out, |d| {
                 let (bytes, report) = cadkit::gml::write_document_with_report(
                     d,
-                    &cadkit::gml::ExportOptions {
-                        srs_name: srs,
-                        lod,
-                        limits: cadkit::Limits::default(),
-                    },
+                    &cadkit::gml::ExportOptions::new(srs, lod)
+                        .with_limits(cadkit::Limits::default()),
                     policy,
                 )?;
                 let xml = String::from_utf8(bytes).map_err(|e| Error::invalid(0, e.to_string()))?;
@@ -1096,10 +1089,7 @@ pub unsafe extern "C" fn cadkit_citygml_write_json(
             };
         let result = cadkit::gml::read_native_json(
             text,
-            &ReadOptions {
-                limits: options.limits,
-                ..Default::default()
-            },
+            &ReadOptions::default().with_limits(options.limits),
         )
         .and_then(|doc| cadkit::gml::write(&doc, &options))
         .and_then(|bytes| String::from_utf8(bytes).map_err(|e| Error::invalid(0, e.to_string())));

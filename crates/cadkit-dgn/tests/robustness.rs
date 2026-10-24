@@ -41,15 +41,14 @@ impl Rng {
 
 fn options() -> ReadOptions {
     // Small but sufficient limits keep hostile variants cheap.
-    ReadOptions {
-        limits: Limits {
-            max_decompressed_bytes: 64 << 20,
-            max_objects: 2_000_000,
-            ..Limits::default()
-        },
-        keep_raw: true,
-        fallback_codepage: Some("windows-1254".into()),
-    }
+    ReadOptions::default()
+        .with_limits(
+            Limits::default()
+                .with_max_decompressed_bytes(64 << 20)
+                .with_max_objects(2_000_000),
+        )
+        .with_keep_raw(true)
+        .with_fallback_codepage("windows-1254")
 }
 
 #[test]
@@ -110,34 +109,17 @@ fn limits_are_honoured() {
     let Some(bytes) = corpus("public/gdal/test_dgnv8.dgn") else {
         return;
     };
-    let tight = ReadOptions {
-        limits: Limits {
-            max_decompressed_bytes: 1000,
-            ..Limits::default()
-        },
-        ..Default::default()
-    };
+    let tight =
+        ReadOptions::default().with_limits(Limits::default().with_max_decompressed_bytes(1000));
     assert!(matches!(
         cadkit_dgn::read(&bytes, &tight),
         Err(cadkit_core::Error::LimitExceeded(_))
     ));
-    let few = ReadOptions {
-        limits: Limits {
-            max_objects: 10,
-            ..Limits::default()
-        },
-        ..Default::default()
-    };
+    let few = ReadOptions::default().with_limits(Limits::default().with_max_objects(10));
     assert!(matches!(
         cadkit_dgn::read(&bytes, &few),
         Err(cadkit_core::Error::LimitExceeded(_))
     ));
-    let small = ReadOptions {
-        limits: Limits {
-            max_input_bytes: 100,
-            ..Limits::default()
-        },
-        ..Default::default()
-    };
+    let small = ReadOptions::default().with_limits(Limits::default().with_max_input_bytes(100));
     assert!(cadkit_dgn::read(&bytes, &small).is_err());
 }

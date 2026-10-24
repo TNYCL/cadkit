@@ -506,19 +506,19 @@ impl State<'_> {
                             }));
                         continue;
                     }
-                    let mut block = Block {
-                        name,
-                        id: handle(g),
-                        base_point: g.point_or_zero(10),
-                        entities: entities.into_iter().map(|p| p.entity).collect(),
-                        is_xref: flags & 4 != 0,
-                        xref_path: if flags & 4 != 0 {
+                    let mut block = {
+                        let mut block = Block::new(name)
+                            .with_base_point(g.point_or_zero(10))
+                            .with_entities(entities.into_iter().map(|p| p.entity).collect())
+                            .with_is_xref(flags & 4 != 0);
+                        block.id = handle(g);
+                        block.xref_path = if flags & 4 != 0 {
                             g.string(1).filter(|s| !s.is_empty())
                         } else {
                             None
-                        },
-                        description: g.string(4).filter(|s| !s.is_empty()),
-                        props: Default::default(),
+                        };
+                        block.description = g.string(4).filter(|s| !s.is_empty());
+                        block
                     };
                     block
                         .props
@@ -607,13 +607,10 @@ impl State<'_> {
             .layouts
             .iter()
             .find(|l| l.name.eq_ignore_ascii_case("Model"));
-        let mut model = Model {
-            name: "Model".to_owned(),
-            id: model_layout.and_then(|l| l.handle),
-            kind: ModelKind::Model,
-            is_3d: false,
-            entities: model_entities,
-            props: Default::default(),
+        let mut model = {
+            let mut model = Model::new("Model", ModelKind::Model).with_entities(model_entities);
+            model.id = model_layout.and_then(|l| l.handle);
+            model
         };
         model.is_3d = model.entities.iter().any(entity_has_z);
 
@@ -649,13 +646,12 @@ impl State<'_> {
                     MValue::Text(format!("{b:X}")),
                 );
             }
-            layout_models.push(Model {
-                name: l.name.clone(),
-                id: l.handle,
-                kind: ModelKind::Layout,
-                is_3d: false,
-                entities,
-                props,
+            layout_models.push({
+                let mut model = Model::new(l.name.clone(), ModelKind::Layout)
+                    .with_entities(entities)
+                    .with_props(props);
+                model.id = l.handle;
+                model
             });
         }
         // Paper-space entities without a LAYOUT object (R12, stripped files).
@@ -670,14 +666,7 @@ impl State<'_> {
                 Some(n) if layout_models.is_empty() => n.to_owned(),
                 _ => orig.trim_start_matches('*').to_owned(),
             };
-            layout_models.push(Model {
-                name,
-                id: None,
-                kind: ModelKind::Layout,
-                is_3d: false,
-                entities,
-                props: Default::default(),
-            });
+            layout_models.push(Model::new(name, ModelKind::Layout).with_entities(entities));
         }
 
         self.doc.models.push(model);

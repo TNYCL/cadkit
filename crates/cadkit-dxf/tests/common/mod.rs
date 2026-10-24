@@ -498,6 +498,7 @@ pub fn numbers(e: &Entity, keep_measure: bool) -> (Vec<f64>, Vec<f64>, Vec<Strin
             }
         }
         EntityKind::Group { .. } | EntityKind::Unknown { .. } => {}
+        _ => {}
     }
     (n, ang, s)
 }

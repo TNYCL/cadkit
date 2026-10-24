@@ -33,11 +33,8 @@ fn seed(three: bool) -> Vec<u8> {
 }
 fn document(three: bool, entities: Vec<Entity>) -> Document {
     let mut d = Document::default();
-    d.models.push(Model {
-        is_3d: three,
-        entities,
-        ..Default::default()
-    });
+    d.models
+        .push(Model::default().with_is_3d(three).with_entities(entities));
     d
 }
 fn line() -> Entity {
@@ -53,22 +50,16 @@ fn new_2d_and_3d_geometry_with_attached_unicode_tags() {
         let mut entity = line();
         entity.layer = Some("Ölçüm".into());
         entity.color = Color::Aci { index: 3 };
-        entity.attributes.push(Attribute {
-            tag: "Açıklama".into(),
-            value: Value::Text("İstanbul, çığ, ölçü".into()),
-            set: Some("Öznitelikler".into()),
-            position: None,
-            invisible: true,
-            ..Default::default()
-        });
-        entity.attributes.push(Attribute {
-            tag: "Count".into(),
-            value: Value::Int(7),
-            set: Some("Öznitelikler".into()),
-            position: None,
-            invisible: true,
-            ..Default::default()
-        });
+        entity.attributes.push(
+            Attribute::new("Açıklama", Value::Text("İstanbul, çığ, ölçü".into()))
+                .with_set("Öznitelikler")
+                .with_invisible(true),
+        );
+        entity.attributes.push(
+            Attribute::new("Count", Value::Int(7))
+                .with_set("Öznitelikler")
+                .with_invisible(true),
+        );
         let d = document(three, vec![entity]);
         let bytes = write_v8(&d, &seed(three), &WriteOptions::default()).unwrap();
         let cf = ::cfb::CompoundFile::open_strict(Cursor::new(&bytes)).unwrap();
@@ -95,14 +86,11 @@ fn new_2d_and_3d_geometry_with_attached_unicode_tags() {
 fn integer_tags_beyond_i32_are_written_as_doubles() {
     let tagged = |n: i64| {
         let mut e = line();
-        e.attributes.push(Attribute {
-            tag: "Number".into(),
-            value: Value::Int(n),
-            set: Some("Ids".into()),
-            position: None,
-            invisible: true,
-            ..Default::default()
-        });
+        e.attributes.push(
+            Attribute::new("Number", Value::Int(n))
+                .with_set("Ids")
+                .with_invisible(true),
+        );
         e
     };
     // One value needs more than 32 bits, so the whole tag definition becomes a double.
@@ -262,10 +250,7 @@ fn corpus_repack_and_new_geometry() {
 }
 
 fn exercise_real_seed(seed: &[u8]) {
-    let read_options = ReadOptions {
-        fallback_codepage: Some("windows-1254".into()),
-        ..Default::default()
-    };
+    let read_options = ReadOptions::default().with_fallback_codepage("windows-1254");
     let original = crate::read(seed, &read_options).unwrap();
     let repacked = repack_v8(seed, &read_options).unwrap();
     let parsed = crate::read(&repacked, &read_options).unwrap();
@@ -313,14 +298,11 @@ fn text_and_clockwise_wrapped_arc_use_neutral_conventions() {
                 valign: cadkit_core::VAlign::Baseline,
                 normal: Vec3::Z,
             });
-            t.attributes.push(Attribute {
-                tag: "Etiket".into(),
-                value: Value::Text("İğne".into()),
-                set: Some("Test".into()),
-                position: None,
-                invisible: true,
-                ..Default::default()
-            });
+            t.attributes.push(
+                Attribute::new("Etiket", Value::Text("İğne".into()))
+                    .with_set("Test")
+                    .with_invisible(true),
+            );
             let source = document(
                 three,
                 vec![
@@ -343,13 +325,11 @@ fn text_and_clockwise_wrapped_arc_use_neutral_conventions() {
                 },
             )
             .unwrap();
-            let parsed = crate::read(
-                &bytes,
-                &ReadOptions {
-                    fallback_codepage: codepage,
-                    ..Default::default()
-                },
-            )
+            let parsed = crate::read(&bytes, &{
+                let mut options = ReadOptions::default();
+                options.fallback_codepage = codepage;
+                options
+            })
             .unwrap();
             assert_eq!(
                 parsed.models[0].entities[0].attributes[0].value,
@@ -477,34 +457,21 @@ fn v8_seed_prepare_document_converts_cross_format_features() {
         arrowhead: true,
     });
 
-    let mut cross_doc = Document {
-        units: cadkit_core::Units {
-            unit: cadkit_core::LengthUnit::Millimeter,
-            meters_per_unit: Some(0.001),
-        },
-        blocks: vec![cadkit_core::Block {
-            name: "DOOR".into(),
-            base_point: Point3::ORIGIN,
-            entities: vec![block_line],
-            ..Default::default()
-        }],
-        models: vec![
-            cadkit_core::Model {
-                name: "Model".into(),
-                kind: cadkit_core::ModelKind::Model,
-                is_3d: false,
-                entities: vec![insert, mtext, leader],
-                ..Default::default()
-            },
-            cadkit_core::Model {
-                name: "Layout1".into(),
-                kind: cadkit_core::ModelKind::Layout,
-                is_3d: false,
-                entities: Vec::new(),
-                ..Default::default()
-            },
-        ],
-        ..Document::default()
+    let mut cross_doc = {
+        let mut doc = Document::default();
+        doc.units = cadkit_core::Units::new(cadkit_core::LengthUnit::Millimeter)
+            .with_meters_per_unit(0.001);
+        doc.blocks = vec![
+            cadkit_core::Block::new("DOOR")
+                .with_base_point(Point3::ORIGIN)
+                .with_entities(vec![block_line]),
+        ];
+        doc.models = vec![
+            cadkit_core::Model::new("Model", cadkit_core::ModelKind::Model)
+                .with_entities(vec![insert, mtext, leader]),
+            cadkit_core::Model::new("Layout1", cadkit_core::ModelKind::Layout),
+        ];
+        doc
     };
 
     let prepared = seed_3d

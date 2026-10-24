@@ -18,22 +18,17 @@ fuzz_target!(|data: &[u8]| {
         if let Ok(neutral) =
             cadkit_gml::to_document(&doc, &cadkit_gml::ImportOptions::default(), &options)
         {
-            let export = cadkit_gml::ExportOptions {
-                srs_name: "urn:cadkit:fuzz".into(),
-                lod: 2,
-                limits: options.limits,
-            };
+            let export =
+                cadkit_gml::ExportOptions::new("urn:cadkit:fuzz", 2).with_limits(options.limits);
             let _ = cadkit_gml::write_document_with_report(
                 &neutral,
                 &export,
                 cadkit_gml::UnsupportedGeometry::MetadataOnly,
             );
         }
-        let validation = cadkit_gml::ValidationOptions {
-            limits: options.limits,
-            max_geometry_work: 100_000,
-            ..Default::default()
-        };
+        let validation = cadkit_gml::ValidationOptions::new()
+            .with_limits(options.limits)
+            .with_max_geometry_work(100_000);
         if let Ok(bytes) = cadkit_gml::write(&doc, &validation) {
             let _ = cadkit_gml::read_native(&bytes, &options);
         }

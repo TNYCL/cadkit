@@ -11,12 +11,19 @@ use std::collections::{BTreeSet, HashMap};
 
 /// Options controlling which CityGML geometry is projected into the neutral [`Document`].
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ImportOptions {
     /// Optional LoD filter (`0..=4`); `None` imports all LoDs, while `Some(lod)` skips other `lodN*` geometry properties.
     pub lod: Option<u8>,
 }
 
 impl ImportOptions {
+    /// Imports every LoD.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     /// Sets the optional Level of Detail filter (`0..=4`).
     #[must_use]
     pub fn with_lod(mut self, lod: Option<u8>) -> Self {
@@ -128,9 +135,10 @@ pub(crate) fn infer_srs_units(srs: &str) -> Option<Units> {
         2222..=2224 | 2868 | 2992 | 2994 => LengthUnit::Foot,
         _ => return None,
     };
-    Some(Units {
-        unit,
-        meters_per_unit: unit.meters(),
+    Some({
+        let mut units = Units::new(unit);
+        units.meters_per_unit = unit.meters();
+        units
     })
 }
 
@@ -384,14 +392,11 @@ impl Importer<'_> {
                             }
                             _ => Value::Text(text),
                         };
-                    entity.attributes.push(Attribute {
-                        tag: name.into(),
-                        value: v,
-                        set: Some(a.name.local().into()),
-                        position: None,
-                        invisible: true,
-                        ..Default::default()
-                    });
+                    entity.attributes.push(
+                        Attribute::new(name, v)
+                            .with_set(a.name.local())
+                            .with_invisible(true),
+                    );
                 }
             }
             let layer_name = cadkit_layer.unwrap_or_else(|| e.name.local().to_owned());
@@ -458,21 +463,14 @@ pub fn to_document(
         .into_iter()
         .map(|name| {
             let color = thematic_layer_color(&name);
-            Layer {
-                name,
-                color,
-                visible: true,
-                plottable: true,
-                ..Layer::default()
-            }
+            Layer::new(name).with_color(color)
         })
         .collect();
-    doc.warnings.push(cadkit_core::Warning {code:"gml.neutral_projection".into(), message:"Neutral geometry is a projection; use CityGmlDocument to preserve LoD ownership, shared references and XML extensions".into(), offset:None, object:None});
-    doc.models.push(Model {
-        name: "CityModel".into(),
-        is_3d: true,
-        entities,
-        ..Default::default()
+    doc.warnings.push(cadkit_core::Warning::new("gml.neutral_projection", "Neutral geometry is a projection; use CityGmlDocument to preserve LoD ownership, shared references and XML extensions"));
+    doc.models.push({
+        let mut model = Model::default().with_is_3d(true).with_entities(entities);
+        model.name = "CityModel".into();
+        model
     });
     if let Some(srs) = nodes.iter().find_map(|(e, _)| e.attribute("", "srsName")) {
         if let Some(units) = infer_srs_units(srs) {

@@ -12,6 +12,7 @@ pub mod export;
 pub mod geom;
 pub mod geom_ops;
 pub mod model;
+mod model_builders;
 pub mod ops;
 pub mod options;
 pub mod polygon;

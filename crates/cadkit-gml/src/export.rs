@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 /// Coordinate, LoD, and resource-limit contract for CityGML export.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ExportOptions {
     /// Identifier of the existing CRS of the source coordinates; no coordinate reprojection is performed.
     pub srs_name: String,

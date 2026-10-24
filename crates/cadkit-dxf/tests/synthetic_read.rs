@@ -684,10 +684,7 @@ fn encodings_and_escapes() {
     let mut bytes = b"0\nSECTION\n2\nENTITIES\n0\nTEXT\n1\n".to_vec();
     bytes.push(0xDD);
     bytes.extend_from_slice(b"\n0\nENDSEC\n0\nEOF\n");
-    let opts = ReadOptions {
-        fallback_codepage: Some("ANSI_1254".into()),
-        ..ReadOptions::default()
-    };
+    let opts = ReadOptions::default().with_fallback_codepage("ANSI_1254");
     let doc = cadkit_dxf::read(&bytes, &opts).unwrap();
     assert!(
         matches!(&doc.models[0].entities[0].kind, EntityKind::Text { value, .. } if value == "\u{130}")

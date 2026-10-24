@@ -199,13 +199,7 @@ pub fn read(bytes: &[u8], options: &ReadOptions) -> Result<Document> {
 /// Writes a [`CityGmlDocument`] as UTF-8 XML while preserving unknown XML elements and extensions.
 pub fn write(doc: &CityGmlDocument, options: &ValidationOptions) -> Result<Vec<u8>> {
     validate(doc, options)?;
-    xml::serialize(
-        doc,
-        &ReadOptions {
-            limits: options.limits,
-            ..Default::default()
-        },
-    )
+    xml::serialize(doc, &ReadOptions::default().with_limits(options.limits))
 }
 
 /// Writes neutral [`Document`] geometry to CityGML 2.0 with an explicit CRS and LoD.

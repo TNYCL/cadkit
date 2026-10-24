@@ -31,6 +31,7 @@ pub type Props = BTreeMap<String, Value>;
 
 /// A complete drawing.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Document {
     /// Where the data came from.
     pub source: SourceInfo,
@@ -149,6 +150,7 @@ impl Document {
 
 /// Origin of a [`Document`].
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct SourceInfo {
     /// File format family.
     pub format: Format,
@@ -224,6 +226,7 @@ impl Summary {
 /// File format family.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum Format {
     /// Not known (e.g. a document built in memory).
     #[default]
@@ -242,6 +245,7 @@ pub enum Format {
 
 /// Drawing units.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Units {
     /// Named unit of the coordinates.
     pub unit: LengthUnit,
@@ -284,6 +288,7 @@ pub enum LengthUnit {
 
 /// A layer (DGN: level).
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Layer {
     /// Unique name.
     pub name: String,
@@ -311,6 +316,7 @@ pub struct Layer {
 
 /// A linetype definition.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Linetype {
     /// Unique name.
     pub name: String,
@@ -324,6 +330,7 @@ pub struct Linetype {
 
 /// A text style definition.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct TextStyle {
     /// Unique name.
     pub name: String,
@@ -341,6 +348,7 @@ pub struct TextStyle {
 
 /// A block definition (DGN: shared cell definition).
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Block {
     /// Unique name.
     pub name: String,
@@ -362,6 +370,7 @@ pub struct Block {
 
 /// A space that holds drawn entities: model space, a paper-space layout or a DGN model.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Model {
     /// Display name.
     pub name: String,
@@ -380,6 +389,7 @@ pub struct Model {
 /// Kind of [`Model`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ModelKind {
     /// Design / model space.
     #[default]
@@ -392,6 +402,7 @@ pub enum ModelKind {
 
 /// One drawn object.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Entity {
     /// Native identifier (DWG handle, DGN element id).
     pub id: Option<u64>,
@@ -573,6 +584,7 @@ impl Entity {
 /// Geometry and type-specific data of an [`Entity`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum EntityKind {
     /// A point.
     Point {
@@ -913,6 +925,7 @@ pub enum DimensionType {
 /// What a [`EntityKind::Group`] represents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum GroupKind {
     /// DGN complex chain (open).
     ComplexChain,
@@ -1027,6 +1040,7 @@ pub enum Lineweight {
 
 /// Non-graphic data attached to an entity (DWG ATTRIB, DGN tag, item-type property).
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Attribute {
     /// Tag / property name.
     pub tag: String,
@@ -1052,6 +1066,7 @@ pub struct Attribute {
 
 /// Text presentation of a displayed attribute value.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct AttributeDisplay {
     /// Text height, in drawing units.
     pub height: f64,
@@ -1070,6 +1085,7 @@ pub struct AttributeDisplay {
 /// A loosely typed value for attributes and props.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(untagged)]
+#[non_exhaustive]
 pub enum Value {
     /// No value.
     #[default]
@@ -1221,6 +1237,7 @@ pub struct Raw {
 
 /// A recoverable problem found while reading.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Warning {
     /// Stable machine-readable code, e.g. `"dgn.unknown_element"`.
     pub code: String,

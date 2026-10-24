@@ -51,6 +51,7 @@ use crate::ops::{
 /// SVG rendering options.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct SvgOptions {
     /// Index into [`Document::models`] to render.
     pub model: usize,

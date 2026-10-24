@@ -25,14 +25,14 @@ fn new_then_edited_geometry_unicode_labels_and_identifier_types() {
     for three in [false, true] {
         let mut line = line();
         line.layer = Some("Çizim".into());
-        line.attributes.push(Attribute {
-            tag: "SyntheticIdentifier".into(),
-            value: Value::Text("00009007199254740993".into()),
-            set: Some("Identifiers".into()),
-            position: None,
-            invisible: true,
-            ..Default::default()
-        });
+        line.attributes.push(
+            Attribute::new(
+                "SyntheticIdentifier",
+                Value::Text("00009007199254740993".into()),
+            )
+            .with_set("Identifiers")
+            .with_invisible(true),
+        );
         let mut label = Entity::new(EntityKind::Text {
             position: Point3::xy(3., 4.),
             end_point: None,
@@ -113,10 +113,12 @@ fn bylayer_lineweight_resolves_explicit_native_layer_index() {
     let mut entity = line();
     entity.layer = Some("Synthetic layer".into());
     let mut source = document(false, vec![entity]);
-    let mut layer = cadkit_core::Layer {
-        name: "Synthetic layer".into(),
-        lineweight: cadkit_core::Lineweight::Millimeters(0.25),
-        ..Default::default()
+    let mut layer = {
+        let mut new_layer = cadkit_core::Layer::new("Synthetic layer")
+            .with_lineweight(cadkit_core::Lineweight::Millimeters(0.25));
+        new_layer.visible = false;
+        new_layer.plottable = false;
+        new_layer
     };
     layer.props.insert("dgn.weight".into(), Value::Int(3));
     source.layers.push(layer);

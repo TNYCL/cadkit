@@ -30,12 +30,8 @@ fn p(x: f64, y: f64, z: f64) -> Point3 {
 
 fn model_doc(entities: Vec<Entity>) -> Document {
     let mut doc = Document::default();
-    doc.models.push(Model {
-        name: "Model".into(),
-        kind: ModelKind::Model,
-        entities,
-        ..Model::default()
-    });
+    doc.models
+        .push(Model::new("Model", ModelKind::Model).with_entities(entities));
     doc
 }
 
@@ -166,11 +162,7 @@ fn r12_high_degree_spline_is_fast() {
 fn many_duplicate_layouts_images_and_linetypes_stay_fast() {
     let mut doc = model_doc(vec![]);
     for _ in 0..3000 {
-        doc.models.push(Model {
-            name: "Same".into(),
-            kind: ModelKind::Layout,
-            ..Model::default()
-        });
+        doc.models.push(Model::new("Same", ModelKind::Layout));
     }
     for i in 0..3000 {
         let mut e = Entity::new(EntityKind::Image {
@@ -207,14 +199,7 @@ fn sub_entities_are_owned_by_their_parent() {
         column_spacing: 0.0,
         row_spacing: 0.0,
     });
-    insert.attributes = vec![Attribute {
-        tag: "T".into(),
-        value: Value::Text("v".into()),
-        set: None,
-        position: None,
-        invisible: false,
-        ..Default::default()
-    }];
+    insert.attributes = vec![Attribute::new("T", Value::Text("v".into()))];
     let vtx = |x, y, z| Vertex {
         position: p(x, y, z),
         ..Vertex::default()
@@ -231,10 +216,7 @@ fn sub_entities_are_owned_by_their_parent() {
         faces: vec![vec![0, 1, 2]],
     });
     let mut doc = model_doc(vec![insert, pl3, mesh]);
-    doc.blocks.push(Block {
-        name: "B".into(),
-        ..Block::default()
-    });
+    doc.blocks.push(Block::new("B"));
     let text = cadkit_dxf::write(&doc, DxfVersion::R2018).unwrap();
     let section = text.split("ENTITIES").nth(1).unwrap();
     let lines: Vec<&str> = section.lines().skip(1).collect();
@@ -466,12 +448,11 @@ fn nested_bulged_polyline_hatch_edge_expands_to_arc() {
 #[test]
 fn attribute_display_and_layer_roundtrip_and_dwg_props_bridge() {
     let mut doc = Document::default();
-    doc.text_styles.push(TextStyle {
-        name: "ISO".into(),
-        font: Some("isocp.shx".into()),
-        width_factor: 1.0,
-        ..TextStyle::default()
-    });
+    doc.text_styles.push(
+        TextStyle::new("ISO")
+            .with_font("isocp.shx")
+            .with_width_factor(1.0),
+    );
     let mut dwg_attdef = Entity::new(EntityKind::Unknown {
         type_name: "dwg.ATTDEF".into(),
     });
@@ -487,11 +468,8 @@ fn attribute_display_and_layer_roundtrip_and_dwg_props_bridge() {
     dwg_attdef
         .props
         .insert("dwg.height".into(), Value::Float(3.0));
-    doc.blocks.push(Block {
-        name: "TagBlk".into(),
-        entities: vec![dwg_attdef],
-        ..Block::default()
-    });
+    doc.blocks
+        .push(Block::new("TagBlk").with_entities(vec![dwg_attdef]));
 
     let mut ins = Entity::new(EntityKind::Insert {
         block: "TagBlk".into(),
@@ -505,29 +483,20 @@ fn attribute_display_and_layer_roundtrip_and_dwg_props_bridge() {
         row_spacing: 0.0,
     });
     ins.layer = Some("0".into());
-    ins.attributes.push(Attribute {
-        tag: "ROOM".into(),
-        value: Value::Text("A-101".into()),
-        set: None,
-        position: Some(p(12.0, 24.0, 0.0)),
-        invisible: false,
-        layer: Some("Annotations".into()),
-        display: Some(AttributeDisplay {
-            height: 3.5,
-            width: 3.5 * 0.8,
-            style: Some("ISO".into()),
-            halign: HAlign::Center,
-            valign: VAlign::Middle,
-            rotation: 0.25,
-        }),
-        props: Props::new(),
-    });
-    doc.models.push(Model {
-        name: "Model".into(),
-        kind: ModelKind::Model,
-        entities: vec![ins],
-        ..Model::default()
-    });
+    ins.attributes.push(
+        Attribute::new("ROOM", Value::Text("A-101".into()))
+            .with_position(p(12.0, 24.0, 0.0))
+            .with_layer("Annotations")
+            .with_display(
+                AttributeDisplay::new(3.5, 3.5 * 0.8)
+                    .with_style("ISO")
+                    .with_halign(HAlign::Center)
+                    .with_valign(VAlign::Middle)
+                    .with_rotation(0.25),
+            ),
+    );
+    doc.models
+        .push(Model::new("Model", ModelKind::Model).with_entities(vec![ins]));
 
     let dxf = cadkit_dxf::write(&doc, DxfVersion::R2018).unwrap();
     let back = read(dxf.as_bytes());

@@ -374,11 +374,8 @@ fn run(cli: &Cli) -> Result<(), CliError> {
                     })?;
                     let (native, report) = cadkit::gml::from_document_with_report(
                         &doc,
-                        &cadkit::gml::ExportOptions {
-                            srs_name,
-                            lod: *lod,
-                            limits: options.limits,
-                        },
+                        &cadkit::gml::ExportOptions::new(srs_name, *lod)
+                            .with_limits(options.limits),
                         if *gml_metadata_only {
                             cadkit::gml::UnsupportedGeometry::MetadataOnly
                         } else {
@@ -410,11 +407,12 @@ fn run(cli: &Cli) -> Result<(), CliError> {
                     .as_ref()
                     .ok_or_else(|| CliError::Usage("DGN V8 output requires --seed".into()))?;
                 let bytes = load_bytes(seed, options.limits.max_input_bytes)?;
-                let mut options = cadkit::dgn::WriteOptions {
-                    limits: options.limits,
-                    codepage: cli.codepage.clone(),
-                    clear_seed_model: *clear_seed_model,
-                    ..Default::default()
+                let mut options = {
+                    let mut new_options = cadkit::dgn::WriteOptions::default()
+                        .with_limits(options.limits)
+                        .with_clear_seed_model(*clear_seed_model);
+                    new_options.codepage = cli.codepage.clone();
+                    new_options
                 };
                 if let Some(t) = cli.planarity_tolerance {
                     options.planarity_tolerance = t;
@@ -447,10 +445,7 @@ fn run(cli: &Cli) -> Result<(), CliError> {
                             doc.models.len()
                         )));
                     }
-                    let mut options = SvgOptions {
-                        model: *model,
-                        ..SvgOptions::default()
-                    };
+                    let mut options = SvgOptions::default().with_model(*model);
                     if let Some(w) = width {
                         options.width_px = *w;
                     }
@@ -568,11 +563,9 @@ fn gml_validation(
     options: &ReadOptions,
     geometry: bool,
 ) -> cadkit::gml::ValidationOptions {
-    let mut validation = cadkit::gml::ValidationOptions {
-        limits: options.limits,
-        geometry,
-        ..Default::default()
-    };
+    let mut validation = cadkit::gml::ValidationOptions::default()
+        .with_limits(options.limits)
+        .with_geometry(geometry);
     if let Some(t) = cli.planarity_tolerance {
         validation.planarity_tolerance = t;
     }
@@ -580,10 +573,10 @@ fn gml_validation(
 }
 
 fn read_options(cli: &Cli) -> ReadOptions {
-    let mut options = ReadOptions {
-        keep_raw: cli.keep_raw,
-        fallback_codepage: cli.codepage.clone(),
-        ..ReadOptions::default()
+    let mut options = {
+        let mut options = ReadOptions::default().with_keep_raw(cli.keep_raw);
+        options.fallback_codepage = cli.codepage.clone();
+        options
     };
     if let Some(v) = cli.max_input_bytes {
         options.limits.max_input_bytes = v;
@@ -993,6 +986,7 @@ fn summary(kind: &EntityKind) -> String {
             exterior.len(),
             interiors.len()
         ),
+        _ => String::new(),
     }
 }
 
@@ -1155,18 +1149,19 @@ mod tests {
         });
         line.id = Some(42);
         line.layer = Some("walls".into());
-        Document {
-            layers: vec![Layer {
-                name: "walls".into(),
-                visible: true,
-                ..Layer::default()
-            }],
-            models: vec![Model {
-                name: "Model".into(),
-                entities: vec![line],
-                ..Model::default()
-            }],
-            ..Document::default()
+        {
+            let mut doc = Document::default();
+            doc.layers = vec![{
+                let mut layer = Layer::new("walls");
+                layer.plottable = false;
+                layer
+            }];
+            doc.models = vec![{
+                let mut model = Model::default().with_entities(vec![line]);
+                model.name = "Model".into();
+                model
+            }];
+            doc
         }
     }
 

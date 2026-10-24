@@ -378,12 +378,7 @@ impl Writer<'_> {
     }
 
     pub fn warn(&mut self, code: &str, message: String) {
-        self.warnings.push(Warning {
-            code: code.to_owned(),
-            message,
-            offset: None,
-            object: None,
-        });
+        self.warnings.push(Warning::new(code.to_owned(), message));
     }
 
     pub fn out(&self) -> Out {

@@ -146,11 +146,10 @@ impl Container<'_> {
     }
 
     fn warn(&mut self, code: &str, message: impl Into<String>, offset: Option<u64>) {
-        self.warnings.push(Warning {
-            code: code.to_owned(),
-            message: message.into(),
-            offset,
-            object: None,
+        self.warnings.push({
+            let mut warning = Warning::new(code.to_owned(), message);
+            warning.offset = offset;
+            warning
         });
     }
 }
