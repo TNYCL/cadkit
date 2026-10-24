@@ -5,6 +5,7 @@
 //! standard library's C `json` module. That keeps the binding independent of the
 //! model's shape: new entity kinds and fields appear automatically.
 
+use cadkit::LimitKind;
 use std::sync::Arc;
 
 use cadkit::{DxfVersion, Error, LengthUnit, ReadOptions, SvgOptions};
@@ -48,7 +49,7 @@ fn map_err(err: Error) -> PyErr {
     match err {
         Error::UnknownFormat => UnknownFormatError::new_err(err.to_string()),
         Error::Unsupported(_) => UnsupportedError::new_err(err.to_string()),
-        Error::LimitExceeded(_) => LimitExceededError::new_err(err.to_string()),
+        Error::LimitExceeded { .. } => LimitExceededError::new_err(err.to_string()),
         Error::Truncated { .. } | Error::Invalid { .. } => {
             InvalidDataError::new_err(err.to_string())
         }
@@ -179,21 +180,27 @@ impl V8Seed {
                     let file = std::fs::File::open(path)?;
                     let len = file.metadata()?.len();
                     if len > options.limits.max_input_bytes {
-                        return Err(Error::LimitExceeded(format!(
-                            "input is {len} bytes, limit is {}",
-                            options.limits.max_input_bytes
-                        )));
+                        return Err(Error::limit(
+                            LimitKind::InputBytes,
+                            format!(
+                                "input is {len} bytes, limit is {}",
+                                options.limits.max_input_bytes
+                            ),
+                        ));
                     }
                     let mut bytes = Vec::new();
                     use std::io::Read as _;
                     file.take(options.limits.max_input_bytes.saturating_add(1))
                         .read_to_end(&mut bytes)?;
                     if bytes.len() as u64 > options.limits.max_input_bytes {
-                        return Err(Error::LimitExceeded(format!(
-                            "input is {} bytes, limit is {}",
-                            bytes.len(),
-                            options.limits.max_input_bytes
-                        )));
+                        return Err(Error::limit(
+                            LimitKind::InputBytes,
+                            format!(
+                                "input is {} bytes, limit is {}",
+                                bytes.len(),
+                                options.limits.max_input_bytes
+                            ),
+                        ));
                     }
                     cadkit::dgn::V8Seed::parse(&bytes, &options)
                 }
@@ -292,7 +299,8 @@ impl Document {
             .detach(|| {
                 let mut copy = (*src).clone();
                 if copy.explode_inserts(max_depth).truncated {
-                    return Err(Error::LimitExceeded(
+                    return Err(Error::limit(
+                        LimitKind::Depth,
                         "block expansion work limit exceeded".into(),
                     ));
                 }

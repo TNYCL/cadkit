@@ -12,6 +12,7 @@
 
 mod entity;
 
+use cadkit_core::LimitKind;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use cadkit_core::geom_ops::arbitrary_axes;
@@ -568,15 +569,18 @@ impl<'f> Mapper<'f> {
                 self.mapped_entities += 1;
                 self.mapped_items = self.mapped_items.saturating_add(item_count(&e));
                 if self.mapped_entities > self.limits.max_objects {
-                    self.limit_error = Some(Error::LimitExceeded(format!(
-                        "more than {} entities",
-                        self.limits.max_objects
-                    )));
+                    self.limit_error = Some(Error::limit(
+                        LimitKind::Objects,
+                        format!("more than {} entities", self.limits.max_objects),
+                    ));
                 } else if self.mapped_items > self.limits.max_total_vertices {
-                    self.limit_error = Some(Error::LimitExceeded(format!(
-                        "more than {} vertices in the document",
-                        self.limits.max_total_vertices
-                    )));
+                    self.limit_error = Some(Error::limit(
+                        LimitKind::TotalVertices,
+                        format!(
+                            "more than {} vertices in the document",
+                            self.limits.max_total_vertices
+                        ),
+                    ));
                 }
                 out.push(e);
             }
@@ -1086,13 +1090,13 @@ mod tests {
         options.limits.max_objects = 1;
         assert!(matches!(
             to_document(&file, &options),
-            Err(Error::LimitExceeded(_))
+            Err(Error::LimitExceeded { .. })
         ));
         let mut options = ReadOptions::default();
         options.limits.max_total_vertices = 1;
         assert!(matches!(
             to_document(&file, &options),
-            Err(Error::LimitExceeded(_))
+            Err(Error::LimitExceeded { .. })
         ));
         options.limits.max_total_vertices = 2;
         assert!(to_document(&file, &options).is_ok());

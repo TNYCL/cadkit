@@ -13,6 +13,7 @@ use super::encode::*;
 use crate::le;
 use crate::native::linkage::{self, LinkageData};
 use crate::native::v8::{AuxRecord, ModelHeader, RawElement, V8Model};
+use cadkit_core::LimitKind;
 use cadkit_core::{Entity, EntityKind, Error, Point3, Result, Value, Vec3};
 use std::collections::HashMap;
 use std::f64::consts::{FRAC_PI_2, TAU};
@@ -116,8 +117,9 @@ impl Template {
             let mut head = [0u8; 16];
             put(&mut head, 0, &index.to_le_bytes())?;
             put(&mut head, 2, &XA_SUB_MAGIC.to_le_bytes())?;
-            let len = u16::try_from(data.len())
-                .map_err(|_| Error::LimitExceeded("DGN raster XAttribute string".into()))?;
+            let len = u16::try_from(data.len()).map_err(|_| {
+                Error::limit(LimitKind::Capacity, "DGN raster XAttribute string".into())
+            })?;
             put(&mut head, 8, &len.to_le_bytes())?;
             put(&mut head, 10, &b::XATTRIBUTE_SUB_FLAGS.to_le_bytes())?;
             subs.push((head, data));
@@ -413,8 +415,9 @@ impl XAttribute {
                 4 => utf16z(url),
                 _ => data.clone(),
             };
-            let len = u16::try_from(data.len())
-                .map_err(|_| Error::LimitExceeded("DGN raster XAttribute string".into()))?;
+            let len = u16::try_from(data.len()).map_err(|_| {
+                Error::limit(LimitKind::Capacity, "DGN raster XAttribute string".into())
+            })?;
             put(&mut head, 8, &len.to_le_bytes())?;
             out.extend_from_slice(&head);
             out.extend(data);

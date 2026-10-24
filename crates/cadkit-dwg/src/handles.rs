@@ -6,6 +6,7 @@
 //! 2 ends the map. The running handle and offset restart from 0 in every chunk
 //! (the spec implies one running total; the files and ACadSharp reset per chunk).
 
+use cadkit_core::LimitKind;
 use std::collections::{BTreeMap, HashSet};
 
 use cadkit_core::{Error, Result};
@@ -91,9 +92,10 @@ pub fn parse(data: &[u8], base: u64, max_objects: u64, max_entries: usize) -> Re
                         offsets.insert(o);
                         out.map.insert(handle, o);
                         if out.map.len() as u64 > max_objects {
-                            return Err(Error::LimitExceeded(format!(
-                                "more than {max_objects} objects"
-                            )));
+                            return Err(Error::limit(
+                                LimitKind::Objects,
+                                format!("more than {max_objects} objects"),
+                            ));
                         }
                     }
                 }

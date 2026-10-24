@@ -138,7 +138,7 @@ fn from_cadkit(e: &cadkit::Error) -> JsValue {
         cadkit::Error::Truncated { .. } => "truncated",
         cadkit::Error::Invalid { .. } => "invalid",
         cadkit::Error::Unsupported(_) => "unsupported",
-        cadkit::Error::LimitExceeded(_) => "limit_exceeded",
+        cadkit::Error::LimitExceeded { .. } => "limit_exceeded",
         cadkit::Error::UnknownFormat => "unknown_format",
         cadkit::Error::Io(_) => "io",
         _ => "invalid",

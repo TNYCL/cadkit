@@ -149,17 +149,17 @@ fn tiny_limits_are_respected() {
         ReadOptions::default().with_limits(Limits::default().with_max_decompressed_bytes(1024));
     assert!(matches!(
         cadkit_dwg::read(&bytes, &options),
-        Err(cadkit_core::Error::LimitExceeded(_))
+        Err(cadkit_core::Error::LimitExceeded { .. })
     ));
     let options = ReadOptions::default().with_limits(Limits::default().with_max_input_bytes(100));
     assert!(matches!(
         cadkit_dwg::read(&bytes, &options),
-        Err(cadkit_core::Error::LimitExceeded(_))
+        Err(cadkit_core::Error::LimitExceeded { .. })
     ));
     let options = ReadOptions::default().with_limits(Limits::default().with_max_objects(10));
     assert!(matches!(
         cadkit_dwg::read(&bytes, &options),
-        Err(cadkit_core::Error::LimitExceeded(_))
+        Err(cadkit_core::Error::LimitExceeded { .. })
     ));
 }
 

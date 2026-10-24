@@ -9,6 +9,7 @@ pub mod tkgm;
 pub mod validate;
 mod xml;
 
+use cadkit_core::LimitKind;
 use cadkit_core::{Document, Error, Format, ReadOptions, Result, Summary};
 pub use export::{
     ExportIssue, ExportOptions, ExportReport, UnsupportedGeometry, from_document,
@@ -40,7 +41,10 @@ pub fn sniff(bytes: &[u8]) -> bool {
 pub fn inspect(bytes: &[u8], options: &ReadOptions) -> Result<Summary> {
     use quick_xml::{NsReader, events::Event, name::ResolveResult};
     if bytes.len() as u64 > options.limits.max_input_bytes {
-        return Err(Error::LimitExceeded("CityGML input bytes".into()));
+        return Err(Error::limit(
+            LimitKind::InputBytes,
+            "CityGML input bytes".into(),
+        ));
     }
     let head = bytes.get(..bytes.len().min(65536)).unwrap_or(&[]);
     let mut reader = NsReader::from_reader(head);
@@ -170,7 +174,8 @@ pub fn read_native(bytes: &[u8], options: &ReadOptions) -> Result<CityGmlDocumen
 /// Parses a serialized [`CityGmlDocument`] JSON string after checking the input byte limit and validates its structure.
 pub fn read_native_json(text: &str, options: &ReadOptions) -> Result<CityGmlDocument> {
     if text.len() as u64 > options.limits.max_input_bytes {
-        return Err(cadkit_core::Error::LimitExceeded(
+        return Err(cadkit_core::Error::limit(
+            LimitKind::InputBytes,
             "CityGML JSON input bytes".into(),
         ));
     }

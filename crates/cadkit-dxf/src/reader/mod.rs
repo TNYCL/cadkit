@@ -6,6 +6,7 @@ mod hatch;
 mod records;
 mod tables;
 
+use cadkit_core::LimitKind;
 use std::collections::HashMap;
 
 use cadkit_core::text::OemCodepage;
@@ -127,11 +128,14 @@ fn length_unit(code: i64) -> Units {
 /// Inspects the DXF `HEADER` section without decoding `TABLES`, `BLOCKS`, or `ENTITIES`.
 pub(crate) fn inspect(bytes: &[u8], options: &ReadOptions) -> Result<Summary> {
     if bytes.len() as u64 > options.limits.max_input_bytes {
-        return Err(Error::LimitExceeded(format!(
-            "input of {} bytes exceeds the limit of {}",
-            bytes.len(),
-            options.limits.max_input_bytes
-        )));
+        return Err(Error::limit(
+            LimitKind::InputBytes,
+            format!(
+                "input of {} bytes exceeds the limit of {}",
+                bytes.len(),
+                options.limits.max_input_bytes
+            ),
+        ));
     }
     if !crate::native::sniff(bytes) {
         return Err(Error::UnknownFormat);
@@ -155,7 +159,7 @@ pub(crate) fn inspect(bytes: &[u8], options: &ReadOptions) -> Result<Summary> {
         let pair = match tok.next_pair() {
             Ok(Some(p)) => p,
             Ok(None) => break,
-            Err(e @ Error::LimitExceeded(_)) => return Err(e),
+            Err(e @ Error::LimitExceeded { .. }) => return Err(e),
             Err(e) => {
                 if !saw_section {
                     return Err(e);
@@ -258,11 +262,14 @@ fn record_pair_cap(max_vertices: u32, input_len: usize) -> usize {
 /// Reads a DXF file. See the crate documentation for the mapping rules.
 pub(crate) fn read(bytes: &[u8], options: &ReadOptions) -> Result<Document> {
     if bytes.len() as u64 > options.limits.max_input_bytes {
-        return Err(Error::LimitExceeded(format!(
-            "input of {} bytes exceeds the limit of {}",
-            bytes.len(),
-            options.limits.max_input_bytes
-        )));
+        return Err(Error::limit(
+            LimitKind::InputBytes,
+            format!(
+                "input of {} bytes exceeds the limit of {}",
+                bytes.len(),
+                options.limits.max_input_bytes
+            ),
+        ));
     }
     if !crate::native::sniff(bytes) {
         return Err(Error::UnknownFormat);
@@ -321,7 +328,7 @@ pub(crate) fn read(bytes: &[u8], options: &ReadOptions) -> Result<Document> {
 
     if let Some(err) = rr.take_error() {
         match err {
-            Error::LimitExceeded(_) => return Err(err),
+            Error::LimitExceeded { .. } => return Err(err),
             e if sections == 0 => return Err(e),
             e => st.ctx.warn(
                 "dxf.truncated",
@@ -443,7 +450,8 @@ impl State<'_> {
                     match child.name.as_str() {
                         "VERTEX" | "ATTRIB" => {
                             if children.len() >= self.ctx.opts.limits.max_vertices as usize {
-                                return Err(Error::LimitExceeded(
+                                return Err(Error::limit(
+                                    LimitKind::Vertices,
                                     "too many sub-records in one entity".into(),
                                 ));
                             }
@@ -459,10 +467,10 @@ impl State<'_> {
             }
             self.entity_count += 1;
             if self.entity_count > self.ctx.opts.limits.max_objects {
-                return Err(Error::LimitExceeded(format!(
-                    "more than {} entities",
-                    self.ctx.opts.limits.max_objects
-                )));
+                return Err(Error::limit(
+                    LimitKind::Objects,
+                    format!("more than {} entities", self.ctx.opts.limits.max_objects),
+                ));
             }
             if let Some(p) = entities::convert(&mut self.ctx, &rec, &children)? {
                 out.push(p);

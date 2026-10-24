@@ -125,9 +125,10 @@ pub fn detect(bytes: &[u8]) -> Option<Format> {
 
 fn check_input_len(len: u64, limit: u64) -> Result<()> {
     if len > limit {
-        return Err(Error::LimitExceeded(format!(
-            "input is {len} bytes, limit is {limit}"
-        )));
+        return Err(Error::limit(
+            LimitKind::InputBytes,
+            format!("input is {len} bytes, limit is {limit}"),
+        ));
     }
     Ok(())
 }
@@ -440,7 +441,7 @@ mod tests {
     fn read_from_enforces_max_input_bytes_without_reading_unbounded_stream() {
         let opts = ReadOptions::default().with_limits(Limits::default().with_max_input_bytes(16));
         let err = read_from(std::io::repeat(b'A'), &opts).expect_err("must reject stream > 16B");
-        assert!(matches!(err, Error::LimitExceeded(_)));
+        assert!(matches!(err, Error::LimitExceeded { .. }));
     }
 
     #[cfg(feature = "dxf")]

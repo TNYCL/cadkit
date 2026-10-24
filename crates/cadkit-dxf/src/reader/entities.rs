@@ -4,6 +4,7 @@
 //! with the arbitrary-axis algorithm; `normal` fields keep the extrusion direction, and
 //! angles stay relative to the OCS X axis derived from it.
 
+use cadkit_core::LimitKind;
 use std::collections::BTreeMap;
 
 use cadkit_core::text::{OemCodepage, plain_text, plain_text_in};
@@ -88,10 +89,10 @@ impl<'o> Ctx<'o> {
 
     fn check_count(&self, n: usize, what: &str) -> Result<()> {
         if n > self.max_vertices() as usize {
-            return Err(Error::LimitExceeded(format!(
-                "{what} count exceeds {}",
-                self.max_vertices()
-            )));
+            return Err(Error::limit(
+                LimitKind::Vertices,
+                format!("{what} count exceeds {}", self.max_vertices()),
+            ));
         }
         Ok(())
     }

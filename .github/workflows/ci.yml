@@ -66,6 +66,8 @@ jobs:
       # cadkit-py and cadkit-wasm need their own toolchains; they have dedicated jobs below.
       - run: cargo test --locked
       - run: cargo test --locked --doc
+      # The committed document JSON Schema must match the model.
+      - run: cargo test --locked -p cadkit-core --features schemars --test schema
 
   citygml-schema:
     name: CityGML official XSD validation

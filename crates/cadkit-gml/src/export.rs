@@ -1,6 +1,7 @@
 //! Explicit CAD geometry projection and conversion diagnostics.
 
 use crate::native::*;
+use cadkit_core::LimitKind;
 use cadkit_core::{Document, Entity, EntityKind, Error, Point3, Result, Value};
 use serde::{Deserialize, Serialize};
 
@@ -102,7 +103,10 @@ impl Exporter {
         path: &mut Vec<usize>,
     ) -> Result<Option<Element>> {
         if path.len() as u64 > u64::from(self.max_depth.min(64)) {
-            return Err(Error::LimitExceeded("CityGML export depth".into()));
+            return Err(Error::limit(
+                LimitKind::Depth,
+                "CityGML export depth".into(),
+            ));
         }
         self.report.entities += 1;
         let result = if let EntityKind::Group { children, .. } = &e.kind {
@@ -295,7 +299,7 @@ pub fn from_document_with_report(
         for (entity_index, e) in model.entities.iter().enumerate() {
             next = next
                 .checked_add(1)
-                .ok_or_else(|| Error::LimitExceeded("CityGML export objects".into()))?;
+                .ok_or_else(|| Error::limit(LimitKind::Objects, "CityGML export objects".into()))?;
             let mut object =
                 CityObject::new(ObjectKind::GenericCityObject, format!("cadkit_{next}"));
             if let Some(layer) = &e.layer {
@@ -338,7 +342,10 @@ pub fn from_document_with_report(
             let metadata =
                 serde_json::to_string(e).map_err(|err| Error::invalid(0, err.to_string()))?;
             if metadata.len() as u64 > u64::from(options.limits.max_string_bytes) {
-                return Err(Error::LimitExceeded("CityGML entity metadata bytes".into()));
+                return Err(Error::limit(
+                    LimitKind::StringBytes,
+                    "CityGML entity metadata bytes".into(),
+                ));
             }
             object
                 .properties

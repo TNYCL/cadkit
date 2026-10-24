@@ -113,12 +113,12 @@ fn limits_are_honoured() {
         ReadOptions::default().with_limits(Limits::default().with_max_decompressed_bytes(1000));
     assert!(matches!(
         cadkit_dgn::read(&bytes, &tight),
-        Err(cadkit_core::Error::LimitExceeded(_))
+        Err(cadkit_core::Error::LimitExceeded { .. })
     ));
     let few = ReadOptions::default().with_limits(Limits::default().with_max_objects(10));
     assert!(matches!(
         cadkit_dgn::read(&bytes, &few),
-        Err(cadkit_core::Error::LimitExceeded(_))
+        Err(cadkit_core::Error::LimitExceeded { .. })
     ));
     let small = ReadOptions::default().with_limits(Limits::default().with_max_input_bytes(100));
     assert!(cadkit_dgn::read(&bytes, &small).is_err());

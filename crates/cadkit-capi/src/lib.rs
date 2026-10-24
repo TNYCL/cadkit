@@ -200,7 +200,7 @@ fn map_error(err: &Error) -> cadkit_status {
         Error::Truncated { .. } => cadkit_status::Truncated,
         Error::Invalid { .. } => cadkit_status::InvalidData,
         Error::Unsupported(_) => cadkit_status::Unsupported,
-        Error::LimitExceeded(_) => cadkit_status::LimitExceeded,
+        Error::LimitExceeded { .. } => cadkit_status::LimitExceeded,
         Error::UnknownFormat => cadkit_status::UnknownFormat,
         Error::Io(_) => cadkit_status::Io,
         _ => cadkit_status::Internal,

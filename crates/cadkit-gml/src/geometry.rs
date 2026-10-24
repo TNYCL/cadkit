@@ -5,6 +5,7 @@ use crate::{
     native::{Element, GML, XLINK},
     validate::{elements, polygon, validate},
 };
+use cadkit_core::LimitKind;
 use cadkit_core::{Error, Point3, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -167,7 +168,7 @@ impl VertexWelder {
             }
         }
         let idx = u32::try_from(self.points.len())
-            .map_err(|_| Error::LimitExceeded("GML shell vertices".into()))?;
+            .map_err(|_| Error::limit(LimitKind::Capacity, "GML shell vertices".into()))?;
         self.points.push(p);
         self.grid.entry((cx, cy, cz)).or_default().push(idx);
         Ok(idx)
@@ -177,7 +178,7 @@ impl VertexWelder {
 fn charge(work: &mut u64) -> Result<()> {
     *work = work
         .checked_sub(1)
-        .ok_or_else(|| Error::LimitExceeded("GML geometry work".into()))?;
+        .ok_or_else(|| Error::limit(LimitKind::Work, "GML geometry work".into()))?;
     Ok(())
 }
 
@@ -197,7 +198,7 @@ fn shell(
     while let Some((e, dim, sign, depth)) = todo.pop() {
         charge(work)?;
         if depth >= options.limits.max_depth.min(256) {
-            return Err(Error::LimitExceeded("GML shell depth".into()));
+            return Err(Error::limit(LimitKind::Depth, "GML shell depth".into()));
         }
         let dim = crate::validate::dimension(e, dim)?;
         let sign =

@@ -7,6 +7,7 @@
 //! stored as two little-endian words, high word first; doubles are VAX D-float.
 //! Layouts follow GDAL dgnlib (`dgnread.cpp`, MIT/X); see `docs/dgn/FORMAT_NOTES.md`.
 
+use cadkit_core::LimitKind;
 use cadkit_core::{
     Error, Format, LengthUnit, Limits, ReadOptions, Result, Summary, Units, Warning,
 };
@@ -130,10 +131,10 @@ pub(crate) fn scan<'a>(
         return Err(Error::UnknownFormat);
     }
     if bytes.len() as u64 > budget.limits.max_input_bytes {
-        return Err(Error::LimitExceeded(format!(
-            "input exceeds {} bytes",
-            budget.limits.max_input_bytes
-        )));
+        return Err(Error::limit(
+            LimitKind::InputBytes,
+            format!("input exceeds {} bytes", budget.limits.max_input_bytes),
+        ));
     }
     let mut warnings = Vec::new();
     let mut records = Vec::new();
@@ -182,10 +183,10 @@ pub(crate) fn inspect(bytes: &[u8], options: &ReadOptions) -> Result<Summary> {
     }
     let mut budget = Budget::new(options.limits);
     if bytes.len() as u64 > budget.limits.max_input_bytes {
-        return Err(Error::LimitExceeded(format!(
-            "input exceeds {} bytes",
-            budget.limits.max_input_bytes
-        )));
+        return Err(Error::limit(
+            LimitKind::InputBytes,
+            format!("input exceeds {} bytes", budget.limits.max_input_bytes),
+        ));
     }
     let enc = text::encoding_for(options.fallback_codepage.as_deref());
     let mut tcb = None;

@@ -1,5 +1,6 @@
 //! CFB container writer that preserves streams, directory metadata, and resource limits.
 
+use cadkit_core::LimitKind;
 use cadkit_core::{Error, ReadOptions, Result};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -61,7 +62,7 @@ impl Write for BoundedCursor {
 
 fn map_cfb_io(e: std::io::Error) -> Error {
     if e.to_string().contains("CFB output limit exceeded") {
-        Error::LimitExceeded("CFB output limit exceeded".into())
+        Error::limit(LimitKind::Output, "CFB output limit exceeded".into())
     } else {
         Error::Io(e)
     }
@@ -73,7 +74,7 @@ pub(super) fn rewrite(
     options: &ReadOptions,
 ) -> Result<Vec<u8>> {
     if seed.len() as u64 > options.limits.max_input_bytes {
-        return Err(Error::LimitExceeded("DGN seed bytes".into()));
+        return Err(Error::limit(LimitKind::InputBytes, "DGN seed bytes".into()));
     }
     let root_color = seed_root_color(seed);
     let mut source = ::cfb::CompoundFile::open(Cursor::new(seed))?;
@@ -81,13 +82,16 @@ pub(super) fn rewrite(
     let mut budget = 0u64;
     for entry in source.walk() {
         if entries.len() as u64 >= options.limits.max_objects {
-            return Err(Error::LimitExceeded("CFB entries".into()));
+            return Err(Error::limit(LimitKind::Objects, "CFB entries".into()));
         }
         budget = budget
             .checked_add(entry.len())
-            .ok_or_else(|| Error::LimitExceeded("CFB streams".into()))?;
+            .ok_or_else(|| Error::limit(LimitKind::Objects, "CFB streams".into()))?;
         if budget > options.limits.max_decompressed_bytes {
-            return Err(Error::LimitExceeded("CFB streams".into()));
+            return Err(Error::limit(
+                LimitKind::DecompressedBytes,
+                "CFB streams".into(),
+            ));
         }
         entries.push(entry);
     }
@@ -641,7 +645,10 @@ pub(super) fn stream(seed: &[u8], name: &str, max: u64) -> Result<Vec<u8>> {
     let mut cf = ::cfb::CompoundFile::open(Cursor::new(seed))?;
     let n = cf.entry(name)?.len();
     if n > max {
-        return Err(Error::LimitExceeded("DGN seed stream".into()));
+        return Err(Error::limit(
+            LimitKind::InputBytes,
+            "DGN seed stream".into(),
+        ));
     }
     let mut data = vec![];
     cf.open_stream(name)?.take(n).read_to_end(&mut data)?;
@@ -739,7 +746,7 @@ mod tests {
         replacements.insert("Dgn~H".into(), Some(vec![0u8; 64 * 1024]));
         assert!(matches!(
             rewrite(&seed, &replacements, &tight),
-            Err(Error::LimitExceeded(_))
+            Err(Error::LimitExceeded { .. })
         ));
     }
 }

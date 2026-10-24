@@ -23,6 +23,7 @@ pub mod misc;
 pub mod registry;
 pub mod tables;
 
+use cadkit_core::LimitKind;
 use cadkit_core::{Error, Result, Warning};
 
 use crate::bits::BitReader;
@@ -312,7 +313,10 @@ pub fn checked_count(s: &Streams<'_>, count: i32, min_bits: u64) -> Result<usize
     let n =
         usize::try_from(count).map_err(|_| s.main.invalid(format!("negative count {count}")))?;
     if n as u64 > u64::from(s.ctx.max_vertices) {
-        return Err(Error::LimitExceeded(format!("{n} items in one object")));
+        return Err(Error::limit(
+            LimitKind::Vertices,
+            format!("{n} items in one object"),
+        ));
     }
     if (n as u64).saturating_mul(min_bits) > s.main.remaining_bits() {
         return Err(s.main.invalid(format!("count {n} exceeds the object data")));

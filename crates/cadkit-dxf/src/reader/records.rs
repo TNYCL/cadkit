@@ -1,5 +1,6 @@
 //! Groups the pair stream into records (`0 NAME` followed by its group codes).
 
+use cadkit_core::LimitKind;
 use cadkit_core::Result;
 
 use crate::native::{Pair, Tokenizer, Value};
@@ -159,10 +160,13 @@ impl<'a> RecordReader<'a> {
                 continue;
             }
             if pairs.len() >= self.max_pairs {
-                return Err(cadkit_core::Error::LimitExceeded(format!(
-                    "record `{name}` at offset {offset} has more than {} groups",
-                    self.max_pairs
-                )));
+                return Err(cadkit_core::Error::limit(
+                    LimitKind::Objects,
+                    format!(
+                        "record `{name}` at offset {offset} has more than {} groups",
+                        self.max_pairs
+                    ),
+                ));
             }
             pairs.push(p);
         }

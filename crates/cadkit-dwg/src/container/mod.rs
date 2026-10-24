@@ -8,6 +8,7 @@
 //! - R2007 ([`r2007`]): Reed-Solomon interleaved pages, its own LZ77 variant and
 //!   64-bit page/section maps.
 
+use cadkit_core::LimitKind;
 use std::borrow::Cow;
 
 use cadkit_core::{Error, Limits, Result, Warning};
@@ -157,10 +158,10 @@ impl Container<'_> {
 /// Reads the container of any supported version.
 pub fn read<'a>(bytes: &'a [u8], limits: &Limits) -> Result<Container<'a>> {
     if bytes.len() as u64 > limits.max_input_bytes {
-        return Err(Error::LimitExceeded(format!(
-            "input of {} bytes",
-            bytes.len()
-        )));
+        return Err(Error::limit(
+            LimitKind::InputBytes,
+            format!("input of {} bytes", bytes.len()),
+        ));
     }
     let magic = bytes.get(..6).ok_or(Error::Truncated {
         offset: 0,
@@ -177,10 +178,10 @@ pub fn read<'a>(bytes: &'a [u8], limits: &Limits) -> Result<Container<'a>> {
 /// Reads only the file header and `AcDb:Header` section without decompressing object pages.
 pub fn read_header_only<'a>(bytes: &'a [u8], limits: &Limits) -> Result<Container<'a>> {
     if bytes.len() as u64 > limits.max_input_bytes {
-        return Err(Error::LimitExceeded(format!(
-            "input of {} bytes",
-            bytes.len()
-        )));
+        return Err(Error::limit(
+            LimitKind::InputBytes,
+            format!("input of {} bytes", bytes.len()),
+        ));
     }
     let magic = bytes.get(..6).ok_or(Error::Truncated {
         offset: 0,
@@ -197,7 +198,7 @@ pub fn read_header_only<'a>(bytes: &'a [u8], limits: &Limits) -> Result<Containe
 /// Adds what was being read to a container error (limit errors pass unchanged).
 pub(crate) fn context(what: &'static str) -> impl Fn(Error) -> Error {
     move |e| match e {
-        Error::LimitExceeded(_) | Error::Unsupported(_) => e,
+        Error::LimitExceeded { .. } | Error::Unsupported(_) => e,
         Error::Truncated { offset, needed } => Error::invalid(
             offset,
             format!("{what}: data ends early (needed {needed} more bytes)"),
@@ -232,13 +233,14 @@ impl Budget {
     /// Reserves `n` bytes or fails with [`Error::LimitExceeded`].
     pub(crate) fn take(&mut self, n: u64) -> Result<usize> {
         if n > self.left {
-            return Err(Error::LimitExceeded(format!(
-                "decompressed data above {} bytes",
-                self.left
-            )));
+            return Err(Error::limit(
+                LimitKind::DecompressedBytes,
+                format!("decompressed data above {} bytes", self.left),
+            ));
         }
         self.left -= n;
-        usize::try_from(n).map_err(|_| Error::LimitExceeded(format!("section of {n} bytes")))
+        usize::try_from(n)
+            .map_err(|_| Error::limit(LimitKind::Capacity, format!("section of {n} bytes")))
     }
 
     /// Returns the unused part of a reservation, so that only bytes actually produced

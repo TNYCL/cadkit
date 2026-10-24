@@ -1,6 +1,7 @@
 //! Structural, reference, numeric, and geometric validation for CityGML documents.
 
 use crate::native::{CityGmlDocument, Element, GENERICS, GML, Node, Polygon, XLINK};
+use cadkit_core::LimitKind;
 use cadkit_core::{Error, Limits, Point3, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -107,7 +108,10 @@ pub(crate) fn elements<'a>(
     let mut nodes = 1u64;
     while let Some((e, depth, inherited)) = stack.pop() {
         if depth >= limits.max_depth.min(256) || result.len() as u64 >= limits.max_objects {
-            return Err(Error::LimitExceeded("CityGML elements/depth".into()));
+            return Err(Error::limit(
+                LimitKind::Objects,
+                "CityGML elements/depth".into(),
+            ));
         }
         for name in [&e.name.qualified, &e.name.namespace] {
             check_string(name, e.offset, limits, &mut bytes)?;
@@ -117,7 +121,10 @@ pub(crate) fn elements<'a>(
         }
         let dimension = dimension(e, inherited)?;
         if e.attributes.len() > 256 {
-            return Err(Error::LimitExceeded("XML attributes per element".into()));
+            return Err(Error::limit(
+                LimitKind::Objects,
+                "XML attributes per element".into(),
+            ));
         }
         for a in &e.attributes {
             if !a.name.qualified.split(':').all(xml_id) || a.name.qualified.matches(':').count() > 1
@@ -130,7 +137,10 @@ pub(crate) fn elements<'a>(
         }
         nodes = nodes.saturating_add(e.children.len() as u64);
         if nodes > limits.max_objects {
-            return Err(Error::LimitExceeded("CityGML tree nodes".into()));
+            return Err(Error::limit(
+                LimitKind::Objects,
+                "CityGML tree nodes".into(),
+            ));
         }
         for child in &e.children {
             match child {
@@ -141,7 +151,10 @@ pub(crate) fn elements<'a>(
             }
         }
         if nodes > limits.max_objects || bytes > limits.max_decompressed_bytes {
-            return Err(Error::LimitExceeded("CityGML tree budget".into()));
+            return Err(Error::limit(
+                LimitKind::DecompressedBytes,
+                "CityGML tree budget".into(),
+            ));
         }
         result.push((e, dimension));
     }
@@ -150,12 +163,18 @@ pub(crate) fn elements<'a>(
 
 fn check_string(s: &str, offset: u64, limits: &Limits, bytes: &mut u64) -> Result<()> {
     if s.len() as u64 > u64::from(limits.max_string_bytes) {
-        return Err(Error::LimitExceeded("XML string bytes".into()));
+        return Err(Error::limit(
+            LimitKind::StringBytes,
+            "XML string bytes".into(),
+        ));
     }
     crate::xml::check_chars(s, offset)?;
     *bytes = bytes.saturating_add(s.len() as u64);
     if *bytes > limits.max_decompressed_bytes {
-        return Err(Error::LimitExceeded("XML decoded bytes".into()));
+        return Err(Error::limit(
+            LimitKind::DecompressedBytes,
+            "XML decoded bytes".into(),
+        ));
     }
     Ok(())
 }
@@ -179,7 +198,10 @@ pub(crate) fn positions(e: &Element, inherited: usize, limits: &Limits) -> Resul
     let mut coordinates = vec![];
     for token in text.split_whitespace() {
         if coordinates.len() as u64 >= u64::from(limits.max_vertices).saturating_mul(dim as u64) {
-            return Err(Error::LimitExceeded("GML coordinates per entity".into()));
+            return Err(Error::limit(
+                LimitKind::Vertices,
+                "GML coordinates per entity".into(),
+            ));
         }
         let v = token
             .parse::<f64>()
@@ -232,7 +254,10 @@ pub(crate) fn ring_element_points(
                 let values = positions(p, dim, limits)?;
                 if points.len().saturating_add(values.len()) as u64 > u64::from(limits.max_vertices)
                 {
-                    return Err(Error::LimitExceeded("GML ring vertices".into()));
+                    return Err(Error::limit(
+                        LimitKind::Vertices,
+                        "GML ring vertices".into(),
+                    ));
                 }
                 points.extend(values);
             } else {
@@ -283,7 +308,10 @@ pub(crate) fn ring_element_points(
                         if part.len().saturating_add(vals.len()) as u64
                             > u64::from(limits.max_vertices)
                         {
-                            return Err(Error::LimitExceeded("GML ring vertices".into()));
+                            return Err(Error::limit(
+                                LimitKind::Vertices,
+                                "GML ring vertices".into(),
+                            ));
                         }
                         part.extend(vals);
                     }
@@ -400,7 +428,10 @@ pub fn validate(doc: &CityGmlDocument, options: &ValidationOptions) -> Result<Va
                 .positions
                 .saturating_add(positions(e, *dim, &options.limits)?.len() as u64);
             if report.positions > options.limits.max_total_vertices {
-                return Err(Error::LimitExceeded("GML total positions".into()));
+                return Err(Error::limit(
+                    LimitKind::TotalVertices,
+                    "GML total positions".into(),
+                ));
             }
         }
         if e.name.is(GML, "Polygon") {
@@ -494,7 +525,7 @@ pub fn validate(doc: &CityGmlDocument, options: &ValidationOptions) -> Result<Va
                 return Err(Error::invalid(0, "cyclic GML geometry reference"));
             }
             if active.len() as u64 > u64::from(options.limits.max_depth) {
-                return Err(Error::LimitExceeded("GML reference depth".into()));
+                return Err(Error::limit(LimitKind::Depth, "GML reference depth".into()));
             }
             todo.push((id, true));
             if let Some(next) = graph.get(id) {

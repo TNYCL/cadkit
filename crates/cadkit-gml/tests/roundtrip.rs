@@ -125,7 +125,7 @@ fn malformed_and_bounded_inputs_are_rejected() {
     options.limits.max_depth = 2;
     assert!(matches!(
         read_native(&bytes, &options),
-        Err(Error::LimitExceeded(_))
+        Err(Error::LimitExceeded { .. })
     ));
     options = ReadOptions::default();
     options.limits.max_total_vertices = 2;
@@ -142,7 +142,7 @@ fn malformed_and_bounded_inputs_are_rejected() {
         );
         assert!(matches!(
             read_native(xml.as_bytes(), &options),
-            Err(Error::LimitExceeded(_))
+            Err(Error::LimitExceeded { .. })
         ));
     }
 }
@@ -155,11 +155,11 @@ fn json_import_checks_input_and_model_budgets() {
     options.limits.max_input_bytes = 1;
     assert!(matches!(
         read_native_json(&native, &options),
-        Err(Error::LimitExceeded(_))
+        Err(Error::LimitExceeded { .. })
     ));
     assert!(matches!(
         cadkit_core::export::document_from_json(&neutral, &options.limits),
-        Err(Error::LimitExceeded(_))
+        Err(Error::LimitExceeded { .. })
     ));
     options = ReadOptions::default();
     assert!(read_native_json(&native, &options).is_ok());
@@ -167,7 +167,7 @@ fn json_import_checks_input_and_model_budgets() {
     options.limits.max_objects = 1;
     assert!(matches!(
         read_native_json(&native, &options),
-        Err(Error::LimitExceeded(_))
+        Err(Error::LimitExceeded { .. })
     ));
     assert!(read_native_json("{", &ReadOptions::default()).is_err());
     assert!(cadkit_core::export::document_from_json("{", &options.limits).is_err());
@@ -483,7 +483,7 @@ fn solid_shell_welds_vertices_within_tolerance_and_output_limit_is_limit_exceede
     tight.limits.max_input_bytes = 32;
     assert!(matches!(
         write(&native, &tight),
-        Err(Error::LimitExceeded(_))
+        Err(Error::LimitExceeded { .. })
     ));
 
     // MetadataOnly export preserves Bool, Null, and List attributes without failing.

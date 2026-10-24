@@ -17,6 +17,7 @@
 //! prefix, then the element (`u32` type word, `u32` total length in words, `u32`
 //! attribute offset in words, ...).
 
+use cadkit_core::LimitKind;
 use std::collections::HashMap;
 
 use cadkit_core::{Error, Format, ReadOptions, Result, Summary, Warning};
@@ -303,10 +304,10 @@ pub fn read(bytes: &[u8], options: &ReadOptions) -> Result<V8File> {
 pub(crate) fn inspect(bytes: &[u8], options: &ReadOptions) -> Result<Summary> {
     let mut budget = Budget::new(options.limits);
     if bytes.len() as u64 > budget.limits.max_input_bytes {
-        return Err(Error::LimitExceeded(format!(
-            "input exceeds {} bytes",
-            budget.limits.max_input_bytes
-        )));
+        return Err(Error::limit(
+            LimitKind::InputBytes,
+            format!("input exceeds {} bytes", budget.limits.max_input_bytes),
+        ));
     }
     let cf = CompoundFile::parse(bytes)?;
     let paths = cf.paths();
@@ -358,10 +359,10 @@ pub(crate) fn inspect(bytes: &[u8], options: &ReadOptions) -> Result<Summary> {
 
 pub(crate) fn read_with(bytes: &[u8], budget: &mut Budget, enc: TextDecoder) -> Result<V8File> {
     if bytes.len() as u64 > budget.limits.max_input_bytes {
-        return Err(Error::LimitExceeded(format!(
-            "input exceeds {} bytes",
-            budget.limits.max_input_bytes
-        )));
+        return Err(Error::limit(
+            LimitKind::InputBytes,
+            format!("input exceeds {} bytes", budget.limits.max_input_bytes),
+        ));
     }
     let cf = CompoundFile::parse(bytes)?;
     let paths = cf.paths();
@@ -501,9 +502,10 @@ impl Ctx<'_, '_> {
 
     fn read_entry(&mut self, index: usize, size: u64, path: &str) -> Result<Option<Vec<u8>>> {
         if size > self.budget.remaining_bytes() as u64 {
-            return Err(Error::LimitExceeded(format!(
-                "{path}: stream of {size} bytes exceeds the remaining data budget"
-            )));
+            return Err(Error::limit(
+                LimitKind::DecompressedBytes,
+                format!("{path}: stream of {size} bytes exceeds the remaining data budget"),
+            ));
         }
         match self.cf.read_stream(index) {
             Ok(b) => {
@@ -522,7 +524,10 @@ impl Ctx<'_, '_> {
         self.budget.charge_bytes(r.data.len())?;
         if let Some(p) = r.problem {
             if p.contains("exceeds") {
-                return Err(Error::LimitExceeded(format!("{path}: {p}")));
+                return Err(Error::limit(
+                    LimitKind::DecompressedBytes,
+                    format!("{path}: {p}"),
+                ));
             }
             self.warn("dgn.zlib", format!("{path}: {p}"));
         }
@@ -1043,7 +1048,10 @@ pub(crate) mod tests {
         }
         let tight = ReadOptions::default()
             .with_limits(Limits::default().with_max_decompressed_bytes(200_000));
-        assert!(matches!(read(&file, &tight), Err(Error::LimitExceeded(_))));
+        assert!(matches!(
+            read(&file, &tight),
+            Err(Error::LimitExceeded { .. })
+        ));
         // With room for the copies the file reads (its pages are garbage: warnings only).
         let f = read(&file, &ReadOptions::default()).unwrap();
         assert_eq!(f.named_pages.len(), 100);

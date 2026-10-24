@@ -6,6 +6,7 @@
 //! compressed *system pages*, and data sections split into 32-byte-masked,
 //! LZ77-compressed *data pages*.
 
+use cadkit_core::LimitKind;
 use std::collections::{BTreeMap, HashSet};
 
 use cadkit_core::bytes::ByteReader;
@@ -350,8 +351,12 @@ fn read_section(
         );
         size = plausible;
     }
-    let total = usize::try_from(size)
-        .map_err(|_| Error::LimitExceeded(format!("section {name} of {size} bytes")))?;
+    let total = usize::try_from(size).map_err(|_| {
+        Error::limit(
+            LimitKind::Capacity,
+            format!("section {name} of {size} bytes"),
+        )
+    })?;
     let mut out = SectionBuffer::new(total, page_size as u64);
     for (page, address) in pages {
         let Ok(start) = usize::try_from(page.start_offset) else {
@@ -562,7 +567,7 @@ fn read_impl<'a>(
                     _ => c.template = section,
                 }
             }
-            Err(e @ Error::LimitExceeded(_)) => return Err(e),
+            Err(e @ Error::LimitExceeded { .. }) => return Err(e),
             Err(e) => c.warn("dwg.section_error", format!("section {name}: {e}"), None),
         }
     }

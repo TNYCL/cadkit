@@ -2,6 +2,7 @@
 
 use crate::native::*;
 use crate::validate::{dimension, elements, polygon, positions, ring_element_points};
+use cadkit_core::LimitKind;
 use cadkit_core::{
     Attribute, Color, Document, Entity, EntityKind, Error, Format, GroupKind, Layer, LengthUnit,
     Model, ReadOptions, Result, Units, Value, Vertex,
@@ -192,7 +193,10 @@ impl Importer<'_> {
                         + p.interiors.iter().map(|r| r.len() as u64).sum::<u64>(),
                 );
                 if self.vertices > self.read.limits.max_total_vertices {
-                    return Err(Error::LimitExceeded("GML expanded vertices".into()));
+                    return Err(Error::limit(
+                        LimitKind::TotalVertices,
+                        "GML expanded vertices".into(),
+                    ));
                 }
                 patch_entities.push(self.entity(
                     patch,
@@ -217,7 +221,10 @@ impl Importer<'_> {
 
     fn visit(&mut self, e: &Element, depth: u32, inherited: usize) -> Result<Vec<Entity>> {
         if depth >= self.read.limits.max_depth || self.work >= self.read.limits.max_objects {
-            return Err(Error::LimitExceeded("GML mapping depth/work".into()));
+            return Err(Error::limit(
+                LimitKind::Objects,
+                "GML mapping depth/work".into(),
+            ));
         }
         self.work += 1;
         let dim = dimension(e, inherited)?;
@@ -325,7 +332,10 @@ impl Importer<'_> {
             None
         };
         if self.vertices > self.read.limits.max_total_vertices {
-            return Err(Error::LimitExceeded("GML expanded vertices".into()));
+            return Err(Error::limit(
+                LimitKind::TotalVertices,
+                "GML expanded vertices".into(),
+            ));
         }
         if let Some(kind) = kind {
             return Ok(vec![self.entity(e, kind)?]);
@@ -411,7 +421,7 @@ impl Importer<'_> {
         self.next = self
             .next
             .checked_add(1)
-            .ok_or_else(|| Error::LimitExceeded("GML entity ids".into()))?;
+            .ok_or_else(|| Error::limit(LimitKind::Capacity, "GML entity ids".into()))?;
         let mut entity = Entity::new(kind);
         entity.id = Some(self.next);
         if let Some(id) = e.attribute(GML, "id") {

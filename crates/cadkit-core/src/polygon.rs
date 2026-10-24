@@ -1,5 +1,6 @@
 //! Bounded validation of closed, planar polygon rings in drawing units.
 
+use crate::LimitKind;
 use crate::{Error, Point3, Result, Vec3};
 
 /// Unit surface normal computed relative to the first vertex, or `None` for a degenerate ring.
@@ -143,7 +144,7 @@ pub fn validate(
 fn charge(work: &mut u64) -> Result<()> {
     *work = work
         .checked_sub(1)
-        .ok_or_else(|| Error::LimitExceeded("polygon intersection budget".into()))?;
+        .ok_or_else(|| Error::limit(LimitKind::Work, "polygon intersection budget".into()))?;
     Ok(())
 }
 

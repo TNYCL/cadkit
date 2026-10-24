@@ -6,6 +6,7 @@ use crate::native::{
     element::{ElementData, TagDef, TagSetData, TagValue},
     v8::{Page, RawElement},
 };
+use cadkit_core::LimitKind;
 use cadkit_core::{Attribute, Entity, Error, Result, Value};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
@@ -159,7 +160,7 @@ impl Tables {
             {
                 free_level = free_level
                     .checked_add(1)
-                    .ok_or_else(|| Error::LimitExceeded("DGN levels".into()))?;
+                    .ok_or_else(|| Error::limit(LimitKind::Capacity, "DGN levels".into()))?;
                 u32_at(&mut bytes, 0x20, free_level)?;
                 level.id = free_level;
                 level_codes.insert(free_level);
@@ -260,7 +261,7 @@ impl Tables {
         self.last_id = self
             .last_id
             .checked_add(1)
-            .ok_or_else(|| Error::LimitExceeded("DGN element ids".into()))?;
+            .ok_or_else(|| Error::limit(LimitKind::Capacity, "DGN element ids".into()))?;
         Ok(self.last_id)
     }
     pub fn level(&mut self, name: Option<&str>, time: f64) -> Result<u32> {
@@ -271,7 +272,7 @@ impl Tables {
         self.max_level = self
             .max_level
             .checked_add(1)
-            .ok_or_else(|| Error::LimitExceeded("DGN levels".into()))?;
+            .ok_or_else(|| Error::limit(LimitKind::Capacity, "DGN levels".into()))?;
         let level = self.max_level;
         let id = self.id()?;
         let mut b = if let Some(t) = &self.level_template {
@@ -290,7 +291,7 @@ impl Tables {
             self.max_level_code = self
                 .max_level_code
                 .checked_add(1)
-                .ok_or_else(|| Error::LimitExceeded("DGN level codes".into()))?;
+                .ok_or_else(|| Error::limit(LimitKind::Capacity, "DGN level codes".into()))?;
             u32_at(&mut b, LEVEL_CODE, self.max_level_code)?;
         }
         let b = finish(b, &string_link(1, name)?)?;
@@ -398,9 +399,12 @@ impl Tables {
             .max()
             .unwrap_or(0)
             .checked_add(1)
-            .ok_or_else(|| Error::LimitExceeded("DGN tag definitions".into()))?;
+            .ok_or_else(|| Error::limit(LimitKind::Capacity, "DGN tag definitions".into()))?;
         if set.tags.len() >= 4096 {
-            return Err(Error::LimitExceeded("DGN tag definitions".into()));
+            return Err(Error::limit(
+                LimitKind::Capacity,
+                "DGN tag definitions".into(),
+            ));
         }
         let default = match value_type {
             1 => TagValue::Text(String::new()),
@@ -459,7 +463,7 @@ impl Tables {
             put(&mut b, 0x28, b"teSt")?;
             u32_at(&mut b, 0x2c, 0xf81)?;
             let len = u32::try_from(definitions.len())
-                .map_err(|_| Error::LimitExceeded("DGN tag definitions".into()))?;
+                .map_err(|_| Error::limit(LimitKind::Capacity, "DGN tag definitions".into()))?;
             u32_at(&mut b, 0x34, len)?;
             u32_at(&mut b, 0x38, len)?;
             b.extend(definitions);
@@ -481,7 +485,7 @@ impl Tables {
             }
         }
         let level_count = u32::try_from(self.levels.len())
-            .map_err(|_| Error::LimitExceeded("DGN level count".into()))?;
+            .map_err(|_| Error::limit(LimitKind::Capacity, "DGN level count".into()))?;
         let mut header = None;
         for (i, r) in self.records.iter_mut().enumerate() {
             if is_level_header(&r.bytes) {
@@ -493,7 +497,7 @@ impl Tables {
             let id = self
                 .last_id
                 .checked_add(1)
-                .ok_or_else(|| Error::LimitExceeded("DGN table header id".into()))?;
+                .ok_or_else(|| Error::limit(LimitKind::Capacity, "DGN table header id".into()))?;
             let mut b = prefix(96, 0x28, id, 1, time)?;
             u32_at(&mut b, 0x20, level_count)?;
             // The header goes before the seed's level entries, on their page; without any,

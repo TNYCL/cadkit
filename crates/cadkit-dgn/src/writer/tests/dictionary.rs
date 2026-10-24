@@ -356,7 +356,7 @@ fn a_table_past_256_kib_stays_on_one_page_up_to_the_decompression_limit() {
     assert!(seed_len < 256 * 1024 && 2 * seed_len < (page.inflated_len as u64));
     assert!(matches!(
         write_v8(&doc, &seed, &options),
-        Err(Error::LimitExceeded(what)) if what == "DGN dictionary records"
+        Err(Error::LimitExceeded { message: what, .. }) if what == "DGN dictionary records"
     ));
 }
 
