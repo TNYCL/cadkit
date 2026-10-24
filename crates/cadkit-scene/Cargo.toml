@@ -1,0 +1,19 @@
+[package]
+name = "cadkit-scene"
+description = "GPU-free scene data for cadkit: a chunked 2D line/arc store with an f32 error budget and neutral 3D meshes."
+version.workspace = true
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords = ["cad", "rendering", "scene", "gpu", "geometry"]
+categories = ["graphics", "rendering::data-formats"]
+
+[dependencies]
+cadkit-geom.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

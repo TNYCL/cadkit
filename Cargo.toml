@@ -4,6 +4,7 @@ members = ["crates/*"]
 # cadkit-py and cadkit-wasm need their own toolchains (maturin / wasm32); build them explicitly.
 default-members = [
     "crates/cadkit-geom",
+    "crates/cadkit-scene",
     "crates/cadkit-core",
     "crates/cadkit-dgn",
     "crates/cadkit-dwg",
@@ -27,6 +28,7 @@ categories = ["parser-implementations", "graphics", "encoding", "science::geo"]
 
 [workspace.dependencies]
 cadkit-geom = { path = "crates/cadkit-geom", version = "0.4.0" }
+cadkit-scene = { path = "crates/cadkit-scene", version = "0.4.0" }
 i_overlay = "=9.0.0"
 robust = "=1.2.0"
 schemars = "1.2.2"

@@ -23,10 +23,25 @@ cadkit-geom       analytic curves, polygons, booleans, calibration, NURBS
     +-- serde, thiserror, i_overlay, robust, optional schemars
 ```
 
-The facade and format crates do not depend on future scene or GPU crates. Future
-scene/GPU layers may consume geometry; reading a format must not pull in a GPU
-runtime. Geometry coordinates and tolerances belong to the caller; see
-[geometry contracts](geom/NOTES.md).
+The facade and format crates do not depend on the scene or GPU crates; reading a
+format must not pull in a GPU runtime. Geometry coordinates and tolerances belong to
+the caller; see [geometry contracts](geom/NOTES.md).
+
+## Scene and rendering
+
+```text
+cadkit-scene      GPU-free: Plan2d chunked 2D line/arc store with an f32 error
+    |             budget and instance encoding; Mesh3d triangle meshes
+    +-- cadkit-geom, thiserror (WASM-compatible)
+```
+
+`cadkit-scene` knows how to draw, not what the geometry means. Callers map their
+objects to `ObjectId`s, choose colors and stroke widths in pixels, track which objects
+changed and call `upsert` / `remove`; change tracking and domain rules stay with the
+caller. Chunks that would draw imprecisely in f32 at the current zoom, curves the GPU
+does not represent and objects without bounds are returned to the caller's CPU path
+for that frame, never dropped. The instance byte layout is documented in
+`cadkit_scene::layout`.
 
 The curve and NURBS helpers in `cadkit-core` are a **known overlap; consolidation
 is a separate decision**. They remain separate; the MSRV lint updates do not
