@@ -112,6 +112,18 @@ jobs:
           command: check
           arguments: --all-features
 
+  semver:
+    name: semver checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # 0.5.x only adds: a breaking change fails here unless the minor version is raised.
+      # Bindings are not Rust libraries on crates.io; cadkit-scene and cadkit-gpu join the
+      # check once 0.5.0 has published a baseline for them.
+      - uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          exclude: cadkit-py,cadkit-wasm,cadkit-capi,cadkit-cli,cadkit-scene,cadkit-gpu
+
   gpu:
     name: GPU render (lavapipe)
     runs-on: ubuntu-latest
