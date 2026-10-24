@@ -839,10 +839,9 @@ pub fn to_document(file: &DwgFile, options: &ReadOptions) -> Result<Document> {
                 .block_entity
                 .and_then(|b| file.objects.get(&b))
                 .map(|o| &o.data)
+                && *stored != name
             {
-                if *stored != name {
-                    props.insert("dwg.block_entity_name".into(), Value::Text(stored.clone()));
-                }
+                props.insert("dwg.block_entity_name".into(), Value::Text(stored.clone()));
             }
             if bh.has_attdefs {
                 props.insert("dwg.has_attdefs".into(), Value::Bool(true));

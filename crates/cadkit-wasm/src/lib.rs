@@ -247,10 +247,10 @@ fn parse_read_options(options: Option<JsValue>) -> Result<ReadOptions, JsValue> 
             let raw: Value =
                 serde_json::from_str(&s).map_err(|e| js_error("bad_argument", &e.to_string()))?;
             let mut normalized = normalize_option_keys(raw);
-            if let Value::Object(map) = &mut normalized {
-                if let Some(cp) = map.remove("codepage") {
-                    map.entry("fallback_codepage").or_insert(cp);
-                }
+            if let Value::Object(map) = &mut normalized
+                && let Some(cp) = map.remove("codepage")
+            {
+                map.entry("fallback_codepage").or_insert(cp);
             }
             let parsed: ReadOptions = serde_json::from_value(normalized)
                 .map_err(|e| js_error("bad_argument", &e.to_string()))?;
@@ -774,17 +774,17 @@ impl CadDocument {
             if let Some(n) = get(&js, "strokePx").and_then(|v| v.as_f64()) {
                 o.stroke_px = n;
             }
-            if js.is_object() {
-                if let Ok(v) = Reflect::get(&js, &JsValue::from_str("background")) {
-                    if v.is_null() {
-                        o.background = None;
-                    } else if let Some(s) = v.as_string() {
-                        o.background = if s.is_empty() || s == "none" {
-                            None
-                        } else {
-                            Some(s)
-                        };
-                    }
+            if js.is_object()
+                && let Ok(v) = Reflect::get(&js, &JsValue::from_str("background"))
+            {
+                if v.is_null() {
+                    o.background = None;
+                } else if let Some(s) = v.as_string() {
+                    o.background = if s.is_empty() || s == "none" {
+                        None
+                    } else {
+                        Some(s)
+                    };
                 }
             }
             if let Some(v) = get(&js, "text") {

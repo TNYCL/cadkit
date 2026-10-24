@@ -692,7 +692,7 @@ pub(crate) mod testbits {
 
     impl BitWriter {
         pub(crate) fn bit(&mut self, b: bool) -> &mut Self {
-            if self.bits % 8 == 0 {
+            if self.bits.is_multiple_of(8) {
                 self.bytes.push(0);
             }
             if b {

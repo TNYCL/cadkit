@@ -54,7 +54,7 @@ certification, never use AutoCAD/MicroStation/TrustedDWG names in crate names or
 
 ## 4. Code rules
 
-- Edition 2024, MSRV 1.85, `rustfmt` defaults, `cargo clippy --all-targets -- -D warnings` clean.
+- Edition 2024, MSRV 1.88, `rustfmt` defaults, `cargo clippy --all-targets -- -D warnings` clean.
 - `unsafe` is forbidden except in `cadkit-py`, `cadkit-wasm`, `cadkit-capi` (FFI only,
   every block with a `// SAFETY:` comment).
 - **No panics on any input.** Workspace lints deny `unwrap`, `expect`, `panic!`, slice

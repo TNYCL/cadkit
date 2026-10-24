@@ -86,17 +86,15 @@ fn scan(
                     structure.push(',');
                 }
                 *counts.entry(structure).or_default() += 1;
-                for (off, b) in r.primary().chunks_exact(8).enumerate().skip(4) {
-                    if let Ok(bytes) = <[u8; 8]>::try_from(b) {
-                        if let Some(kind) = kinds.get(&u64::from_le_bytes(bytes)) {
-                            *counts
-                                .entry(format!(
-                                    "type={} possible_id_at={:x} target_type={kind}",
-                                    r.type_code(),
-                                    off * 8
-                                ))
-                                .or_default() += 1;
-                        }
+                for (off, b) in r.primary().as_chunks::<8>().0.iter().enumerate().skip(4) {
+                    if let Some(kind) = kinds.get(&u64::from_le_bytes(*b)) {
+                        *counts
+                            .entry(format!(
+                                "type={} possible_id_at={:x} target_type={kind}",
+                                r.type_code(),
+                                off * 8
+                            ))
+                            .or_default() += 1;
                     }
                 }
             }

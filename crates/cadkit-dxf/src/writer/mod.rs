@@ -99,10 +99,10 @@ impl UniqueNames {
 pub(crate) fn walk<'e>(entities: &'e [Entity], f: &mut dyn FnMut(&'e Entity), depth: u32) {
     for e in entities {
         f(e);
-        if let EntityKind::Group { children, .. } = &e.kind {
-            if depth < 64 {
-                walk(children, f, depth + 1);
-            }
+        if let EntityKind::Group { children, .. } = &e.kind
+            && depth < 64
+        {
+            walk(children, f, depth + 1);
         }
     }
 }
@@ -254,38 +254,37 @@ fn transcode_u_escapes(ascii: &str, enc: OutEncoder) -> Vec<u8> {
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0usize;
     while let Some(&b) = bytes.get(i) {
-        if b == b'\\' {
-            if let Some(u1) = parse_u_escape(bytes, i) {
-                if (0xD800..=0xDBFF).contains(&u1) {
-                    if let Some(u2) =
-                        parse_u_escape(bytes, i + 7).filter(|unit| (0xDC00..=0xDFFF).contains(unit))
-                    {
-                        let encoded = char::decode_utf16([u1, u2])
-                            .next()
-                            .and_then(Result::ok)
-                            .is_some_and(|ch| enc.encode_into(ch, &mut out));
-                        if encoded {
-                            i += 14;
-                            continue;
-                        }
-                        if let Some(raw) = bytes.get(i..i + 14) {
-                            out.extend_from_slice(raw);
-                        }
+        if b == b'\\'
+            && let Some(u1) = parse_u_escape(bytes, i)
+        {
+            if (0xD800..=0xDBFF).contains(&u1) {
+                if let Some(u2) =
+                    parse_u_escape(bytes, i + 7).filter(|unit| (0xDC00..=0xDFFF).contains(unit))
+                {
+                    let encoded = char::decode_utf16([u1, u2])
+                        .next()
+                        .and_then(Result::ok)
+                        .is_some_and(|ch| enc.encode_into(ch, &mut out));
+                    if encoded {
                         i += 14;
                         continue;
                     }
-                } else if char::from_u32(u32::from(u1))
-                    .is_some_and(|ch| enc.encode_into(ch, &mut out))
-                {
-                    i += 7;
+                    if let Some(raw) = bytes.get(i..i + 14) {
+                        out.extend_from_slice(raw);
+                    }
+                    i += 14;
                     continue;
                 }
-                if let Some(raw) = bytes.get(i..i + 7) {
-                    out.extend_from_slice(raw);
-                }
+            } else if char::from_u32(u32::from(u1)).is_some_and(|ch| enc.encode_into(ch, &mut out))
+            {
                 i += 7;
                 continue;
             }
+            if let Some(raw) = bytes.get(i..i + 7) {
+                out.extend_from_slice(raw);
+            }
+            i += 7;
+            continue;
         }
         out.push(b);
         i += 1;
@@ -503,10 +502,9 @@ impl Writer<'_> {
                         .props
                         .get("dxf.attdef.style")
                         .or_else(|| e.props.get("dwg.style"))
+                        && !s.trim().is_empty()
                     {
-                        if !s.trim().is_empty() {
-                            self.styles.add(s);
-                        }
+                        self.styles.add(s);
                     }
                 }
                 _ => {}
@@ -1132,10 +1130,10 @@ impl Writer<'_> {
                 };
                 out.int(70, flags);
                 out.int(62, if visible { aci } else { -aci });
-                if self.ge2004 {
-                    if let Some(v) = rgb {
-                        out.int(420, v);
-                    }
+                if self.ge2004
+                    && let Some(v) = rgb
+                {
+                    out.int(420, v);
                 }
                 out.text(6, &lt);
                 if !r12 {

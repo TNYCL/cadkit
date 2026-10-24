@@ -435,7 +435,9 @@ fn utf16z(s: &str) -> Vec<u8> {
 /// The text of `data` when it is exactly one NUL-terminated UTF-16LE string.
 fn utf16z_text(data: &[u8]) -> Option<String> {
     let units: Vec<u16> = data
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| {
             u16::from_le_bytes([
                 c.first().copied().unwrap_or(0),
@@ -444,7 +446,7 @@ fn utf16z_text(data: &[u8]) -> Option<String> {
         })
         .collect();
     let (last, body) = units.split_last()?;
-    if data.len() % 2 != 0 || *last != 0 || body.is_empty() || body.contains(&0) {
+    if !data.len().is_multiple_of(2) || *last != 0 || body.is_empty() || body.contains(&0) {
         return None;
     }
     String::from_utf16(body).ok()

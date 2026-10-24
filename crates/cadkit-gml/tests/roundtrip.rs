@@ -449,21 +449,19 @@ fn bit_flips_names_and_reference_expansion_remain_bounded() {
         assert!(read_native(xml.as_bytes(), &options).is_err());
     }
     let mut native = fixture();
-    if let Some(Node::Element(building_member)) = native.root.children.first_mut() {
-        if let Some(Node::Element(building)) = building_member.children.first_mut() {
-            if let Some(Node::Element(lod)) = building.children.last_mut() {
-                if let Some(Node::Element(multi)) = lod.children.first_mut() {
-                    let mut reverse = Element::new(GML, "gml:OrientableSurface");
-                    reverse.set_attribute("", "orientation", "-");
-                    let mut base = Element::new(GML, "gml:baseSurface");
-                    base.set_attribute(XLINK, "xlink:href", "#surface_a");
-                    reverse.push(base);
-                    let mut member = Element::new(GML, "gml:surfaceMember");
-                    member.push(reverse);
-                    multi.push(member);
-                }
-            }
-        }
+    if let Some(Node::Element(building_member)) = native.root.children.first_mut()
+        && let Some(Node::Element(building)) = building_member.children.first_mut()
+        && let Some(Node::Element(lod)) = building.children.last_mut()
+        && let Some(Node::Element(multi)) = lod.children.first_mut()
+    {
+        let mut reverse = Element::new(GML, "gml:OrientableSurface");
+        reverse.set_attribute("", "orientation", "-");
+        let mut base = Element::new(GML, "gml:baseSurface");
+        base.set_attribute(XLINK, "xlink:href", "#surface_a");
+        reverse.push(base);
+        let mut member = Element::new(GML, "gml:surfaceMember");
+        member.push(reverse);
+        multi.push(member);
     }
     let doc = to_document(&native, &ImportOptions::default(), &options).unwrap();
     let mut normals = vec![];

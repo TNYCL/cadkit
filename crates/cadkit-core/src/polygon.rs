@@ -89,16 +89,15 @@ pub fn validate(
                 charge(work)?;
                 if let (Some(a0), Some(a1), Some(b0), Some(b1)) =
                     (a.first(), a.get(1), b.first(), b.get(1))
-                {
-                    if intersects(
+                    && intersects(
                         project(a0),
                         project(a1),
                         project(b0),
                         project(b1),
                         tolerance,
-                    ) {
-                        return Err(invalid("polygon ring intersects itself"));
-                    }
+                    )
+                {
+                    return Err(invalid("polygon ring intersects itself"));
                 }
             }
         }
@@ -110,16 +109,15 @@ pub fn validate(
                     charge(work)?;
                     if let (Some(a0), Some(a1), Some(b0), Some(b1)) =
                         (ae.first(), ae.get(1), be.first(), be.get(1))
-                    {
-                        if intersects(
+                        && intersects(
                             project(a0),
                             project(a1),
                             project(b0),
                             project(b1),
                             tolerance,
-                        ) {
-                            return Err(invalid("polygon boundaries intersect"));
-                        }
+                        )
+                    {
+                        return Err(invalid("polygon boundaries intersect"));
                     }
                 }
             }
@@ -131,12 +129,11 @@ pub fn validate(
             return Err(invalid("polygon hole is outside exterior"));
         }
         for other in interiors.iter().skip(i + 1) {
-            if let Some(q) = other.first() {
-                if inside(project(p), other, &project, work)?
-                    || inside(project(q), hole, &project, work)?
-                {
-                    return Err(invalid("polygon holes overlap"));
-                }
+            if let Some(q) = other.first()
+                && (inside(project(p), other, &project, work)?
+                    || inside(project(q), hole, &project, work)?)
+            {
+                return Err(invalid("polygon holes overlap"));
             }
         }
     }

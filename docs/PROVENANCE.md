@@ -53,7 +53,8 @@ Private client drawings in `corpus/private/` are used only for local, structural
   legacy OASIS import. Cache manifest records source URLs and SHA-256 digests.
 - [quick-xml 0.41.0](https://github.com/tafia/quick-xml/tree/v0.41.0), MIT:
   bounded XML reading/writing dependency, Rust 1.79 minimum, compatible with the
-  workspace's Rust 1.85. The 0.42 series requires Rust 1.86 and is excluded.
+  workspace's Rust 1.88. The 0.41 series was selected when the workspace supported
+  Rust 1.85; this geometry addition does not change the XML dependency.
 - [rust-cfb / cfb 0.14](https://github.com/mdsteele/rust-cfb), MIT:
   pure Rust CFB writing and independent strict-container validation. Rust 1.74
   minimum; WASM compilation was checked. No vendor SDK is used.
@@ -136,3 +137,33 @@ field/type/reference rules are implemented independently; no validator binaries,
 vendor SDKs or third-party CAD implementation were consulted. Conditional tender
 rules are listed as unchecked instead of being replaced by registration defaults.
 Tests use invented identifiers/values. No dependencies were added.
+
+## Independent analytic geometry
+
+`cadkit-geom` was transferred by file copy, without Git history, from an internal
+closed-source geometry library owned by the same owner, TNYCL. The owner authorized
+relicensing under MIT OR Apache-2.0. Only the standalone analytic geometry source
+and synthetic tests were transferred; no application data, format seeds, private
+corpus files, proprietary SDKs or application models are included. English comments,
+diagnostics and schema descriptions replace the original language. Public data
+structures, algorithmic conventions and numerical budgets are retained.
+
+The source implements analytic constructions, least-squares calibration, de
+Casteljau evaluation, knot insertion, and outward-rounded interval bounds. No
+GPL/LGPL/AGPL-derived implementation was found in the reviewed source, and none
+was consulted for this transfer. The explicit boolean dependency is not replaced
+with copied third-party code.
+
+| Geometry dependency | License | Purpose |
+|---|---|---|
+| `serde` / `serde_derive` | MIT OR Apache-2.0 | Persistent data serialization |
+| `thiserror` / `thiserror-impl` | MIT OR Apache-2.0 | Typed error display |
+| `schemars` / `schemars_derive` 1.x (optional) | MIT | JSON Schema generation |
+| `i_overlay` 9.0.0 | MIT OR Apache-2.0 | Integer polygon overlay and slicing; requires Rust 1.88 |
+| `robust` 1.2.0 | MIT OR Apache-2.0 | Adaptive orientation predicate |
+| `i_float`, `i_shape`, `i_tree`, `i_key_sort` (transitive) | MIT | Integer geometry and overlay support |
+| `serde_json` (tests; also used by optional schemas) | MIT OR Apache-2.0 | Serialization regression checks |
+
+Upstream crate license files are retained in their registry packages; the
+workspace license checker audits the resolved dependency graph. Geometry contracts
+and numerical guarantees are documented in [geom/NOTES.md](geom/NOTES.md).

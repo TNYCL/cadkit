@@ -251,13 +251,13 @@ pub fn write_v8_with_seed(
     if source.is_3d != header.is_3d {
         return Err(Error::invalid(0, "source and seed model dimensions differ"));
     }
-    if let (Some(source), Some(target)) = (doc.units.meters_per_unit(), header.master.meters()) {
-        if !source.is_finite() || (source - target).abs() > target.abs() * 1e-12 {
-            return Err(Error::invalid(
-                0,
-                "source and seed units differ; convert coordinates explicitly",
-            ));
-        }
+    if let (Some(source), Some(target)) = (doc.units.meters_per_unit(), header.master.meters())
+        && (!source.is_finite() || (source - target).abs() > target.abs() * 1e-12)
+    {
+        return Err(Error::invalid(
+            0,
+            "source and seed units differ; convert coordinates explicitly",
+        ));
     }
     if seed.nonempty && !options.clear_seed_model {
         return Err(Error::Unsupported(
@@ -480,10 +480,10 @@ fn wide_integer_tags(entities: &[Entity]) -> BTreeSet<(Option<String>, String)> 
     let mut todo: Vec<&Entity> = entities.iter().collect();
     while let Some(e) = todo.pop() {
         for a in &e.attributes {
-            if let Value::Int(n) = a.value {
-                if i32::try_from(n).is_err() {
-                    wide.insert(tag_key(a));
-                }
+            if let Value::Int(n) = a.value
+                && i32::try_from(n).is_err()
+            {
+                wide.insert(tag_key(a));
             }
         }
         if let EntityKind::Group { children, .. } = &e.kind {
@@ -1114,10 +1114,10 @@ impl State<'_> {
             .iter()
             .map(|p| coordinate(*p, self.model))
             .collect::<Result<_>>()?;
-        if count > points.len() {
-            if let Some(first) = coordinates.first().copied() {
-                coordinates.push(first);
-            }
+        if count > points.len()
+            && let Some(first) = coordinates.first().copied()
+        {
+            coordinates.push(first);
         }
         let size = if self.model.is_3d { 24 } else { 16 };
         let mut b = self.header(

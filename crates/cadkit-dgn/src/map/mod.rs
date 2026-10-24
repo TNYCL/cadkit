@@ -449,13 +449,13 @@ impl Mapper {
                 bytes: item.raw.to_vec(),
             });
         }
-        if let Some(id) = h.id {
-            if let Some(attrs) = self.pending_tags.remove(&id) {
-                e.attributes = attrs
-                    .into_iter()
-                    .map(|(_, a)| relative_to_owner(a, &e))
-                    .collect();
-            }
+        if let Some(id) = h.id
+            && let Some(attrs) = self.pending_tags.remove(&id)
+        {
+            e.attributes = attrs
+                .into_iter()
+                .map(|(_, a)| relative_to_owner(a, &e))
+                .collect();
         }
         e
     }

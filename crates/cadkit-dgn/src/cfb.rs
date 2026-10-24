@@ -184,8 +184,10 @@ impl<'a> CompoundFile<'a> {
 
         let dir = cf.read_chain(first_dir, None)?;
         let entries: Vec<DirEntry> = dir
-            .chunks_exact(DIR_ENTRY_LEN)
-            .map(parse_dir_entry)
+            .as_chunks::<DIR_ENTRY_LEN>()
+            .0
+            .iter()
+            .map(|entry| parse_dir_entry(entry))
             .collect();
         if entries.first().map(|e| e.kind) != Some(EntryKind::Root) {
             return Err(Error::invalid(
@@ -202,14 +204,17 @@ impl<'a> CompoundFile<'a> {
         if first_mini_fat <= MAX_REGSECT {
             let mf = cf.read_chain(first_mini_fat, None)?;
             cf.mini_fat = mf
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .filter_map(|c| le::u32_at(c, 0))
                 .collect();
         }
-        if let Some(root) = cf.entries.first().cloned() {
-            if root.start <= MAX_REGSECT && root.size > 0 {
-                cf.mini_stream = cf.read_chain(root.start, Some(root.size))?;
-            }
+        if let Some(root) = cf.entries.first().cloned()
+            && root.start <= MAX_REGSECT
+            && root.size > 0
+        {
+            cf.mini_stream = cf.read_chain(root.start, Some(root.size))?;
         }
         Ok(cf)
     }
@@ -354,10 +359,10 @@ impl<'a> CompoundFile<'a> {
                 })?;
             out.extend_from_slice(sec);
             count += 1;
-            if let Some(s) = size {
-                if out.len() as u64 >= s {
-                    break;
-                }
+            if let Some(s) = size
+                && out.len() as u64 >= s
+            {
+                break;
             }
             sid = self.fat.get(sid as usize).copied().unwrap_or(ENDOFCHAIN);
         }
@@ -431,7 +436,9 @@ fn parse_dir_entry(e: &[u8]) -> DirEntry {
     let units: Vec<u16> = e
         .get(..name_len.saturating_sub(2))
         .unwrap_or(&[])
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .filter_map(|c| le::u16_at(c, 0))
         .collect();
     let kind = match le::u8_at(e, 66).unwrap_or(0) {

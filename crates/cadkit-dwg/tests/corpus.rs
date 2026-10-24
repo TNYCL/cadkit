@@ -339,22 +339,22 @@ fn dxf_entities(bytes: &[u8]) -> Vec<DxfRecord> {
         } else if section == "ENTITIES" && kind == "ATTRIB" {
             // Attach the attribute's tag and value to the preceding INSERT under
             // private codes (ATTRIB_TAG / ATTRIB_VALUE).
-            if let Some((last_kind, _, insert_groups)) = out.last_mut() {
-                if last_kind == "INSERT" {
-                    insert_groups.push((ATTRIB_TAG, group(2).unwrap_or_default().to_owned()));
-                    // R2018 multi-line attributes keep their text in the embedded MTEXT
-                    // (the group 1 after the `101 Embedded Object` marker).
-                    let embedded = groups.iter().position(|(c, _)| *c == 101);
-                    let value = match embedded {
-                        Some(at) => groups
-                            .iter()
-                            .skip(at)
-                            .find(|(c, _)| *c == 1)
-                            .map(|(_, v)| v.as_str()),
-                        None => group(1),
-                    };
-                    insert_groups.push((ATTRIB_VALUE, value.unwrap_or_default().to_owned()));
-                }
+            if let Some((last_kind, _, insert_groups)) = out.last_mut()
+                && last_kind == "INSERT"
+            {
+                insert_groups.push((ATTRIB_TAG, group(2).unwrap_or_default().to_owned()));
+                // R2018 multi-line attributes keep their text in the embedded MTEXT
+                // (the group 1 after the `101 Embedded Object` marker).
+                let embedded = groups.iter().position(|(c, _)| *c == 101);
+                let value = match embedded {
+                    Some(at) => groups
+                        .iter()
+                        .skip(at)
+                        .find(|(c, _)| *c == 1)
+                        .map(|(_, v)| v.as_str()),
+                    None => group(1),
+                };
+                insert_groups.push((ATTRIB_VALUE, value.unwrap_or_default().to_owned()));
             }
         }
     };
@@ -650,10 +650,11 @@ fn dxf_layers(bytes: &[u8]) -> Vec<Vec<(i32, String)>> {
         };
         let value = value.trim().to_owned();
         if code == 0 {
-            if let Some((kind, groups)) = current.take() {
-                if in_tables && kind == "LAYER" {
-                    out.push(groups);
-                }
+            if let Some((kind, groups)) = current.take()
+                && in_tables
+                && kind == "LAYER"
+            {
+                out.push(groups);
             }
             if value == "ENDSEC" {
                 in_tables = false;
@@ -899,10 +900,10 @@ fn text_styles_match_dxf() {
                 continue;
             };
             if code == 0 {
-                if let Some((kind, groups)) = current.take() {
-                    if kind == "STYLE" {
-                        styles.push(groups);
-                    }
+                if let Some((kind, groups)) = current.take()
+                    && kind == "STYLE"
+                {
+                    styles.push(groups);
                 }
                 current = Some((value.trim().to_owned(), BTreeMap::new()));
             } else if let Some((_, groups)) = current.as_mut() {

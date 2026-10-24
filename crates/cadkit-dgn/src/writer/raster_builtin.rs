@@ -44,14 +44,16 @@ fn decode(hex: &str) -> Result<Vec<u8>> {
             _ => Err(Error::invalid(0, "built-in raster record is not hex")),
         })
         .collect::<Result<_>>()?;
-    if digits.len() % 2 != 0 {
+    if !digits.len().is_multiple_of(2) {
         return Err(Error::invalid(
             0,
             "built-in raster record has an odd digit count",
         ));
     }
     Ok(digits
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|p| p.iter().fold(0, |a, d| a << 4 | d))
         .collect())
 }

@@ -66,7 +66,28 @@ certified by any CAD vendor.
 Python wheels, CLI binaries and C API archives are built for Linux x86_64 and aarch64, macOS
 arm64 and x86_64, and Windows x64. One Python wheel per platform serves Python 3.9 and
 newer; the Linux CLI is a static binary. Each release lists checksums in `SHA256SUMS`.
-The minimum supported Rust version is 1.85.
+The minimum supported Rust version is 1.88.
+
+## Geometry (`cadkit-geom`)
+
+Independent `f64` analytic curves, polygon booleans, trim/offset, calibration and
+certified NURBS evaluation, tessellation and nearest-point search. Coordinates
+use caller-defined units and explicit tolerances. It depends on no other cadkit
+crate. Serde support is always available; enable `schemars` for JSON Schema.
+
+```rust
+use cadkit_geom::{GeometryTolerance, LineSegment, Point2};
+
+let line = LineSegment {
+    start: Point2::new(0.0, 0.0),
+    end: Point2::new(4.0, 0.0),
+};
+let shifted = line.offset(1.0, &GeometryTolerance::default())?;
+assert_eq!(shifted.start, Point2::new(0.0, 1.0)); // Positive offset is left.
+# Ok::<(), cadkit_geom::GeometryError>(())
+```
+
+See [supported profiles, error budgets and limits](docs/geom/NOTES.md).
 
 ## Quick start
 

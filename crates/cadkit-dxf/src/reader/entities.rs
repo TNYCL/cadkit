@@ -140,10 +140,10 @@ fn collect_points(pairs: &[Pair], base: i32, ctx: &Ctx) -> Result<Vec<Point3>> {
             if let Some(last) = pts.last_mut() {
                 last.y = v;
             }
-        } else if p.code == base + 20 {
-            if let Some(last) = pts.last_mut() {
-                last.z = v;
-            }
+        } else if p.code == base + 20
+            && let Some(last) = pts.last_mut()
+        {
+            last.z = v;
         }
     }
     Ok(pts)

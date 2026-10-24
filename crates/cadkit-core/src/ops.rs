@@ -806,10 +806,10 @@ fn extend_polyline(
     let n = vertices.len();
     let segs = if closed { n } else { n.saturating_sub(1) };
     for i in 0..segs {
-        if let (Some(a), Some(b)) = (vertices.get(i), vertices.get((i + 1) % n.max(1))) {
-            if let Some(arc) = segment_arc(a, b, normal, tf) {
-                arc.extend_bbox(bb);
-            }
+        if let (Some(a), Some(b)) = (vertices.get(i), vertices.get((i + 1) % n.max(1)))
+            && let Some(arc) = segment_arc(a, b, normal, tf)
+        {
+            arc.extend_bbox(bb);
         }
     }
 }

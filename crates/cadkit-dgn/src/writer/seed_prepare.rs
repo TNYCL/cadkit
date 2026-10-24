@@ -912,12 +912,11 @@ fn infer_dgn_style(name: &str, linetypes: &[cadkit_core::Linetype]) -> i64 {
     if lower.is_empty() || lower == "continuous" || lower == "bylayer" || lower == "dgn_solid" {
         return 0;
     }
-    if let Some(rest) = lower.strip_prefix("dgn_style_") {
-        if let Ok(n) = rest.parse::<u32>() {
-            if n <= 7 {
-                return i64::from(n);
-            }
-        }
+    if let Some(rest) = lower.strip_prefix("dgn_style_")
+        && let Ok(n) = rest.parse::<u32>()
+        && n <= 7
+    {
+        return i64::from(n);
     }
     match lower.as_str() {
         "dgn_dotted" | "dot" | "dot2" | "dotx2" | "dotted" => return 1,
@@ -933,10 +932,10 @@ fn infer_dgn_style(name: &str, linetypes: &[cadkit_core::Linetype]) -> i64 {
         .iter()
         .find(|lt| lt.name.eq_ignore_ascii_case(name))
     {
-        if let Some(Value::Int(s)) = lt.props.get("dgn.style") {
-            if (0..=7).contains(s) {
-                return *s;
-            }
+        if let Some(Value::Int(s)) = lt.props.get("dgn.style")
+            && (0..=7).contains(s)
+        {
+            return *s;
         }
         let dots = lt
             .pattern
@@ -1018,14 +1017,13 @@ fn normalize_entity_for_dgn(
 ) -> Option<Entity> {
     resolve_color_to_palette(&mut entity.color, &mut entity.props, palette);
     normalize_weight(&mut entity.lineweight, &mut entity.props);
-    if let Some(lt_name) = entity.linetype.as_deref() {
-        if !lt_name.eq_ignore_ascii_case("continuous")
-            && !lt_name.eq_ignore_ascii_case("bylayer")
-            && !entity.props.contains_key("dgn.style")
-        {
-            let style = infer_dgn_style(lt_name, linetypes);
-            entity.props.insert("dgn.style".into(), Value::Int(style));
-        }
+    if let Some(lt_name) = entity.linetype.as_deref()
+        && !lt_name.eq_ignore_ascii_case("continuous")
+        && !lt_name.eq_ignore_ascii_case("bylayer")
+        && !entity.props.contains_key("dgn.style")
+    {
+        let style = infer_dgn_style(lt_name, linetypes);
+        entity.props.insert("dgn.style".into(), Value::Int(style));
     }
     for attr in &mut entity.attributes {
         normalize_attribute_for_dgn(attr, known_fonts, known_font_numbers);
@@ -1059,20 +1057,20 @@ fn normalize_entity_for_dgn(
             ..
         } => {
             *oblique = 0.0;
-            if matches!(*halign, HAlign::Aligned | HAlign::Fit) {
-                if let Some(ep) = end_point.take() {
-                    let dx = ep.x - position.x;
-                    let dy = ep.y - position.y;
-                    let span = dx.hypot(dy);
-                    if span > 1e-9 {
-                        *rotation = dy.atan2(dx);
-                        let chars = value.chars().count().max(1) as f64;
-                        if *halign == HAlign::Aligned {
-                            *height = (span / (chars * 0.6)).max(1e-6);
-                            *width_factor = 1.0;
-                        } else if *height > 1e-9 {
-                            *width_factor = (span / (chars * *height * 0.6)).max(1e-3);
-                        }
+            if matches!(*halign, HAlign::Aligned | HAlign::Fit)
+                && let Some(ep) = end_point.take()
+            {
+                let dx = ep.x - position.x;
+                let dy = ep.y - position.y;
+                let span = dx.hypot(dy);
+                if span > 1e-9 {
+                    *rotation = dy.atan2(dx);
+                    let chars = value.chars().count().max(1) as f64;
+                    if *halign == HAlign::Aligned {
+                        *height = (span / (chars * 0.6)).max(1e-6);
+                        *width_factor = 1.0;
+                    } else if *height > 1e-9 {
+                        *width_factor = (span / (chars * *height * 0.6)).max(1e-3);
                     }
                 }
             }

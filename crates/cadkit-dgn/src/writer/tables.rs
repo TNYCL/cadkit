@@ -153,25 +153,21 @@ impl Tables {
                 header_word = Some(raw.type_word);
             }
             let mut e = read_record(raw);
-            // No `let` chains: the MSRV (1.85) does not have them.
-            if let ElementData::Level(level) = &mut e.data {
-                if !level_codes.insert(level.id)
-                    && crate::le::u32_at(&bytes, 0x20) == Some(level.id)
-                {
-                    free_level = free_level
-                        .checked_add(1)
-                        .ok_or_else(|| Error::LimitExceeded("DGN levels".into()))?;
-                    u32_at(&mut bytes, 0x20, free_level)?;
-                    level.id = free_level;
-                    level_codes.insert(free_level);
-                }
+            if let ElementData::Level(level) = &mut e.data
+                && !level_codes.insert(level.id)
+                && crate::le::u32_at(&bytes, 0x20) == Some(level.id)
+            {
+                free_level = free_level
+                    .checked_add(1)
+                    .ok_or_else(|| Error::LimitExceeded("DGN levels".into()))?;
+                u32_at(&mut bytes, 0x20, free_level)?;
+                level.id = free_level;
+                level_codes.insert(free_level);
             }
             let primary = bytes.get(..raw.attribute_offset()).unwrap_or(&[]);
             let entry = matches!(e.data, ElementData::Level(_));
-            if entry {
-                if let Some(code) = crate::le::u32_at(primary, LEVEL_CODE) {
-                    out.max_level_code = out.max_level_code.max(code);
-                }
+            if entry && let Some(code) = crate::le::u32_at(primary, LEVEL_CODE) {
+                out.max_level_code = out.max_level_code.max(code);
             }
             match e.data {
                 ElementData::Font { number, name } => {

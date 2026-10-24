@@ -132,10 +132,10 @@ impl Document {
             while let Some(items) = stack.pop() {
                 total = total.saturating_add(items.len());
                 for e in items {
-                    if let EntityKind::Group { children, .. } = &e.kind {
-                        if !children.is_empty() {
-                            stack.push(children);
-                        }
+                    if let EntityKind::Group { children, .. } = &e.kind
+                        && !children.is_empty()
+                    {
+                        stack.push(children);
                     }
                 }
             }
