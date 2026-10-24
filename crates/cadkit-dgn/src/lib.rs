@@ -17,6 +17,8 @@ pub use writer::{
     write_v8, write_v8_with_seed,
 };
 pub mod palette;
+pub mod symbology;
+pub use symbology::Symbology;
 
 mod budget;
 #[cfg(test)]

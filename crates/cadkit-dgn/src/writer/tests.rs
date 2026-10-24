@@ -417,6 +417,29 @@ fn spline_control_and_fit_points_export_and_read_back() {
 }
 
 #[test]
+fn v8_seed_exposes_its_tables() {
+    let bare = V8Seed::from_bytes(&seed(false)).unwrap();
+    assert_eq!(bare.palette(), &crate::palette::DEFAULT_PALETTE);
+    assert_eq!(bare.timestamp_ms(), 0.0);
+    let mut d = document(
+        false,
+        vec![Entity::line(Point3::xy(0.0, 0.0), Point3::xy(1.0, 0.0)).on_layer("Walls")],
+    );
+    d.layers.push(cadkit_core::Layer::new("Walls"));
+    let written = write_v8(&d, &seed(false), &WriteOptions::default()).unwrap();
+    let reseeded = V8Seed::from_bytes(&written).unwrap();
+    assert!(reseeded.levels().contains_key("Walls"));
+    let reread = crate::read(&written, &ReadOptions::default()).unwrap();
+    let names: Vec<&str> = reseeded.levels().keys().map(String::as_str).collect();
+    let layers: Vec<&str> = reread.layers.iter().map(|l| l.name.as_str()).collect();
+    assert!(
+        names.iter().all(|n| layers.contains(n)),
+        "{names:?} vs {layers:?}"
+    );
+    assert_eq!(reseeded.fonts().count(), bare.fonts().count());
+}
+
+#[test]
 fn v8_seed_prepare_document_converts_cross_format_features() {
     let seed_3d = V8Seed::from_bytes(&seed(true)).unwrap();
     assert!(seed_3d.is_3d());
