@@ -33,7 +33,17 @@ the caller; see [geometry contracts](geom/NOTES.md).
 cadkit-scene      GPU-free: Plan2d chunked 2D line/arc store with an f32 error
     |             budget and instance encoding; Mesh3d triangle meshes
     +-- cadkit-geom, thiserror (WASM-compatible)
+
+cadkit-gpu        wgpu 30: PlanRenderer (analytic lines/arcs), MeshRenderer
+    |             (lit meshes, orbit camera), render targets and readback
+    +-- cadkit-scene, wgpu, glam, thiserror
 ```
+
+`cadkit-gpu` takes a `wgpu::Device`, `Queue`, target format and `RenderPass`; it opens no
+window and depends on no UI toolkit. `cadkit_gpu::wgpu` is re-exported, so callers use the
+same `wgpu`; a `wgpu` major upgrade is a cadkit minor release. Uploads happen in
+`prepare`, `paint` only records draw calls, so a UI toolkit's render pass can host it.
+GPU errors are captured with error scopes and returned as `GpuError`.
 
 `cadkit-scene` knows how to draw, not what the geometry means. Callers map their
 objects to `ObjectId`s, choose colors and stroke widths in pixels, track which objects

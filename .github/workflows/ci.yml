@@ -112,6 +112,21 @@ jobs:
           command: check
           arguments: --all-features
 
+  gpu:
+    name: GPU render (lavapipe)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Mesa lavapipe (software Vulkan)
+        run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers
+      # Software rasterization: evidence that the pipelines validate and draw where expected,
+      # not a substitute for checks on real GPUs.
+      - run: cargo test --locked -p cadkit-gpu
+        env:
+          CADKIT_GPU_TESTS: "1"
+
   wasm:
     name: wasm32 build + node test
     runs-on: ubuntu-latest
@@ -132,6 +147,8 @@ jobs:
           version=$(awk '/^name = "wasm-bindgen"$/{getline; gsub(/[^0-9.]/, "", $0); print; exit}' Cargo.lock)
           echo "wasm-bindgen $version"
           cargo install wasm-bindgen-cli --version "$version" --locked
+      # The scene crate stays GPU-free and WASM-compatible.
+      - run: cargo check --locked -p cadkit-scene --target wasm32-unknown-unknown
       - name: Build (crates/cadkit-wasm/build.py calls the build lock itself)
         run: python crates/cadkit-wasm/build.py
       - run: node --test crates/cadkit-wasm/tests/node_test.mjs

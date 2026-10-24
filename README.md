@@ -91,6 +91,17 @@ assert_eq!(shifted.start, Point2::new(0.0, 1.0)); // Positive offset is left.
 
 See [supported profiles, error budgets and limits](docs/geom/NOTES.md).
 
+## Rendering (`cadkit-scene`, `cadkit-gpu`)
+
+`cadkit-scene` is GPU-free scene data: `Plan2d`, a chunked store of 2D lines, polylines,
+arcs and circles that encodes each chunk once for the GPU and checks every frame whether
+f32 chunk coordinates still meet a screen error budget, plus `Mesh3d` triangle meshes in
+f64. `cadkit-gpu` draws them with `wgpu` 30 (re-exported): analytic antialiased strokes
+with mitred corners, lit depth-tested meshes with an orbit camera, and offscreen readback.
+Both take a device, queue and render pass, not a window or UI toolkit; reading a file
+never pulls in a GPU runtime. Chunks that exceed the budget, curves the GPU does not draw
+and selection overlays are handed back to the caller's CPU path instead of being dropped.
+
 ## Quick start
 
 Rust:
@@ -186,8 +197,9 @@ if (cadkit_read_file("plan.dxf", NULL, &doc) == CADKIT_OK) {
 ## Design
 
 Crates: `cadkit-core` (model, limits, errors, SVG), one reader crate per format
-(`cadkit-dxf`, `cadkit-dgn`, `cadkit-dwg`, `cadkit-gml`), the `cadkit` facade, and the bindings
-(`cadkit-cli`, `cadkit-py`, `cadkit-wasm`, `cadkit-capi`). See
+(`cadkit-dxf`, `cadkit-dgn`, `cadkit-dwg`, `cadkit-gml`), the `cadkit` facade, the bindings
+(`cadkit-cli`, `cadkit-py`, `cadkit-wasm`, `cadkit-capi`), and the independent
+`cadkit-geom`, `cadkit-scene` and `cadkit-gpu` crates. See
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 Readers treat every file as untrusted: no panics, all sizes checked against configurable

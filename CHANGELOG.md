@@ -27,6 +27,12 @@ See "Migrating from 0.4" below.
   lines, polylines, arcs and circles with documented GPU instance encoding, per-frame f32
   error budget checks, overlay cut-outs and CPU fallback; `Mesh3d` / `MeshScene` /
   `MeshBudget` and the error-checked `relative_positions` f64 to f32 conversion.
+- New `cadkit-gpu` crate on `wgpu` 30 (re-exported): `PlanRenderer` for `Plan2d` frames
+  (analytic antialiased lines and arcs, mitred corners, hairline fading, premultiplied
+  blending, per-generation chunk uploads), `MeshRenderer` with `OrbitCamera` and
+  incremental mesh/camera updates, `RenderTargetCache`, `render_texture`,
+  `render_offscreen`, `mesh_budget`, typed `GpuError`s and a `block_on` helper. CI runs
+  its rendering tests on Mesa lavapipe.
 
 ### Changed
 
