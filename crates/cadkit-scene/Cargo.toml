@@ -11,9 +11,17 @@ authors.workspace = true
 keywords = ["cad", "rendering", "scene", "gpu", "geometry"]
 categories = ["graphics", "rendering::data-formats"]
 
+[features]
+# `document::plan_document`: cadkit-core Document models to plan items.
+document = ["dep:cadkit-core"]
+
 [dependencies]
 cadkit-geom.workspace = true
 thiserror.workspace = true
+cadkit-core = { workspace = true, optional = true }
 
 [lints]
 workspace = true
+
+[package.metadata.docs.rs]
+all-features = true

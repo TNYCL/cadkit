@@ -102,6 +102,13 @@ Both take a device, queue and render pass, not a window or UI toolkit; reading a
 never pulls in a GPU runtime. Chunks that exceed the budget, curves the GPU does not draw
 and selection overlays are handed back to the caller's CPU path instead of being dropped.
 
+The `document` feature of `cadkit-scene` bridges a read drawing to the plan renderer and
+reports what it does not draw (text, hatches, dashes drawn solid):
+
+```sh
+cargo run -p cadkit-gpu --example render_png -- plan.dxf plan.png 1600 1000
+```
+
 ## Quick start
 
 Rust:

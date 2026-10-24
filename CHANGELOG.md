@@ -33,6 +33,13 @@ See "Migrating from 0.4" below.
   incremental mesh/camera updates, `RenderTargetCache`, `render_texture`,
   `render_offscreen`, `mesh_budget`, typed `GpuError`s and a `block_on` helper. CI runs
   its rendering tests on Mesa lavapipe.
+- `cadkit-scene` feature `document`: `document::plan_document` turns the visible entities
+  of a `Document` model (blocks and arrays expanded) into plan items with resolved colors,
+  lineweight widths, layer groups and SVG-like contrast against the background; curves that
+  do not stay circular are flattened. A `DocumentPlanReport` counts what is not drawn
+  (text, hatches, points, images, unknown records, dashes drawn solid).
+  `cadkit-gpu/examples/render_png.rs` renders a DWG, DXF or DGN file to PNG with it.
+- `cadkit_core::svg::with_contrast`, the stroke contrast rule of the SVG export.
 
 ### Changed
 
