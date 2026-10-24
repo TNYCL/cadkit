@@ -30,6 +30,8 @@
 //! assert!(frame.cpu.is_empty());
 //! ```
 
+#[cfg(feature = "document")]
+pub mod document;
 pub mod layout;
 pub mod mesh;
 pub mod plan;

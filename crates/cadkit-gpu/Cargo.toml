@@ -18,7 +18,10 @@ thiserror.workspace = true
 wgpu.workspace = true
 
 [dev-dependencies]
+cadkit = { workspace = true }
 cadkit-geom.workspace = true
+cadkit-scene = { workspace = true, features = ["document"] }
+flate2.workspace = true
 
 [lints]
 workspace = true

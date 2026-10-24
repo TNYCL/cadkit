@@ -276,8 +276,10 @@ fn luminance((r, g, b): (u8, u8, u8)) -> f64 {
 /// Minimum WCAG contrast ratio between a stroke and the background.
 const MIN_CONTRAST: f64 = 1.25;
 
-/// `color`, or black / white when it is too close to the background `bg`.
-fn with_contrast(color: (u8, u8, u8), bg: (u8, u8, u8)) -> (u8, u8, u8) {
+/// `color`, or black / white when its WCAG contrast ratio against the background `bg` is
+/// below 1.25 (black on light, white on dark backgrounds). The SVG export applies it to every
+/// stroke and fill; renderers that draw on a known background can apply the same rule.
+pub fn with_contrast(color: (u8, u8, u8), bg: (u8, u8, u8)) -> (u8, u8, u8) {
     let (a, b) = (luminance(color), luminance(bg));
     let ratio = (a.max(b) + 0.05) / (a.min(b) + 0.05);
     if ratio >= MIN_CONTRAST {

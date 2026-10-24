@@ -277,6 +277,10 @@ fn frame_culls_chunks_hides_overlay_and_falls_back_beyond_precision_budget() {
     );
     plan.upsert(ObjectId(4), item(1, vec![line(1., 1., 4., 4.)]));
     plan.upsert(ObjectId(5), item(0, vec![line(500., 500., 501., 500.)]));
+    plan.upsert(
+        ObjectId(6),
+        item(0, vec![line(2., 1., 3., 1.)]).with_force_cpu(true),
+    );
     let only_0 = |group: GroupId| group == GroupId(0);
     let camera = view(Point2::new(3., 2.5), 100.);
     plan.prepare(&camera, only_0);
@@ -285,6 +289,7 @@ fn frame_culls_chunks_hides_overlay_and_falls_back_beyond_precision_budget() {
     assert_eq!(frame.draws.len(), 1);
     assert!(frame.cpu.contains(&ObjectId(1)));
     assert!(!frame.cpu.contains(&ObjectId(4)) && !frame.cpu.contains(&ObjectId(5)));
+    assert!(frame.cpu.contains(&ObjectId(6)));
     assert_eq!(frame.labels, BTreeSet::from([ObjectId(3)]));
     // The overlay object's range is cut out of the draw.
     let key = plan.entries[&ObjectId(1)].chunk.unwrap();
