@@ -122,6 +122,10 @@ pub struct PlanItem {
     pub bounds: Option<Bounds2>,
     /// The caller draws a label for this object on the CPU; see [`PlanFrame::labels`].
     pub label: bool,
+    /// Draw the whole object on the caller's CPU path even if its curves are GPU-drawable,
+    /// for example because drawing it reports a diagnostic. It still takes part in chunk
+    /// culling and [`Plan2d::near`] through its bounds.
+    pub force_cpu: bool,
 }
 
 impl PlanItem {
@@ -135,6 +139,7 @@ impl PlanItem {
             width_px,
             bounds,
             label: false,
+            force_cpu: false,
         }
     }
 
@@ -149,6 +154,13 @@ impl PlanItem {
     #[must_use]
     pub fn with_label(mut self, label: bool) -> Self {
         self.label = label;
+        self
+    }
+
+    /// Sets [`Self::force_cpu`].
+    #[must_use]
+    pub fn with_force_cpu(mut self, force_cpu: bool) -> Self {
+        self.force_cpu = force_cpu;
         self
     }
 }
@@ -326,7 +338,7 @@ impl Plan2d {
     pub fn upsert(&mut self, id: ObjectId, item: PlanItem) {
         self.remove(id);
         let tolerance = self.options.tolerance;
-        let gpu = item.curves.iter().all(|curve| gpu_curve(curve, &tolerance));
+        let gpu = !item.force_cpu && item.curves.iter().all(|curve| gpu_curve(curve, &tolerance));
         let mut entry = Entry {
             item,
             gpu,
