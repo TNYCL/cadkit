@@ -6,6 +6,8 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-24
+
 0.5 is the deliberate breaking release that settles the API: later 0.5.x releases only add.
 See "Migrating from 0.4" below.
 
@@ -55,6 +57,7 @@ See "Migrating from 0.4" below.
 - Breaking: `ProfileIssue::severity` is a `Severity`; its JSON stays `"error"` / `"review"`.
 - Document JSON written by this version starts with `"schema_version": 1`. JSON without
   the field still reads.
+- CI runs `cargo-semver-checks`, so 0.5.x releases stay additive.
 
 ### Migrating from 0.4
 
@@ -355,7 +358,8 @@ Fixed during development, before this first release:
 - No automatic TKGM/CityMax building inference or receiving-system acceptance.
 - DWG R13 (AC1012) is untested; entity coverage of all readers is still growing.
 
-[Unreleased]: https://github.com/TNYCL/cadkit/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/TNYCL/cadkit/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/TNYCL/cadkit/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/TNYCL/cadkit/compare/v0.3.7...v0.4.0
 [0.3.7]: https://github.com/TNYCL/cadkit/compare/v0.3.6...v0.3.7
 [0.3.6]: https://github.com/TNYCL/cadkit/compare/v0.3.5...v0.3.6
