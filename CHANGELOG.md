@@ -23,6 +23,10 @@ See "Migrating from 0.4" below.
 - `cadkit_dgn::Symbology` with the `dgn.level_id` / `dgn.color_index` / `dgn.weight` /
   `dgn.style` key constants, and `V8Seed::palette`, `levels`, `fonts` and `timestamp_ms`.
 - `cadkit_gml::tkgm::Severity` for profile findings.
+- New `cadkit-scene` crate (GPU-free, WASM-compatible): `Plan2d`, a chunked 2D store of
+  lines, polylines, arcs and circles with documented GPU instance encoding, per-frame f32
+  error budget checks, overlay cut-outs and CPU fallback; `Mesh3d` / `MeshScene` /
+  `MeshBudget` and the error-checked `relative_positions` f64 to f32 conversion.
 
 ### Changed
 

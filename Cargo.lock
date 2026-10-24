@@ -167,6 +167,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "cadkit-scene"
+version = "0.4.0"
+dependencies = [
+ "cadkit-geom",
+ "thiserror",
+]
+
+[[package]]
 name = "cadkit-wasm"
 version = "0.4.0"
 dependencies = [
