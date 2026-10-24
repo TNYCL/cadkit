@@ -5,7 +5,7 @@ artifact, waits for approval on the `release` environment, then publishes:
 
 | Channel | Package | Contents |
 |---|---|---|
-| crates.io | `cadkit-core`, `cadkit-dgn`, `cadkit-dxf`, `cadkit-gml`, `cadkit-dwg`, `cadkit`, `cadkit-cli` | Rust sources; docs.rs builds the API documentation |
+| crates.io | `cadkit-geom`, `cadkit-core`, `cadkit-dgn`, `cadkit-dxf`, `cadkit-gml`, `cadkit-dwg`, `cadkit`, `cadkit-cli` | Rust sources; docs.rs builds the API documentation |
 | PyPI | `pycadkit` (imports as `cadkit`) | abi3 wheels for Linux x86_64/aarch64 (manylinux), macOS arm64/x86_64, Windows x64, and an sdist |
 | npm | `cadkit-wasm` | one package: `cadkit-wasm` (ES module, browser and bundlers) and `cadkit-wasm/node` (CommonJS) |
 | GitHub Releases | `cadkit-<target>` | CLI for Linux x86_64/aarch64 (static musl), macOS arm64/x86_64, Windows x64 |

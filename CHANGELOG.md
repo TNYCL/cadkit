@@ -6,6 +6,52 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+0.5 is the deliberate breaking release that settles the API: later 0.5.x releases only add.
+See "Migrating from 0.4" below.
+
+### Added
+
+- Constructors and `with_*` setters for every model and option type (`Layer::new`,
+  `Block::new`, `Model::new`, `Linetype::new`, `TextStyle::new`, `Attribute::new`,
+  `AttributeDisplay::new`, `Warning::new`, `SourceInfo::new`, `Units::new`, `Limits::new`,
+  `WalkOptions::new`, `BBoxOptions::new` and `new()` on the reader/writer options).
+- `Document::schema_version` (`SchemaVersion`, currently 1) in the document JSON, typed
+  `Error::SchemaVersion` for other versions, and an optional `schemars` feature on
+  `cadkit-core` with the committed schema `docs/schema/document-v1.schema.json`.
+- `LimitKind` on `Error::LimitExceeded`, naming the `Limits` field, a work or output budget,
+  or a format capacity overflow.
+- `cadkit_dgn::Symbology` with the `dgn.level_id` / `dgn.color_index` / `dgn.weight` /
+  `dgn.style` key constants, and `V8Seed::palette`, `levels`, `fonts` and `timestamp_ms`.
+- `cadkit_gml::tkgm::Severity` for profile findings.
+
+### Changed
+
+- Breaking: `Document`, `SourceInfo`, `Units`, `Layer`, `Linetype`, `TextStyle`, `Block`,
+  `Model`, `Entity`, `Attribute`, `AttributeDisplay`, `Warning`, the enums `EntityKind`,
+  `Value`, `Format`, `ModelKind` and `GroupKind`, and the option structs `Limits`,
+  `ReadOptions`, `SvgOptions`, `BBoxOptions`, `WalkOptions`, `cadkit_dgn::WriteOptions`,
+  `SeedPrepareOptions`, `cadkit_gml::ExportOptions`, `ImportOptions`, `ValidationOptions`
+  and `ProfileIssue` are `#[non_exhaustive]`. `Color`, `Lineweight`, `HatchEdge`,
+  `DimensionType` and `LengthUnit` mirror closed sets of the formats and stay exhaustive.
+- Breaking: `Error::LimitExceeded(String)` is now `Error::LimitExceeded { limit, message }`;
+  the error text is unchanged.
+- Breaking: `ProfileIssue::severity` is a `Severity`; its JSON stays `"error"` / `"review"`.
+- Document JSON written by this version starts with `"schema_version": 1`. JSON without
+  the field still reads.
+
+### Migrating from 0.4
+
+- Struct literals of the types above no longer compile outside cadkit. Use the
+  constructors and setters, or start from `Default::default()` / `new()` and assign fields:
+  `Layer { name, color, ..Layer::default() }` becomes `Layer::new(name).with_color(color)`.
+  `Layer::new` makes a visible, plottable layer; `Layer::default()` keeps every flag `false`.
+  `TextStyle::new` sets a width factor of 1.
+- `match` on `EntityKind`, `Value`, `Format`, `ModelKind` or `GroupKind` needs a `_` arm.
+- Replace `Error::LimitExceeded(message)` patterns with `Error::LimitExceeded { message, .. }`.
+- Compare `ProfileIssue::severity` with `Severity::Error` / `Severity::Review`
+  (or `severity.as_str()`).
+- The C ABI, the Python and WASM APIs and the JSON of the options are unchanged.
+
 ## [0.4.0] - 2026-10-23
 
 ### Added

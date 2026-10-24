@@ -25,8 +25,10 @@ cargo add cadkit          # Rust
 cadkit is developed clean-room and dual-licensed under MIT or Apache-2.0. Every source of
 format knowledge is recorded in [docs/PROVENANCE.md](docs/PROVENANCE.md).
 
-> **Versioning:** cadkit is 0.x, so a minor release (for example 0.2 to 0.3) may change the
-> API. Every change is listed in [CHANGELOG.md](CHANGELOG.md).
+> **Versioning:** cadkit is 0.x, so a minor release (for example 0.4 to 0.5) may change the
+> API. From 0.5 on, patch releases within a minor series (0.5.x) only add: model and option
+> types are `#[non_exhaustive]` and built through constructors, so new fields and variants do
+> not break callers. Every change is listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## Format support
 
