@@ -245,10 +245,7 @@ fn private_seed_takes_a_new_raster_attachment() {
     let mut doc = source.clone();
     doc.models[0].entities = vec![image.clone()];
     // Application workflow: clear the seed model while keeping its other control records.
-    let options = cadkit_dgn::WriteOptions {
-        clear_seed_model: true,
-        ..Default::default()
-    };
+    let options = cadkit_dgn::WriteOptions::default().with_clear_seed_model(true);
     let output = cadkit_dgn::write_v8(&doc, &bytes, &options).unwrap();
 
     // Record signature against the seed's own groups.
@@ -377,10 +374,7 @@ fn private_seed_without_rasters_takes_the_builtin_group() {
     image.attributes.clear();
     image.layer = None;
     doc.models[0].entities = vec![image.clone()];
-    let options = cadkit_dgn::WriteOptions {
-        clear_seed_model: true,
-        ..Default::default()
-    };
+    let options = cadkit_dgn::WriteOptions::default().with_clear_seed_model(true);
     let output = cadkit_dgn::write_v8(&doc, &seed, &options).unwrap();
     assert!(cadkit_dgn::seed_has_raster_template(&output, &read).unwrap());
     let reread = cadkit_dgn::read(&output, &read).unwrap();

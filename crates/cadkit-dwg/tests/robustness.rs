@@ -42,13 +42,7 @@ impl Rng {
 }
 
 fn options() -> ReadOptions {
-    ReadOptions {
-        limits: Limits {
-            max_decompressed_bytes: 256 << 20,
-            ..Limits::default()
-        },
-        ..ReadOptions::default()
-    }
+    ReadOptions::default().with_limits(Limits::default().with_max_decompressed_bytes(256 << 20))
 }
 
 fn read_both(bytes: &[u8], options: &ReadOptions) {
@@ -151,38 +145,21 @@ fn tiny_limits_are_respected() {
     let Some(bytes) = corpus_file("sample_AC1018.dwg") else {
         return;
     };
-    let options = ReadOptions {
-        limits: Limits {
-            max_decompressed_bytes: 1024,
-            ..Limits::default()
-        },
-        ..ReadOptions::default()
-    };
+    let options =
+        ReadOptions::default().with_limits(Limits::default().with_max_decompressed_bytes(1024));
     assert!(matches!(
         cadkit_dwg::read(&bytes, &options),
-        Err(cadkit_core::Error::LimitExceeded(_))
+        Err(cadkit_core::Error::LimitExceeded { .. })
     ));
-    let options = ReadOptions {
-        limits: Limits {
-            max_input_bytes: 100,
-            ..Limits::default()
-        },
-        ..ReadOptions::default()
-    };
+    let options = ReadOptions::default().with_limits(Limits::default().with_max_input_bytes(100));
     assert!(matches!(
         cadkit_dwg::read(&bytes, &options),
-        Err(cadkit_core::Error::LimitExceeded(_))
+        Err(cadkit_core::Error::LimitExceeded { .. })
     ));
-    let options = ReadOptions {
-        limits: Limits {
-            max_objects: 10,
-            ..Limits::default()
-        },
-        ..ReadOptions::default()
-    };
+    let options = ReadOptions::default().with_limits(Limits::default().with_max_objects(10));
     assert!(matches!(
         cadkit_dwg::read(&bytes, &options),
-        Err(cadkit_core::Error::LimitExceeded(_))
+        Err(cadkit_core::Error::LimitExceeded { .. })
     ));
 }
 

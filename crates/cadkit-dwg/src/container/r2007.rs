@@ -9,6 +9,7 @@
 //! The overall flow follows ACadSharp's `DwgReader.readFileHeaderAC21` /
 //! `getSectionBuffer21` (MIT, © DomCR); field layouts are from the spec.
 
+use cadkit_core::LimitKind;
 use std::collections::{BTreeMap, HashSet};
 
 use cadkit_core::bytes::ByteReader;
@@ -354,8 +355,12 @@ fn read_section(
         );
         size = plausible;
     }
-    let total = usize::try_from(size)
-        .map_err(|_| Error::LimitExceeded(format!("section {name} of {size} bytes")))?;
+    let total = usize::try_from(size).map_err(|_| {
+        Error::limit(
+            LimitKind::Capacity,
+            format!("section {name} of {size} bytes"),
+        )
+    })?;
     let mut out = SectionBuffer::new(total, largest.max(0x400));
     for (page, location) in list {
         let Ok(start) = usize::try_from(page.data_offset) else {
@@ -522,7 +527,7 @@ fn read_impl<'a>(
                     _ => c.template = section,
                 }
             }
-            Err(e @ Error::LimitExceeded(_)) => return Err(e),
+            Err(e @ Error::LimitExceeded { .. }) => return Err(e),
             Err(e) => c.warn("dwg.section_error", format!("section {name}: {e}"), None),
         }
     }

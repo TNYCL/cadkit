@@ -2,6 +2,7 @@
 
 use crate::native::*;
 use crate::validate::{dimension, elements, polygon, positions, ring_element_points};
+use cadkit_core::LimitKind;
 use cadkit_core::{
     Attribute, Color, Document, Entity, EntityKind, Error, Format, GroupKind, Layer, LengthUnit,
     Model, ReadOptions, Result, Units, Value, Vertex,
@@ -11,12 +12,19 @@ use std::collections::{BTreeSet, HashMap};
 
 /// Options controlling which CityGML geometry is projected into the neutral [`Document`].
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ImportOptions {
     /// Optional LoD filter (`0..=4`); `None` imports all LoDs, while `Some(lod)` skips other `lodN*` geometry properties.
     pub lod: Option<u8>,
 }
 
 impl ImportOptions {
+    /// Imports every LoD.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     /// Sets the optional Level of Detail filter (`0..=4`).
     #[must_use]
     pub fn with_lod(mut self, lod: Option<u8>) -> Self {
@@ -128,9 +136,10 @@ pub(crate) fn infer_srs_units(srs: &str) -> Option<Units> {
         2222..=2224 | 2868 | 2992 | 2994 => LengthUnit::Foot,
         _ => return None,
     };
-    Some(Units {
-        unit,
-        meters_per_unit: unit.meters(),
+    Some({
+        let mut units = Units::new(unit);
+        units.meters_per_unit = unit.meters();
+        units
     })
 }
 
@@ -184,7 +193,10 @@ impl Importer<'_> {
                         + p.interiors.iter().map(|r| r.len() as u64).sum::<u64>(),
                 );
                 if self.vertices > self.read.limits.max_total_vertices {
-                    return Err(Error::LimitExceeded("GML expanded vertices".into()));
+                    return Err(Error::limit(
+                        LimitKind::TotalVertices,
+                        "GML expanded vertices".into(),
+                    ));
                 }
                 patch_entities.push(self.entity(
                     patch,
@@ -209,7 +221,10 @@ impl Importer<'_> {
 
     fn visit(&mut self, e: &Element, depth: u32, inherited: usize) -> Result<Vec<Entity>> {
         if depth >= self.read.limits.max_depth || self.work >= self.read.limits.max_objects {
-            return Err(Error::LimitExceeded("GML mapping depth/work".into()));
+            return Err(Error::limit(
+                LimitKind::Objects,
+                "GML mapping depth/work".into(),
+            ));
         }
         self.work += 1;
         let dim = dimension(e, inherited)?;
@@ -317,7 +332,10 @@ impl Importer<'_> {
             None
         };
         if self.vertices > self.read.limits.max_total_vertices {
-            return Err(Error::LimitExceeded("GML expanded vertices".into()));
+            return Err(Error::limit(
+                LimitKind::TotalVertices,
+                "GML expanded vertices".into(),
+            ));
         }
         if let Some(kind) = kind {
             return Ok(vec![self.entity(e, kind)?]);
@@ -384,14 +402,11 @@ impl Importer<'_> {
                             }
                             _ => Value::Text(text),
                         };
-                    entity.attributes.push(Attribute {
-                        tag: name.into(),
-                        value: v,
-                        set: Some(a.name.local().into()),
-                        position: None,
-                        invisible: true,
-                        ..Default::default()
-                    });
+                    entity.attributes.push(
+                        Attribute::new(name, v)
+                            .with_set(a.name.local())
+                            .with_invisible(true),
+                    );
                 }
             }
             let layer_name = cadkit_layer.unwrap_or_else(|| e.name.local().to_owned());
@@ -406,7 +421,7 @@ impl Importer<'_> {
         self.next = self
             .next
             .checked_add(1)
-            .ok_or_else(|| Error::LimitExceeded("GML entity ids".into()))?;
+            .ok_or_else(|| Error::limit(LimitKind::Capacity, "GML entity ids".into()))?;
         let mut entity = Entity::new(kind);
         entity.id = Some(self.next);
         if let Some(id) = e.attribute(GML, "id") {
@@ -458,21 +473,14 @@ pub fn to_document(
         .into_iter()
         .map(|name| {
             let color = thematic_layer_color(&name);
-            Layer {
-                name,
-                color,
-                visible: true,
-                plottable: true,
-                ..Layer::default()
-            }
+            Layer::new(name).with_color(color)
         })
         .collect();
-    doc.warnings.push(cadkit_core::Warning {code:"gml.neutral_projection".into(), message:"Neutral geometry is a projection; use CityGmlDocument to preserve LoD ownership, shared references and XML extensions".into(), offset:None, object:None});
-    doc.models.push(Model {
-        name: "CityModel".into(),
-        is_3d: true,
-        entities,
-        ..Default::default()
+    doc.warnings.push(cadkit_core::Warning::new("gml.neutral_projection", "Neutral geometry is a projection; use CityGmlDocument to preserve LoD ownership, shared references and XML extensions"));
+    doc.models.push({
+        let mut model = Model::default().with_is_3d(true).with_entities(entities);
+        model.name = "CityModel".into();
+        model
     });
     if let Some(srs) = nodes.iter().find_map(|(e, _)| e.attribute("", "srsName")) {
         if let Some(units) = infer_srs_units(srs) {

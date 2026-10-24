@@ -6,6 +6,7 @@ mod hatch;
 mod records;
 mod tables;
 
+use cadkit_core::LimitKind;
 use std::collections::HashMap;
 
 use cadkit_core::text::OemCodepage;
@@ -127,11 +128,14 @@ fn length_unit(code: i64) -> Units {
 /// Inspects the DXF `HEADER` section without decoding `TABLES`, `BLOCKS`, or `ENTITIES`.
 pub(crate) fn inspect(bytes: &[u8], options: &ReadOptions) -> Result<Summary> {
     if bytes.len() as u64 > options.limits.max_input_bytes {
-        return Err(Error::LimitExceeded(format!(
-            "input of {} bytes exceeds the limit of {}",
-            bytes.len(),
-            options.limits.max_input_bytes
-        )));
+        return Err(Error::limit(
+            LimitKind::InputBytes,
+            format!(
+                "input of {} bytes exceeds the limit of {}",
+                bytes.len(),
+                options.limits.max_input_bytes
+            ),
+        ));
     }
     if !crate::native::sniff(bytes) {
         return Err(Error::UnknownFormat);
@@ -155,7 +159,7 @@ pub(crate) fn inspect(bytes: &[u8], options: &ReadOptions) -> Result<Summary> {
         let pair = match tok.next_pair() {
             Ok(Some(p)) => p,
             Ok(None) => break,
-            Err(e @ Error::LimitExceeded(_)) => return Err(e),
+            Err(e @ Error::LimitExceeded { .. }) => return Err(e),
             Err(e) => {
                 if !saw_section {
                     return Err(e);
@@ -258,11 +262,14 @@ fn record_pair_cap(max_vertices: u32, input_len: usize) -> usize {
 /// Reads a DXF file. See the crate documentation for the mapping rules.
 pub(crate) fn read(bytes: &[u8], options: &ReadOptions) -> Result<Document> {
     if bytes.len() as u64 > options.limits.max_input_bytes {
-        return Err(Error::LimitExceeded(format!(
-            "input of {} bytes exceeds the limit of {}",
-            bytes.len(),
-            options.limits.max_input_bytes
-        )));
+        return Err(Error::limit(
+            LimitKind::InputBytes,
+            format!(
+                "input of {} bytes exceeds the limit of {}",
+                bytes.len(),
+                options.limits.max_input_bytes
+            ),
+        ));
     }
     if !crate::native::sniff(bytes) {
         return Err(Error::UnknownFormat);
@@ -321,7 +328,7 @@ pub(crate) fn read(bytes: &[u8], options: &ReadOptions) -> Result<Document> {
 
     if let Some(err) = rr.take_error() {
         match err {
-            Error::LimitExceeded(_) => return Err(err),
+            Error::LimitExceeded { .. } => return Err(err),
             e if sections == 0 => return Err(e),
             e => st.ctx.warn(
                 "dxf.truncated",
@@ -443,7 +450,8 @@ impl State<'_> {
                     match child.name.as_str() {
                         "VERTEX" | "ATTRIB" => {
                             if children.len() >= self.ctx.opts.limits.max_vertices as usize {
-                                return Err(Error::LimitExceeded(
+                                return Err(Error::limit(
+                                    LimitKind::Vertices,
                                     "too many sub-records in one entity".into(),
                                 ));
                             }
@@ -459,10 +467,10 @@ impl State<'_> {
             }
             self.entity_count += 1;
             if self.entity_count > self.ctx.opts.limits.max_objects {
-                return Err(Error::LimitExceeded(format!(
-                    "more than {} entities",
-                    self.ctx.opts.limits.max_objects
-                )));
+                return Err(Error::limit(
+                    LimitKind::Objects,
+                    format!("more than {} entities", self.ctx.opts.limits.max_objects),
+                ));
             }
             if let Some(p) = entities::convert(&mut self.ctx, &rec, &children)? {
                 out.push(p);
@@ -506,19 +514,19 @@ impl State<'_> {
                             }));
                         continue;
                     }
-                    let mut block = Block {
-                        name,
-                        id: handle(g),
-                        base_point: g.point_or_zero(10),
-                        entities: entities.into_iter().map(|p| p.entity).collect(),
-                        is_xref: flags & 4 != 0,
-                        xref_path: if flags & 4 != 0 {
+                    let mut block = {
+                        let mut block = Block::new(name)
+                            .with_base_point(g.point_or_zero(10))
+                            .with_entities(entities.into_iter().map(|p| p.entity).collect())
+                            .with_is_xref(flags & 4 != 0);
+                        block.id = handle(g);
+                        block.xref_path = if flags & 4 != 0 {
                             g.string(1).filter(|s| !s.is_empty())
                         } else {
                             None
-                        },
-                        description: g.string(4).filter(|s| !s.is_empty()),
-                        props: Default::default(),
+                        };
+                        block.description = g.string(4).filter(|s| !s.is_empty());
+                        block
                     };
                     block
                         .props
@@ -607,13 +615,10 @@ impl State<'_> {
             .layouts
             .iter()
             .find(|l| l.name.eq_ignore_ascii_case("Model"));
-        let mut model = Model {
-            name: "Model".to_owned(),
-            id: model_layout.and_then(|l| l.handle),
-            kind: ModelKind::Model,
-            is_3d: false,
-            entities: model_entities,
-            props: Default::default(),
+        let mut model = {
+            let mut model = Model::new("Model", ModelKind::Model).with_entities(model_entities);
+            model.id = model_layout.and_then(|l| l.handle);
+            model
         };
         model.is_3d = model.entities.iter().any(entity_has_z);
 
@@ -649,13 +654,12 @@ impl State<'_> {
                     MValue::Text(format!("{b:X}")),
                 );
             }
-            layout_models.push(Model {
-                name: l.name.clone(),
-                id: l.handle,
-                kind: ModelKind::Layout,
-                is_3d: false,
-                entities,
-                props,
+            layout_models.push({
+                let mut model = Model::new(l.name.clone(), ModelKind::Layout)
+                    .with_entities(entities)
+                    .with_props(props);
+                model.id = l.handle;
+                model
             });
         }
         // Paper-space entities without a LAYOUT object (R12, stripped files).
@@ -670,14 +674,7 @@ impl State<'_> {
                 Some(n) if layout_models.is_empty() => n.to_owned(),
                 _ => orig.trim_start_matches('*').to_owned(),
             };
-            layout_models.push(Model {
-                name,
-                id: None,
-                kind: ModelKind::Layout,
-                is_3d: false,
-                entities,
-                props: Default::default(),
-            });
+            layout_models.push(Model::new(name, ModelKind::Layout).with_entities(entities));
         }
 
         self.doc.models.push(model);

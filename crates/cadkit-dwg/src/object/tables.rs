@@ -1,6 +1,7 @@
 //! Table, control, dictionary and layout decoders (spec §20.4.44–§20.4.84).
 //! Each runs after the common non-entity data (owner, reactors, xdictionary).
 
+use cadkit_core::LimitKind;
 use cadkit_core::{Error, Result};
 
 use super::{Streams, read_handles as handles};
@@ -239,8 +240,8 @@ pub fn block_header(s: &mut Streams<'_>) -> Result<ObjectData> {
     }
     b.end_block = s.h_opt()?;
     if v.r2000_plus() {
-        let count =
-            i32::try_from(insert_count).map_err(|_| Error::LimitExceeded("insert count".into()))?;
+        let count = i32::try_from(insert_count)
+            .map_err(|_| Error::limit(LimitKind::Capacity, "insert count".into()))?;
         b.inserts = handles(s, count, "insert")?;
         b.layout = s.h_opt()?;
     }

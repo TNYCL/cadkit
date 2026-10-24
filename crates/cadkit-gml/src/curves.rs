@@ -1,5 +1,6 @@
 //! Exact three-point circle and circular-arc encoding/decoding from GML 3.1.1.
 
+use cadkit_core::LimitKind;
 use std::f64::consts::TAU;
 
 use crate::{
@@ -182,7 +183,10 @@ pub(crate) fn append_chain(dst: &mut Vec<Point3>, part: &[Point3], limits: &Limi
         usize::from(!dst.is_empty() && dst.last().zip(part.first()).is_some_and(|(a, b)| a == b));
     let added = part.len().saturating_sub(skip);
     if dst.len().saturating_add(added) as u64 > u64::from(limits.max_vertices) {
-        return Err(Error::LimitExceeded("GML curve vertices".into()));
+        return Err(Error::limit(
+            LimitKind::Vertices,
+            "GML curve vertices".into(),
+        ));
     }
     if let Some(tail) = part.get(skip..) {
         dst.extend_from_slice(tail);
@@ -204,7 +208,10 @@ pub(crate) fn segment_points(
             if p.name.is(GML, "pos") || p.name.is(GML, "posList") {
                 let values = positions(p, dim, limits)?;
                 if pts.len().saturating_add(values.len()) as u64 > u64::from(limits.max_vertices) {
-                    return Err(Error::LimitExceeded("GML segment vertices".into()));
+                    return Err(Error::limit(
+                        LimitKind::Vertices,
+                        "GML segment vertices".into(),
+                    ));
                 }
                 pts.extend(values);
             } else if !p.name.is(GML, "interpolation") {

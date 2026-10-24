@@ -14,23 +14,17 @@ fn unnamed_sets_and_standalone_tags_retain_their_identity_and_values() {
     let mut standalone = Entity::new(EntityKind::Unknown {
         type_name: "dgn.type_37".into(),
     });
-    standalone.attributes.push(Attribute {
-        tag: "identifier".into(),
-        value: Value::Int(42),
-        set: None,
-        position: Some(Point3::xy(2., 3.)),
-        invisible: true,
-        ..Default::default()
-    });
+    standalone.attributes.push(
+        Attribute::new("identifier", Value::Int(42))
+            .with_position(Point3::xy(2., 3.))
+            .with_invisible(true),
+    );
     let mut named = line();
-    named.attributes.push(Attribute {
-        tag: "identifier".into(),
-        value: Value::Text("separate definition".into()),
-        set: Some("CADKIT".into()),
-        position: None,
-        invisible: true,
-        ..Default::default()
-    });
+    named.attributes.push(
+        Attribute::new("identifier", Value::Text("separate definition".into()))
+            .with_set("CADKIT")
+            .with_invisible(true),
+    );
     let output = write_v8(
         &document(false, vec![standalone.clone(), named]),
         &seed(false),
@@ -67,14 +61,9 @@ fn bulged_polylines_write_exact_arcs_in_both_directions_and_dimensions() {
                 closed: true,
                 normal: Vec3::Z,
             });
-            entity.attributes.push(Attribute {
-                tag: "unit".into(),
-                value: Value::Int(42),
-                set: None,
-                position: None,
-                invisible: true,
-                ..Default::default()
-            });
+            entity
+                .attributes
+                .push(Attribute::new("unit", Value::Int(42)).with_invisible(true));
             let output = write_v8(
                 &document(three, vec![entity]),
                 &seed(three),

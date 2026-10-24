@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 /// A 3D point. 2D data uses `z = 0` (or the elevation).
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct Point3 {
     /// X.
     pub x: f64,
@@ -108,6 +109,7 @@ impl Sub<Point3> for Point3 {
 
 /// A 3D vector (directions, normals, axes).
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct Vec3 {
     /// X.
     pub x: f64,
@@ -242,6 +244,7 @@ impl Neg for Vec3 {
 
 /// An axis-aligned bounding box.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct BBox {
     /// Minimum corner.
     pub min: Point3,

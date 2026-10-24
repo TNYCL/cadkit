@@ -31,7 +31,12 @@ pub type Props = BTreeMap<String, Value>;
 
 /// A complete drawing.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[non_exhaustive]
 pub struct Document {
+    /// Version of this JSON layout; see [`SchemaVersion`].
+    #[serde(default)]
+    pub schema_version: SchemaVersion,
     /// Where the data came from.
     pub source: SourceInfo,
     /// Unit of all coordinates in this document.
@@ -147,8 +152,37 @@ impl Document {
     }
 }
 
+/// Version of the [`Document`] JSON layout, serialized as the integer `schema_version`.
+///
+/// Every document this crate writes carries [`SchemaVersion::CURRENT`]. JSON without the
+/// field predates versioning and reads as version 1. [`crate::export::document_from_json`]
+/// rejects other versions with [`crate::Error::SchemaVersion`]. The version increases only
+/// when an existing field changes meaning or shape; new optional fields do not change it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[serde(transparent)]
+pub struct SchemaVersion(u32);
+
+impl SchemaVersion {
+    /// The version this crate reads and writes.
+    pub const CURRENT: Self = Self(1);
+
+    /// The version number.
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+impl Default for SchemaVersion {
+    fn default() -> Self {
+        Self::CURRENT
+    }
+}
+
 /// Origin of a [`Document`].
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[non_exhaustive]
 pub struct SourceInfo {
     /// File format family.
     pub format: Format,
@@ -162,6 +196,7 @@ pub struct SourceInfo {
 
 /// Lightweight header summary returned by header-only `inspect` routines without decoding entity streams.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[non_exhaustive]
 pub struct Summary {
     /// File format family.
@@ -223,7 +258,9 @@ impl Summary {
 
 /// File format family.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum Format {
     /// Not known (e.g. a document built in memory).
     #[default]
@@ -242,6 +279,8 @@ pub enum Format {
 
 /// Drawing units.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[non_exhaustive]
 pub struct Units {
     /// Named unit of the coordinates.
     pub unit: LengthUnit,
@@ -252,6 +291,7 @@ pub struct Units {
 
 /// Length unit. Mirrors the DWG `$INSUNITS` set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 #[allow(missing_docs)]
 pub enum LengthUnit {
@@ -284,6 +324,8 @@ pub enum LengthUnit {
 
 /// A layer (DGN: level).
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[non_exhaustive]
 pub struct Layer {
     /// Unique name.
     pub name: String,
@@ -311,6 +353,8 @@ pub struct Layer {
 
 /// A linetype definition.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[non_exhaustive]
 pub struct Linetype {
     /// Unique name.
     pub name: String,
@@ -324,6 +368,8 @@ pub struct Linetype {
 
 /// A text style definition.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[non_exhaustive]
 pub struct TextStyle {
     /// Unique name.
     pub name: String,
@@ -341,6 +387,8 @@ pub struct TextStyle {
 
 /// A block definition (DGN: shared cell definition).
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[non_exhaustive]
 pub struct Block {
     /// Unique name.
     pub name: String,
@@ -362,6 +410,8 @@ pub struct Block {
 
 /// A space that holds drawn entities: model space, a paper-space layout or a DGN model.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[non_exhaustive]
 pub struct Model {
     /// Display name.
     pub name: String,
@@ -379,7 +429,9 @@ pub struct Model {
 
 /// Kind of [`Model`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ModelKind {
     /// Design / model space.
     #[default]
@@ -392,6 +444,8 @@ pub enum ModelKind {
 
 /// One drawn object.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[non_exhaustive]
 pub struct Entity {
     /// Native identifier (DWG handle, DGN element id).
     pub id: Option<u64>,
@@ -572,7 +626,9 @@ impl Entity {
 
 /// Geometry and type-specific data of an [`Entity`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum EntityKind {
     /// A point.
     Point {
@@ -829,6 +885,7 @@ pub enum EntityKind {
 
 /// Polyline vertex.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct Vertex {
     /// Position.
     pub position: Point3,
@@ -852,6 +909,7 @@ impl Vertex {
 
 /// Horizontal text alignment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 #[allow(missing_docs)]
 pub enum HAlign {
@@ -866,6 +924,7 @@ pub enum HAlign {
 
 /// Vertical text alignment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 #[allow(missing_docs)]
 pub enum VAlign {
@@ -878,6 +937,7 @@ pub enum VAlign {
 
 /// Multi-line text attachment point.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 #[allow(missing_docs)]
 pub enum Attachment {
@@ -895,6 +955,7 @@ pub enum Attachment {
 
 /// Dimension kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 #[allow(missing_docs)]
 pub enum DimensionType {
@@ -912,7 +973,9 @@ pub enum DimensionType {
 
 /// What a [`EntityKind::Group`] represents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum GroupKind {
     /// DGN complex chain (open).
     ComplexChain,
@@ -929,6 +992,7 @@ pub enum GroupKind {
 
 /// One hatch boundary loop.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct HatchLoop {
     /// Edges in order.
     pub edges: Vec<HatchEdge>,
@@ -938,6 +1002,7 @@ pub struct HatchLoop {
 
 /// A hatch boundary edge.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[allow(missing_docs)]
 pub enum HatchEdge {
@@ -974,6 +1039,7 @@ pub enum HatchEdge {
 
 /// Color.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Color {
     /// Use the layer color.
@@ -1012,6 +1078,7 @@ impl Color {
 
 /// Line weight.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(tag = "type", content = "value", rename_all = "snake_case")]
 pub enum Lineweight {
     /// Use the layer lineweight.
@@ -1027,6 +1094,8 @@ pub enum Lineweight {
 
 /// Non-graphic data attached to an entity (DWG ATTRIB, DGN tag, item-type property).
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[non_exhaustive]
 pub struct Attribute {
     /// Tag / property name.
     pub tag: String,
@@ -1052,6 +1121,8 @@ pub struct Attribute {
 
 /// Text presentation of a displayed attribute value.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[non_exhaustive]
 pub struct AttributeDisplay {
     /// Text height, in drawing units.
     pub height: f64,
@@ -1069,7 +1140,9 @@ pub struct AttributeDisplay {
 
 /// A loosely typed value for attributes and props.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(untagged)]
+#[non_exhaustive]
 pub enum Value {
     /// No value.
     #[default]
@@ -1212,6 +1285,7 @@ impl From<Vec<Value>> for Value {
 
 /// Original bytes of a record, for lossless inspection.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct Raw {
     /// Native type code (DGN element type, DWG object type).
     pub type_code: u32,
@@ -1221,6 +1295,8 @@ pub struct Raw {
 
 /// A recoverable problem found while reading.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[non_exhaustive]
 pub struct Warning {
     /// Stable machine-readable code, e.g. `"dgn.unknown_element"`.
     pub code: String,

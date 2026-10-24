@@ -1,6 +1,6 @@
 //! Pre-parsed DGN V8 seed and pre-export document preparation.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use cadkit_core::{
     Attribute, Color, Document, Entity, EntityKind, Error, GroupKind, HAlign, HatchEdge, HatchLoop,
@@ -31,6 +31,7 @@ pub enum DimensionPolicy {
 /// Options for [`V8Seed::prepare_document`].
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct SeedPrepareOptions {
     /// Specific model index to select; `None` selects the first [`ModelKind::Model`].
     pub model_index: Option<usize>,
@@ -60,6 +61,13 @@ impl Default for SeedPrepareOptions {
 }
 
 impl SeedPrepareOptions {
+    /// Default preparation: first design model, 2D promoted to 3D, inserts exploded,
+    /// units converted and symbology normalized for DGN.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     /// Selects a specific model index to export.
     #[must_use]
     pub fn with_model_index(mut self, index: Option<usize>) -> Self {
@@ -112,6 +120,7 @@ pub struct V8Seed {
     has_raster_template: bool,
     units: Units,
     palette: [[u8; 3]; 256],
+    levels: BTreeMap<String, u32>,
     known_fonts: BTreeSet<String>,
     known_font_numbers: BTreeSet<u32>,
 }
@@ -258,6 +267,7 @@ impl V8Seed {
             &read,
         );
         let palette = tables.palette;
+        let levels = tables.levels.clone();
         let known_font_numbers: BTreeSet<u32> = tables
             .fonts
             .values()
@@ -280,6 +290,7 @@ impl V8Seed {
             has_raster_template,
             units,
             palette,
+            levels,
             known_fonts,
             known_font_numbers,
         })
@@ -309,6 +320,31 @@ impl V8Seed {
     /// Whether the seed holds a complete raster attachment template.
     pub fn has_raster_template(&self) -> bool {
         self.has_raster_template
+    }
+
+    /// The seed's 256-entry color table as RGB, index 0 first. Entries the seed does not
+    /// define keep the default DGN palette ([`crate::palette::DEFAULT_PALETTE`]).
+    pub fn palette(&self) -> &[[u8; 3]; 256] {
+        &self.palette
+    }
+
+    /// The seed's levels by name, with their level ids. Names are those the reader gives
+    /// the levels (unnamed and duplicate names are made unique), so they match
+    /// [`cadkit_core::Entity::layer`] of a document read from the same seed.
+    pub fn levels(&self) -> &BTreeMap<String, u32> {
+        &self.levels
+    }
+
+    /// Names of the fonts the seed's font table defines, in name order.
+    pub fn fonts(&self) -> impl Iterator<Item = &str> {
+        self.known_fonts.iter().map(String::as_str)
+    }
+
+    /// Last-saved time from the seed's file header, in milliseconds since the Unix epoch;
+    /// `0.0` when the header holds no positive finite time. [`super::WriteOptions`]
+    /// timestamps are independent of it.
+    pub fn timestamp_ms(&self) -> f64 {
+        self.seed_timestamp_ms
     }
 
     pub(super) fn model(&self) -> Result<&V8Model> {
@@ -562,6 +598,8 @@ fn entity_has_nonzero_z(entity: &Entity) -> bool {
             origin, children, ..
         } => origin.is_some_and(nz) || children.iter().any(entity_has_nonzero_z),
         EntityKind::Dimension { .. } | EntityKind::Unknown { .. } => false,
+        // A kind added after this function was written has no known coordinates.
+        _ => false,
     }
 }
 
@@ -736,6 +774,8 @@ fn project_entity_2d(entity: &mut Entity) {
             }
         }
         EntityKind::Dimension { .. } | EntityKind::Unknown { .. } => {}
+        // A kind added after this function was written is left as is.
+        _ => {}
     }
 }
 
@@ -1309,5 +1349,7 @@ fn normalize_entity_for_dgn(
         | EntityKind::Polygon { .. }
         | EntityKind::Mesh { .. }
         | EntityKind::Image { .. } => Some(entity),
+        // A kind added after this function was written is left to the writer to accept or skip.
+        _ => Some(entity),
     }
 }

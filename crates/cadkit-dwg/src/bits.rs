@@ -10,6 +10,7 @@
 //! the bit range `[start, end)` it was created with, so a corrupt length can never
 //! make it read into a neighbouring object.
 
+use cadkit_core::LimitKind;
 use cadkit_core::{Error, Result};
 
 /// A handle reference as stored in the stream: `|CODE (4 bits)|COUNTER (4 bits)|BYTES|`
@@ -482,7 +483,10 @@ impl<'a> BitReader<'a> {
         let len = self.bs()?;
         let len = u16::try_from(len).map_err(|_| self.invalid("negative string length"))?;
         if u32::from(len) > max_len {
-            return Err(Error::LimitExceeded(format!("string of {len} bytes")));
+            return Err(Error::limit(
+                LimitKind::StringBytes,
+                format!("string of {len} bytes"),
+            ));
         }
         self.bytes(usize::from(len))
     }
@@ -493,7 +497,10 @@ impl<'a> BitReader<'a> {
         let len = self.bs()?;
         let len = u16::try_from(len).map_err(|_| self.invalid("negative string length"))?;
         if u32::from(len).saturating_mul(2) > max_len {
-            return Err(Error::LimitExceeded(format!("string of {len} characters")));
+            return Err(Error::limit(
+                LimitKind::StringBytes,
+                format!("string of {len} characters"),
+            ));
         }
         let mut units = Vec::with_capacity(usize::from(len));
         for _ in 0..len {

@@ -9,6 +9,7 @@
 
 mod text;
 
+use cadkit_core::LimitKind;
 use cadkit_core::bytes::ByteReader;
 use cadkit_core::text::OemCodepage;
 use cadkit_core::{Error, Result};
@@ -257,11 +258,14 @@ impl<'a> Tokenizer<'a> {
 
     fn check_len(&self, len: usize) -> Result<()> {
         if len > self.max_string {
-            return Err(Error::LimitExceeded(format!(
-                "string of {len} bytes at offset {} exceeds the limit of {}",
-                self.rd.offset(),
-                self.max_string
-            )));
+            return Err(Error::limit(
+                LimitKind::StringBytes,
+                format!(
+                    "string of {len} bytes at offset {} exceeds the limit of {}",
+                    self.rd.offset(),
+                    self.max_string
+                ),
+            ));
         }
         Ok(())
     }
@@ -504,7 +508,7 @@ mod tests {
     fn string_limit() {
         let mut t = Tokenizer::new(b"1\nabcdefgh\n");
         t.set_max_string_bytes(4);
-        assert!(matches!(t.next_pair(), Err(Error::LimitExceeded(_))));
+        assert!(matches!(t.next_pair(), Err(Error::LimitExceeded { .. })));
     }
 
     #[test]

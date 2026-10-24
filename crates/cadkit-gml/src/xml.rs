@@ -1,6 +1,7 @@
 //! Bounded XML parser and serializer that forbids DTDs and external entity resolution.
 
 use crate::native::{CORE, CityGmlDocument, Element, Name, Node, XmlAttribute};
+use cadkit_core::LimitKind;
 use cadkit_core::{Error, ReadOptions, Result};
 use quick_xml::{
     NsReader, Writer,
@@ -26,7 +27,10 @@ fn namespace(result: ResolveResult<'_>, offset: u64) -> Result<String> {
 pub(crate) fn parse(bytes: &[u8], options: &ReadOptions) -> Result<CityGmlDocument> {
     let limits = &options.limits;
     if bytes.len() as u64 > limits.max_input_bytes {
-        return Err(Error::LimitExceeded("XML input bytes".into()));
+        return Err(Error::limit(
+            LimitKind::InputBytes,
+            "XML input bytes".into(),
+        ));
     }
     std::str::from_utf8(bytes).map_err(|_| Error::invalid(0, "XML must be UTF-8"))?;
     check_chars(
@@ -56,24 +60,30 @@ pub(crate) fn parse(bytes: &[u8], options: &ReadOptions) -> Result<CityGmlDocume
             n as u64 > u64::from(limits.max_string_bytes)
                 || text_bytes.saturating_add(n as u64) > limits.max_decompressed_bytes
         }) {
-            return Err(Error::LimitExceeded("XML text bytes".into()));
+            return Err(Error::limit(
+                LimitKind::DecompressedBytes,
+                "XML text bytes".into(),
+            ));
         }
         if !matches!(event, Event::End(_) | Event::Eof) {
             nodes = nodes
                 .checked_add(1)
-                .ok_or_else(|| Error::LimitExceeded("XML nodes".into()))?;
+                .ok_or_else(|| Error::limit(LimitKind::Objects, "XML nodes".into()))?;
             if nodes > limits.max_objects {
-                return Err(Error::LimitExceeded("XML nodes".into()));
+                return Err(Error::limit(LimitKind::Objects, "XML nodes".into()));
             }
         }
         let empty = matches!(event, Event::Empty(_));
         match event {
             Event::Start(e) | Event::Empty(e) => {
                 if stack.len() as u64 >= u64::from(limits.max_depth.min(256)) {
-                    return Err(Error::LimitExceeded("XML depth".into()));
+                    return Err(Error::limit(LimitKind::Depth, "XML depth".into()));
                 }
                 if e.name().as_ref().len() as u64 > u64::from(limits.max_string_bytes) {
-                    return Err(Error::LimitExceeded("XML name bytes".into()));
+                    return Err(Error::limit(
+                        LimitKind::StringBytes,
+                        "XML name bytes".into(),
+                    ));
                 }
                 let ns = namespace(reader.resolver().resolve_element(e.name()).0, offset)?;
                 text_bytes =
@@ -82,13 +92,19 @@ pub(crate) fn parse(bytes: &[u8], options: &ReadOptions) -> Result<CityGmlDocume
                 element.offset = offset;
                 for attr in e.attributes() {
                     if element.attributes.len() >= 256 {
-                        return Err(Error::LimitExceeded("XML attributes per element".into()));
+                        return Err(Error::limit(
+                            LimitKind::Objects,
+                            "XML attributes per element".into(),
+                        ));
                     }
                     let attr = attr.map_err(|e| Error::invalid(offset, e.to_string()))?;
                     if attr.value.len() as u64 > u64::from(limits.max_string_bytes)
                         || attr.key.as_ref().len() as u64 > u64::from(limits.max_string_bytes)
                     {
-                        return Err(Error::LimitExceeded("XML attribute bytes".into()));
+                        return Err(Error::limit(
+                            LimitKind::StringBytes,
+                            "XML attribute bytes".into(),
+                        ));
                     }
                     let qualified = string(attr.key.as_ref(), offset)?;
                     let ns = if qualified == "xmlns" || qualified.starts_with("xmlns:") {
@@ -180,7 +196,10 @@ pub(crate) fn parse(bytes: &[u8], options: &ReadOptions) -> Result<CityGmlDocume
                     .map_err(|e| Error::invalid(offset, e.to_string()))?
                     .into_owned();
                 if value.len() as u64 > u64::from(limits.max_string_bytes) {
-                    return Err(Error::LimitExceeded("XML comment bytes".into()));
+                    return Err(Error::limit(
+                        LimitKind::StringBytes,
+                        "XML comment bytes".into(),
+                    ));
                 }
                 text_bytes = text_bytes.saturating_add(value.len() as u64);
                 if let Some(parent) = stack.last_mut() {
@@ -215,7 +234,10 @@ pub(crate) fn parse(bytes: &[u8], options: &ReadOptions) -> Result<CityGmlDocume
             Event::Eof => break,
         }
         if text_bytes > limits.max_decompressed_bytes {
-            return Err(Error::LimitExceeded("XML decoded bytes".into()));
+            return Err(Error::limit(
+                LimitKind::DecompressedBytes,
+                "XML decoded bytes".into(),
+            ));
         }
     }
     if !stack.is_empty() {
@@ -250,13 +272,19 @@ fn push_text(
 ) -> Result<()> {
     check_chars(&value, offset)?;
     if value.len() as u64 > u64::from(max) {
-        return Err(Error::LimitExceeded("XML text bytes".into()));
+        return Err(Error::limit(
+            LimitKind::StringBytes,
+            "XML text bytes".into(),
+        ));
     }
     *total = total.saturating_add(value.len() as u64);
     if let Some(parent) = stack.last_mut() {
         if let Some(Node::Text(previous)) = parent.children.last_mut() {
             if previous.len().saturating_add(value.len()) as u64 > u64::from(max) {
-                return Err(Error::LimitExceeded("XML text bytes".into()));
+                return Err(Error::limit(
+                    LimitKind::StringBytes,
+                    "XML text bytes".into(),
+                ));
             }
             previous.push_str(&value);
         } else {
@@ -297,7 +325,7 @@ impl std::io::Write for Output {
 fn write_xml(writer: &mut Writer<Output>, event: Event<'_>) -> Result<()> {
     writer.write_event(event).map_err(|e| {
         if writer.get_ref().exceeded {
-            Error::LimitExceeded("XML output byte limit".into())
+            Error::limit(LimitKind::Output, "XML output byte limit".into())
         } else {
             Error::Io(e)
         }

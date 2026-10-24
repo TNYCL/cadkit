@@ -341,14 +341,7 @@ fn test_dgnv8_structure() {
     assert_eq!(named, 25);
     assert!(native.warnings.is_empty(), "{:?}", native.warnings);
 
-    let doc = cadkit_dgn::read(
-        &bytes,
-        &ReadOptions {
-            keep_raw: true,
-            ..ReadOptions::default()
-        },
-    )
-    .unwrap();
+    let doc = cadkit_dgn::read(&bytes, &ReadOptions::default().with_keep_raw(true)).unwrap();
     // Levels from the level table plus referenced level ids.
     let default = doc.layers.iter().find(|l| l.name == "Default").unwrap();
     assert_eq!(default.id, Some(64));

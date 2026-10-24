@@ -4,6 +4,7 @@
 //! with the arbitrary-axis algorithm; `normal` fields keep the extrusion direction, and
 //! angles stay relative to the OCS X axis derived from it.
 
+use cadkit_core::LimitKind;
 use std::collections::BTreeMap;
 
 use cadkit_core::text::{OemCodepage, plain_text, plain_text_in};
@@ -74,11 +75,11 @@ impl<'o> Ctx<'o> {
     }
 
     pub fn warn(&mut self, code: &str, message: String, offset: Option<u64>, object: Option<u64>) {
-        self.warnings.push(Warning {
-            code: code.to_owned(),
-            message,
-            offset,
-            object,
+        self.warnings.push({
+            let mut warning = Warning::new(code.to_owned(), message);
+            warning.offset = offset;
+            warning.object = object;
+            warning
         });
     }
 
@@ -88,10 +89,10 @@ impl<'o> Ctx<'o> {
 
     fn check_count(&self, n: usize, what: &str) -> Result<()> {
         if n > self.max_vertices() as usize {
-            return Err(Error::LimitExceeded(format!(
-                "{what} count exceeds {}",
-                self.max_vertices()
-            )));
+            return Err(Error::limit(
+                LimitKind::Vertices,
+                format!("{what} count exceeds {}", self.max_vertices()),
+            ));
         }
         Ok(())
     }
@@ -405,23 +406,24 @@ fn attribute(rec: &Record, parent_layer: Option<&str>) -> Attribute {
     let style = g
         .string(7)
         .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("standard"));
-    let display = (height > 0.0).then_some(AttributeDisplay {
-        height,
-        width: height * width_factor,
-        style,
-        halign: h,
-        valign: v,
-        rotation,
+    let display = (height > 0.0).then_some({
+        let mut display = AttributeDisplay::new(height, height * width_factor)
+            .with_halign(h)
+            .with_valign(v)
+            .with_rotation(rotation);
+        display.style = style;
+        display
     });
-    Attribute {
-        tag: g.string(2).unwrap_or_default(),
-        value: MValue::Text(embedded_or(rec, &g, 1)),
-        set: None,
-        position: Some(position),
-        invisible: flags & 1 != 0,
-        layer,
-        display,
-        ..Default::default()
+    {
+        let mut attribute = Attribute::new(
+            g.string(2).unwrap_or_default(),
+            MValue::Text(embedded_or(rec, &g, 1)),
+        )
+        .with_position(position)
+        .with_invisible(flags & 1 != 0);
+        attribute.layer = layer;
+        attribute.display = display;
+        attribute
     }
 }
 

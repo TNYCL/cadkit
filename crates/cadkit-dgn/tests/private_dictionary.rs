@@ -116,10 +116,7 @@ fn private_plan_seeds_keep_their_dictionary_pages() {
         line.layer = doc.layers.first().map(|l| l.name.clone());
         doc.models[0].entities = vec![line];
         // Clear the seed model while preserving dictionary records.
-        let options = cadkit_dgn::WriteOptions {
-            clear_seed_model: true,
-            ..Default::default()
-        };
+        let options = cadkit_dgn::WriteOptions::default().with_clear_seed_model(true);
         let output = cadkit_dgn::write_v8(&doc, &bytes, &options).unwrap();
         let after = v8::read(&output, &read).unwrap();
         seeds += 1;

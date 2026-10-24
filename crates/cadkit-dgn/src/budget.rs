@@ -1,5 +1,6 @@
 //! Resource accounting against [`Limits`] for one read.
 
+use cadkit_core::LimitKind;
 use cadkit_core::{Error, Limits, Result};
 
 /// Running totals of decompressed bytes and decoded objects for one document.
@@ -40,10 +41,13 @@ impl Budget {
     pub(crate) fn charge_bytes(&mut self, n: usize) -> Result<()> {
         self.decompressed = self.decompressed.saturating_add(n as u64);
         if self.decompressed > self.limits.max_decompressed_bytes {
-            return Err(Error::LimitExceeded(format!(
-                "decompressed data exceeds {} bytes",
-                self.limits.max_decompressed_bytes
-            )));
+            return Err(Error::limit(
+                LimitKind::DecompressedBytes,
+                format!(
+                    "decompressed data exceeds {} bytes",
+                    self.limits.max_decompressed_bytes
+                ),
+            ));
         }
         Ok(())
     }
@@ -52,10 +56,10 @@ impl Budget {
     pub(crate) fn charge_objects(&mut self, n: u64) -> Result<()> {
         self.objects = self.objects.saturating_add(n);
         if self.objects > self.limits.max_objects {
-            return Err(Error::LimitExceeded(format!(
-                "more than {} objects",
-                self.limits.max_objects
-            )));
+            return Err(Error::limit(
+                LimitKind::Objects,
+                format!("more than {} objects", self.limits.max_objects),
+            ));
         }
         Ok(())
     }
@@ -67,11 +71,9 @@ mod tests {
 
     #[test]
     fn limits_are_enforced() {
-        let limits = Limits {
-            max_decompressed_bytes: 10,
-            max_objects: 2,
-            ..Limits::default()
-        };
+        let limits = Limits::default()
+            .with_max_decompressed_bytes(10)
+            .with_max_objects(2);
         let mut b = Budget::new(limits);
         assert!(b.charge_bytes(10).is_ok());
         assert_eq!(b.remaining_bytes(), 0);

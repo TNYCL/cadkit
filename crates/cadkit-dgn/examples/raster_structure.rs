@@ -28,10 +28,7 @@ fn scan(
         {
             continue;
         }
-        let options = ReadOptions {
-            fallback_codepage: Some("windows-1254".into()),
-            ..Default::default()
-        };
+        let options = ReadOptions::default().with_fallback_codepage("windows-1254");
         if path.metadata()?.len() > options.limits.max_input_bytes {
             continue;
         }
@@ -126,10 +123,10 @@ fn verify(
     counts: &mut BTreeMap<String, u64>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let doc = cadkit_dgn::read(raw, read)?;
-    let options = cadkit_dgn::WriteOptions {
-        codepage: read.fallback_codepage.clone(),
-        clear_seed_model: true,
-        ..Default::default()
+    let options = {
+        let mut options = cadkit_dgn::WriteOptions::default().with_clear_seed_model(true);
+        options.codepage = read.fallback_codepage.clone();
+        options
     };
     let output = match cadkit_dgn::write_v8(&doc, raw, &options) {
         Ok(bytes) => bytes,

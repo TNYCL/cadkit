@@ -286,23 +286,20 @@ fn room_with_name(display: bool) -> Entity {
     props.insert("dgn.properties".into(), Value::Int(0x0e00));
     props.insert("dgn.type_flags".into(), Value::Int(0x00c0));
     props.insert("dgn.graphic_group".into(), Value::Int(7));
-    room.attributes.push(Attribute {
-        tag: "Oda Adı".into(),
-        value: Value::Text("DÜKKAN".into()),
-        set: Some("Oda Bilgisi".into()),
-        position: Some(Point3::new(4.0, -6.5, 3.0)),
-        invisible: !display,
-        layer: Some("OdaAdi".into()),
-        display: Some(AttributeDisplay {
-            height: 0.25,
-            width: 0.25,
-            style: Some("Arial".into()),
-            halign: HAlign::Center,
-            valign: VAlign::Middle,
-            rotation: 0.0,
-        }),
-        props,
-    });
+    room.attributes.push(
+        Attribute::new("Oda Adı", Value::Text("DÜKKAN".into()))
+            .with_set("Oda Bilgisi")
+            .with_position(Point3::new(4.0, -6.5, 3.0))
+            .with_invisible(!display)
+            .with_layer("OdaAdi")
+            .with_display(
+                AttributeDisplay::new(0.25, 0.25)
+                    .with_style("Arial")
+                    .with_halign(HAlign::Center)
+                    .with_valign(VAlign::Middle),
+            )
+            .with_props(props),
+    );
     room
 }
 

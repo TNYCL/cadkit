@@ -1,5 +1,6 @@
 //! HATCH decoder (§20.4.75), cross-checked with ACadSharp's `readHatch` (MIT).
 
+use cadkit_core::LimitKind;
 use cadkit_core::{Error, Result};
 
 use super::{Streams, checked_count, read_handles, spline_degree};
@@ -22,7 +23,10 @@ struct ItemBudget {
 impl ItemBudget {
     fn take(&mut self, n: usize) -> Result<()> {
         self.left = self.left.checked_sub(n as u64).ok_or_else(|| {
-            Error::LimitExceeded("hatch boundary items above the vertex limit".into())
+            Error::limit(
+                LimitKind::Vertices,
+                "hatch boundary items above the vertex limit".into(),
+            )
         })?;
         Ok(())
     }
@@ -276,7 +280,7 @@ mod tests {
         suffix(&mut w);
         let data = w.bytes();
         let err = hatch(&mut streams(&data, ctx(DwgVersion::R2000, 5))).unwrap_err();
-        assert!(matches!(err, Error::LimitExceeded(_)), "{err}");
+        assert!(matches!(err, Error::LimitExceeded { .. }), "{err}");
         // Within the limit the same hatch decodes.
         let ObjectData::Hatch(h) = hatch(&mut streams(&data, ctx(DwgVersion::R2000, 9))).unwrap()
         else {

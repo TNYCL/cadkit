@@ -1,0 +1,2146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Document",
+  "description": "A complete drawing.",
+  "type": "object",
+  "properties": {
+    "blocks": {
+      "description": "Block definitions (DWG/DXF blocks, DGN shared cell definitions).",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Block"
+      }
+    },
+    "layers": {
+      "description": "Layers (DWG/DXF layers, DGN levels).",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Layer"
+      }
+    },
+    "linetypes": {
+      "description": "Linetype definitions.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Linetype"
+      }
+    },
+    "models": {
+      "description": "Model spaces, layouts and sheets that hold the drawn entities.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Model"
+      }
+    },
+    "props": {
+      "description": "Document-level extras (header variables, file properties).",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/Value"
+      }
+    },
+    "schema_version": {
+      "description": "Version of this JSON layout; see [`SchemaVersion`].",
+      "$ref": "#/$defs/SchemaVersion",
+      "default": 1
+    },
+    "source": {
+      "description": "Where the data came from.",
+      "$ref": "#/$defs/SourceInfo"
+    },
+    "text_styles": {
+      "description": "Text style definitions.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/TextStyle"
+      }
+    },
+    "units": {
+      "description": "Unit of all coordinates in this document.",
+      "$ref": "#/$defs/Units"
+    },
+    "warnings": {
+      "description": "Recoverable problems met while reading. A non-empty list does not mean failure.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Warning"
+      }
+    }
+  },
+  "required": [
+    "source",
+    "units",
+    "layers",
+    "linetypes",
+    "text_styles",
+    "blocks",
+    "models",
+    "props",
+    "warnings"
+  ],
+  "$defs": {
+    "Attachment": {
+      "description": "Multi-line text attachment point.",
+      "type": "string",
+      "enum": [
+        "top_left",
+        "top_center",
+        "top_right",
+        "middle_left",
+        "middle_center",
+        "middle_right",
+        "bottom_left",
+        "bottom_center",
+        "bottom_right"
+      ]
+    },
+    "Attribute": {
+      "description": "Non-graphic data attached to an entity (DWG ATTRIB, DGN tag, item-type property).",
+      "type": "object",
+      "properties": {
+        "display": {
+          "description": "How the value text is drawn at `position`; `None` when unknown or not drawn.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AttributeDisplay"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "invisible": {
+          "description": "The attribute is not displayed.",
+          "type": "boolean"
+        },
+        "layer": {
+          "description": "Layer of the attribute's own record when the format stores one (a DGN tag\nelement has its own level). `None` uses the owning entity's layer.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "position": {
+          "description": "Where the attribute text is displayed, if it is displayed.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Point3"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "props": {
+          "description": "Format-specific data with no neutral field (e.g. `dgn.color_index`, `dgn.weight`).",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Value"
+          }
+        },
+        "set": {
+          "description": "Owning tag set / item type / definition name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tag": {
+          "description": "Tag / property name.",
+          "type": "string"
+        },
+        "value": {
+          "description": "Value.",
+          "$ref": "#/$defs/Value"
+        }
+      },
+      "required": [
+        "tag",
+        "value",
+        "invisible"
+      ]
+    },
+    "AttributeDisplay": {
+      "description": "Text presentation of a displayed attribute value.",
+      "type": "object",
+      "properties": {
+        "halign": {
+          "description": "Horizontal alignment of the text about `Attribute::position`.",
+          "$ref": "#/$defs/HAlign"
+        },
+        "height": {
+          "description": "Text height, in drawing units.",
+          "type": "number",
+          "format": "double"
+        },
+        "rotation": {
+          "description": "Rotation about the drawing Z axis, in radians.",
+          "type": "number",
+          "format": "double"
+        },
+        "style": {
+          "description": "Text style (DGN font) name; `None` leaves the choice to the writer's default.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "valign": {
+          "description": "Vertical alignment of the text about `Attribute::position`.",
+          "$ref": "#/$defs/VAlign"
+        },
+        "width": {
+          "description": "Character width, in drawing units (DGN stores it separately from the height).",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "height",
+        "width",
+        "halign",
+        "valign",
+        "rotation"
+      ]
+    },
+    "Block": {
+      "description": "A block definition (DGN: shared cell definition).",
+      "type": "object",
+      "properties": {
+        "base_point": {
+          "description": "Insertion base point.",
+          "$ref": "#/$defs/Point3"
+        },
+        "description": {
+          "description": "Description text.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "entities": {
+          "description": "Entities in block coordinates.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Entity"
+          }
+        },
+        "id": {
+          "description": "Native identifier.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "is_xref": {
+          "description": "Block is an external reference.",
+          "type": "boolean"
+        },
+        "name": {
+          "description": "Unique name.",
+          "type": "string"
+        },
+        "props": {
+          "description": "Format-specific extras.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Value"
+          }
+        },
+        "xref_path": {
+          "description": "Path of the external reference.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "base_point",
+        "entities",
+        "is_xref",
+        "props"
+      ]
+    },
+    "Color": {
+      "description": "Color.",
+      "oneOf": [
+        {
+          "description": "Use the layer color.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "by_layer"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "Use the color of the inserting block reference.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "by_block"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "AutoCAD Color Index 1..=255. DGN palette indices are resolved to [`Color::Rgb`]\nby the DGN reader; the original index goes to `props[\"dgn.color_index\"]`.",
+          "type": "object",
+          "properties": {
+            "index": {
+              "description": "Index.",
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "aci"
+            }
+          },
+          "required": [
+            "type",
+            "index"
+          ]
+        },
+        {
+          "description": "True color.",
+          "type": "object",
+          "properties": {
+            "b": {
+              "description": "Blue.",
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "g": {
+              "description": "Green.",
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "r": {
+              "description": "Red.",
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "rgb"
+            }
+          },
+          "required": [
+            "type",
+            "r",
+            "g",
+            "b"
+          ]
+        }
+      ]
+    },
+    "DimensionType": {
+      "description": "Dimension kind.",
+      "type": "string",
+      "enum": [
+        "linear",
+        "aligned",
+        "angular",
+        "angular3_point",
+        "diameter",
+        "radius",
+        "ordinate",
+        "arc_length",
+        "other"
+      ]
+    },
+    "Entity": {
+      "description": "One drawn object.",
+      "type": "object",
+      "properties": {
+        "attributes": {
+          "description": "Attached non-graphic data: DWG attributes, DGN tags, item-type properties.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Attribute"
+          }
+        },
+        "color": {
+          "description": "Color.",
+          "$ref": "#/$defs/Color"
+        },
+        "id": {
+          "description": "Native identifier (DWG handle, DGN element id).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "kind": {
+          "description": "Geometry and type-specific data.",
+          "$ref": "#/$defs/EntityKind"
+        },
+        "layer": {
+          "description": "Layer name; `None` means the default layer.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "linetype": {
+          "description": "Linetype name; `None` means by layer.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lineweight": {
+          "description": "Lineweight.",
+          "$ref": "#/$defs/Lineweight"
+        },
+        "props": {
+          "description": "Format-specific extras.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Value"
+          }
+        },
+        "raw": {
+          "description": "Original record bytes, kept only when [`crate::ReadOptions::keep_raw`] is set.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Raw"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "visible": {
+          "description": "Entity is displayed.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "color",
+        "lineweight",
+        "visible",
+        "kind",
+        "attributes",
+        "props"
+      ]
+    },
+    "EntityKind": {
+      "description": "Geometry and type-specific data of an [`Entity`].",
+      "oneOf": [
+        {
+          "description": "A point.",
+          "type": "object",
+          "properties": {
+            "position": {
+              "description": "Location.",
+              "$ref": "#/$defs/Point3"
+            },
+            "type": {
+              "type": "string",
+              "const": "point"
+            }
+          },
+          "required": [
+            "type",
+            "position"
+          ]
+        },
+        {
+          "description": "A straight segment.",
+          "type": "object",
+          "properties": {
+            "end": {
+              "description": "End point.",
+              "$ref": "#/$defs/Point3"
+            },
+            "start": {
+              "description": "Start point.",
+              "$ref": "#/$defs/Point3"
+            },
+            "type": {
+              "type": "string",
+              "const": "line"
+            }
+          },
+          "required": [
+            "type",
+            "start",
+            "end"
+          ]
+        },
+        {
+          "description": "Connected segments, optionally with arc segments (bulge) and widths.\nCovers DWG LWPOLYLINE/POLYLINE and DGN line string / shape.",
+          "type": "object",
+          "properties": {
+            "closed": {
+              "description": "Last vertex connects back to the first.",
+              "type": "boolean"
+            },
+            "normal": {
+              "description": "Plane normal; bulge arcs turn counter-clockwise about it. `+Z` for plain 2D data\nand for non-planar 3D polylines (which have no bulges).",
+              "$ref": "#/$defs/Vec3"
+            },
+            "type": {
+              "type": "string",
+              "const": "polyline"
+            },
+            "vertices": {
+              "description": "Vertices in order.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Vertex"
+              }
+            }
+          },
+          "required": [
+            "type",
+            "vertices",
+            "closed",
+            "normal"
+          ]
+        },
+        {
+          "description": "A full circle.",
+          "type": "object",
+          "properties": {
+            "center": {
+              "description": "Center.",
+              "$ref": "#/$defs/Point3"
+            },
+            "normal": {
+              "description": "Plane normal.",
+              "$ref": "#/$defs/Vec3"
+            },
+            "radius": {
+              "description": "Radius.",
+              "type": "number",
+              "format": "double"
+            },
+            "type": {
+              "type": "string",
+              "const": "circle"
+            }
+          },
+          "required": [
+            "type",
+            "center",
+            "radius",
+            "normal"
+          ]
+        },
+        {
+          "description": "A circular arc from `start_angle` counter-clockwise to `end_angle`.",
+          "type": "object",
+          "properties": {
+            "center": {
+              "description": "Center.",
+              "$ref": "#/$defs/Point3"
+            },
+            "end_angle": {
+              "description": "End angle in radians.",
+              "type": "number",
+              "format": "double"
+            },
+            "normal": {
+              "description": "Plane normal.",
+              "$ref": "#/$defs/Vec3"
+            },
+            "radius": {
+              "description": "Radius.",
+              "type": "number",
+              "format": "double"
+            },
+            "start_angle": {
+              "description": "Start angle in radians.",
+              "type": "number",
+              "format": "double"
+            },
+            "type": {
+              "type": "string",
+              "const": "arc"
+            }
+          },
+          "required": [
+            "type",
+            "center",
+            "radius",
+            "start_angle",
+            "end_angle",
+            "normal"
+          ]
+        },
+        {
+          "description": "An ellipse or elliptical arc.",
+          "type": "object",
+          "properties": {
+            "center": {
+              "description": "Center.",
+              "$ref": "#/$defs/Point3"
+            },
+            "end_param": {
+              "description": "End parameter in radians (2π for a full ellipse).",
+              "type": "number",
+              "format": "double"
+            },
+            "major_axis": {
+              "description": "Vector from the center to the end of the major axis (its length is the semi-major axis).",
+              "$ref": "#/$defs/Vec3"
+            },
+            "normal": {
+              "description": "Plane normal.",
+              "$ref": "#/$defs/Vec3"
+            },
+            "ratio": {
+              "description": "Minor / major axis ratio, in (0, 1].",
+              "type": "number",
+              "format": "double"
+            },
+            "start_param": {
+              "description": "Start parameter in radians (0 for a full ellipse).",
+              "type": "number",
+              "format": "double"
+            },
+            "type": {
+              "type": "string",
+              "const": "ellipse"
+            }
+          },
+          "required": [
+            "type",
+            "center",
+            "major_axis",
+            "ratio",
+            "start_param",
+            "end_param",
+            "normal"
+          ]
+        },
+        {
+          "description": "A B-spline / NURBS curve.",
+          "type": "object",
+          "properties": {
+            "closed": {
+              "description": "Curve is closed / periodic.",
+              "type": "boolean"
+            },
+            "control_points": {
+              "description": "Control points.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Point3"
+              }
+            },
+            "degree": {
+              "description": "Degree.",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "fit_points": {
+              "description": "Fit points, if stored.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Point3"
+              }
+            },
+            "knots": {
+              "description": "Knot vector (may be empty when only fit points are known).",
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "double"
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "spline"
+            },
+            "weights": {
+              "description": "Weights; empty for non-rational curves.",
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "double"
+              }
+            }
+          },
+          "required": [
+            "type",
+            "degree",
+            "knots",
+            "control_points",
+            "weights",
+            "fit_points",
+            "closed"
+          ]
+        },
+        {
+          "description": "Single-line text.",
+          "type": "object",
+          "properties": {
+            "end_point": {
+              "description": "Baseline end for `Aligned`/`Fit` text; `None` for every other alignment.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Point3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "halign": {
+              "description": "Horizontal alignment.",
+              "$ref": "#/$defs/HAlign"
+            },
+            "height": {
+              "description": "Character height.",
+              "type": "number",
+              "format": "double"
+            },
+            "normal": {
+              "description": "Plane normal.",
+              "$ref": "#/$defs/Vec3"
+            },
+            "oblique": {
+              "description": "Oblique angle in radians.",
+              "type": "number",
+              "format": "double"
+            },
+            "position": {
+              "description": "Anchor point implied by `halign`/`valign`: the baseline start for left/baseline\ntext, otherwise the justification point (DXF/DWG second alignment point, group 11).\nFor `Aligned`/`Fit` text: the baseline start.",
+              "$ref": "#/$defs/Point3"
+            },
+            "rotation": {
+              "description": "Rotation in radians.",
+              "type": "number",
+              "format": "double"
+            },
+            "style": {
+              "description": "Text style name.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "text"
+            },
+            "valign": {
+              "description": "Vertical alignment.",
+              "$ref": "#/$defs/VAlign"
+            },
+            "value": {
+              "description": "Decoded text.",
+              "type": "string"
+            },
+            "width_factor": {
+              "description": "Width factor (1.0 = normal).",
+              "type": "number",
+              "format": "double"
+            }
+          },
+          "required": [
+            "type",
+            "position",
+            "height",
+            "rotation",
+            "width_factor",
+            "oblique",
+            "value",
+            "halign",
+            "valign",
+            "normal"
+          ]
+        },
+        {
+          "description": "Multi-line, formatted text. DGN text nodes map to this when they only hold text.",
+          "type": "object",
+          "properties": {
+            "attachment": {
+              "description": "Attachment point.",
+              "$ref": "#/$defs/Attachment"
+            },
+            "height": {
+              "description": "Character height.",
+              "type": "number",
+              "format": "double"
+            },
+            "line_spacing": {
+              "description": "Line spacing factor.",
+              "type": "number",
+              "format": "double"
+            },
+            "normal": {
+              "description": "Plane normal.",
+              "$ref": "#/$defs/Vec3"
+            },
+            "plain": {
+              "description": "Text with format codes removed, lines separated by `\\n`.",
+              "type": "string"
+            },
+            "position": {
+              "description": "Insertion point.",
+              "$ref": "#/$defs/Point3"
+            },
+            "rotation": {
+              "description": "Rotation in radians.",
+              "type": "number",
+              "format": "double"
+            },
+            "style": {
+              "description": "Text style name.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "m_text"
+            },
+            "value": {
+              "description": "Text including format codes as stored.",
+              "type": "string"
+            },
+            "width": {
+              "description": "Reference rectangle width, 0 when unconstrained.",
+              "type": "number",
+              "format": "double"
+            }
+          },
+          "required": [
+            "type",
+            "position",
+            "height",
+            "width",
+            "rotation",
+            "value",
+            "plain",
+            "attachment",
+            "line_spacing",
+            "normal"
+          ]
+        },
+        {
+          "description": "A placed block (DWG INSERT, DGN shared cell instance).\nAttribute values live in [`Entity::attributes`].",
+          "type": "object",
+          "properties": {
+            "block": {
+              "description": "Block name.",
+              "type": "string"
+            },
+            "column_spacing": {
+              "description": "Column spacing.",
+              "type": "number",
+              "format": "double"
+            },
+            "columns": {
+              "description": "Array columns (1 = no array).",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "normal": {
+              "description": "Plane normal.",
+              "$ref": "#/$defs/Vec3"
+            },
+            "position": {
+              "description": "Insertion point.",
+              "$ref": "#/$defs/Point3"
+            },
+            "rotation": {
+              "description": "Rotation in radians.",
+              "type": "number",
+              "format": "double"
+            },
+            "row_spacing": {
+              "description": "Row spacing.",
+              "type": "number",
+              "format": "double"
+            },
+            "rows": {
+              "description": "Array rows (1 = no array).",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "scale": {
+              "description": "Scale factors.",
+              "$ref": "#/$defs/Vec3"
+            },
+            "type": {
+              "type": "string",
+              "const": "insert"
+            }
+          },
+          "required": [
+            "type",
+            "block",
+            "position",
+            "scale",
+            "rotation",
+            "normal",
+            "columns",
+            "rows",
+            "column_spacing",
+            "row_spacing"
+          ]
+        },
+        {
+          "description": "A filled or patterned area.",
+          "type": "object",
+          "properties": {
+            "loops": {
+              "description": "Boundary loops; the first is usually the outer one.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/HatchLoop"
+              }
+            },
+            "normal": {
+              "description": "Plane normal.",
+              "$ref": "#/$defs/Vec3"
+            },
+            "pattern": {
+              "description": "Pattern name, if patterned.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "pattern_angle": {
+              "description": "Pattern angle in radians.",
+              "type": "number",
+              "format": "double"
+            },
+            "pattern_scale": {
+              "description": "Pattern scale.",
+              "type": "number",
+              "format": "double"
+            },
+            "solid": {
+              "description": "Solid fill.",
+              "type": "boolean"
+            },
+            "type": {
+              "type": "string",
+              "const": "hatch"
+            }
+          },
+          "required": [
+            "type",
+            "loops",
+            "solid",
+            "pattern_scale",
+            "pattern_angle",
+            "normal"
+          ]
+        },
+        {
+          "description": "A dimension annotation.",
+          "type": "object",
+          "properties": {
+            "block": {
+              "description": "Anonymous block holding the rendered dimension, if any.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "dimension_type": {
+              "description": "Kind of dimension.",
+              "$ref": "#/$defs/DimensionType"
+            },
+            "measurement": {
+              "description": "Measured value in drawing units (or radians for angular).",
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "points": {
+              "description": "Definition points in format order (see `props` for their roles).",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Point3"
+              }
+            },
+            "style": {
+              "description": "Dimension style name.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "text": {
+              "description": "Text override.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "text_position": {
+              "description": "Text middle point.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Point3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "dimension"
+            }
+          },
+          "required": [
+            "type",
+            "dimension_type",
+            "points"
+          ]
+        },
+        {
+          "description": "A planar 3- or 4-sided face (DWG SOLID/TRACE/3DFACE).",
+          "type": "object",
+          "properties": {
+            "filled": {
+              "description": "The face is filled (SOLID/TRACE) rather than a wire face.",
+              "type": "boolean"
+            },
+            "points": {
+              "description": "Corner points (3 or 4).",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Point3"
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "face"
+            }
+          },
+          "required": [
+            "type",
+            "points",
+            "filled"
+          ]
+        },
+        {
+          "description": "A planar surface with optional holes, in world coordinates (WCS) and drawing units.\nEach ring is explicitly closed by repeating its first point as its last point.",
+          "type": "object",
+          "properties": {
+            "exterior": {
+              "description": "Closed outer boundary ring containing at least four positions.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Point3"
+              }
+            },
+            "interiors": {
+              "description": "Closed hole rings inside the exterior boundary.",
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/Point3"
+                }
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "polygon"
+            }
+          },
+          "required": [
+            "type",
+            "exterior",
+            "interiors"
+          ]
+        },
+        {
+          "description": "A leader line.",
+          "type": "object",
+          "properties": {
+            "arrowhead": {
+              "description": "Draws an arrowhead at the first vertex.",
+              "type": "boolean"
+            },
+            "type": {
+              "type": "string",
+              "const": "leader"
+            },
+            "vertices": {
+              "description": "Vertices from arrow tip to the end.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Point3"
+              }
+            }
+          },
+          "required": [
+            "type",
+            "vertices",
+            "arrowhead"
+          ]
+        },
+        {
+          "description": "A raster image reference (DWG IMAGE, DGN raster attachment).",
+          "type": "object",
+          "properties": {
+            "path": {
+              "description": "Image file path as stored.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "position": {
+              "description": "Lower-left corner.",
+              "$ref": "#/$defs/Point3"
+            },
+            "size_px": {
+              "description": "Pixel size, when known.",
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "integer",
+                "format": "uint32",
+                "minimum": 0
+              },
+              "maxItems": 2,
+              "minItems": 2
+            },
+            "type": {
+              "type": "string",
+              "const": "image"
+            },
+            "u_vector": {
+              "description": "Vector along the image bottom edge, covering the full width.",
+              "$ref": "#/$defs/Vec3"
+            },
+            "v_vector": {
+              "description": "Vector along the image left edge, covering the full height.",
+              "$ref": "#/$defs/Vec3"
+            }
+          },
+          "required": [
+            "type",
+            "position",
+            "u_vector",
+            "v_vector"
+          ]
+        },
+        {
+          "description": "A paper-space viewport.",
+          "type": "object",
+          "properties": {
+            "center": {
+              "description": "Center on the sheet.",
+              "$ref": "#/$defs/Point3"
+            },
+            "height": {
+              "description": "Height on the sheet.",
+              "type": "number",
+              "format": "double"
+            },
+            "type": {
+              "type": "string",
+              "const": "viewport"
+            },
+            "view_center": {
+              "description": "Model-space point shown at the center.",
+              "$ref": "#/$defs/Point3"
+            },
+            "view_height": {
+              "description": "Model-space height shown.",
+              "type": "number",
+              "format": "double"
+            },
+            "width": {
+              "description": "Width on the sheet.",
+              "type": "number",
+              "format": "double"
+            }
+          },
+          "required": [
+            "type",
+            "center",
+            "width",
+            "height",
+            "view_center",
+            "view_height"
+          ]
+        },
+        {
+          "description": "A polygon mesh or polyface.",
+          "type": "object",
+          "properties": {
+            "faces": {
+              "description": "Faces as vertex indices (0-based).",
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                }
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "mesh"
+            },
+            "vertices": {
+              "description": "Vertex positions.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Point3"
+              }
+            }
+          },
+          "required": [
+            "type",
+            "vertices",
+            "faces"
+          ]
+        },
+        {
+          "description": "Entities that belong together: DGN complex chains/shapes, cells, text nodes, groups.\nChildren are in the same coordinate space as the group.",
+          "type": "object",
+          "properties": {
+            "children": {
+              "description": "Member entities.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Entity"
+              }
+            },
+            "group_kind": {
+              "description": "What kind of grouping this is.",
+              "$ref": "#/$defs/GroupKind"
+            },
+            "name": {
+              "description": "Name (cell name, group name).",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "origin": {
+              "description": "Origin (cell origin, text node origin).",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Point3"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "group"
+            }
+          },
+          "required": [
+            "type",
+            "group_kind",
+            "children"
+          ]
+        },
+        {
+          "description": "A record the reader recognized but does not model; see `props` / `raw`.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "unknown"
+            },
+            "type_name": {
+              "description": "Native type name or code, e.g. `\"dgn.type_94\"` or `\"dwg.ACAD_TABLE\"`.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "type_name"
+          ]
+        }
+      ]
+    },
+    "Format": {
+      "description": "File format family.",
+      "oneOf": [
+        {
+          "description": "Not known (e.g. a document built in memory).",
+          "type": "string",
+          "const": "unknown"
+        },
+        {
+          "description": "AutoCAD DWG.",
+          "type": "string",
+          "const": "dwg"
+        },
+        {
+          "description": "AutoCAD DXF (ASCII or binary).",
+          "type": "string",
+          "const": "dxf"
+        },
+        {
+          "description": "MicroStation DGN V7 (ISFF).",
+          "type": "string",
+          "const": "dgn_v7"
+        },
+        {
+          "description": "MicroStation DGN V8 (OLE compound file).",
+          "type": "string",
+          "const": "dgn_v8"
+        },
+        {
+          "description": "CityGML 2.0 (XML application schema based on GML 3.1.1).",
+          "type": "string",
+          "const": "city_gml"
+        }
+      ]
+    },
+    "GroupKind": {
+      "description": "What a [`EntityKind::Group`] represents.",
+      "oneOf": [
+        {
+          "description": "DGN complex chain (open).",
+          "type": "string",
+          "const": "complex_chain"
+        },
+        {
+          "description": "DGN complex shape (closed).",
+          "type": "string",
+          "const": "complex_shape"
+        },
+        {
+          "description": "DGN text node.",
+          "type": "string",
+          "const": "text_node"
+        },
+        {
+          "description": "DGN cell (children inline, already placed).",
+          "type": "string",
+          "const": "cell"
+        },
+        {
+          "description": "Any other grouping.",
+          "type": "string",
+          "const": "other"
+        }
+      ]
+    },
+    "HAlign": {
+      "description": "Horizontal text alignment.",
+      "type": "string",
+      "enum": [
+        "left",
+        "center",
+        "right",
+        "aligned",
+        "middle",
+        "fit"
+      ]
+    },
+    "HatchEdge": {
+      "description": "A hatch boundary edge.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "end": {
+              "$ref": "#/$defs/Point3"
+            },
+            "start": {
+              "$ref": "#/$defs/Point3"
+            },
+            "type": {
+              "type": "string",
+              "const": "line"
+            }
+          },
+          "required": [
+            "type",
+            "start",
+            "end"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "ccw": {
+              "type": "boolean"
+            },
+            "center": {
+              "$ref": "#/$defs/Point3"
+            },
+            "end_angle": {
+              "type": "number",
+              "format": "double"
+            },
+            "radius": {
+              "type": "number",
+              "format": "double"
+            },
+            "start_angle": {
+              "type": "number",
+              "format": "double"
+            },
+            "type": {
+              "type": "string",
+              "const": "arc"
+            }
+          },
+          "required": [
+            "type",
+            "center",
+            "radius",
+            "start_angle",
+            "end_angle",
+            "ccw"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "ccw": {
+              "type": "boolean"
+            },
+            "center": {
+              "$ref": "#/$defs/Point3"
+            },
+            "end_param": {
+              "type": "number",
+              "format": "double"
+            },
+            "major_axis": {
+              "$ref": "#/$defs/Vec3"
+            },
+            "ratio": {
+              "type": "number",
+              "format": "double"
+            },
+            "start_param": {
+              "type": "number",
+              "format": "double"
+            },
+            "type": {
+              "type": "string",
+              "const": "ellipse"
+            }
+          },
+          "required": [
+            "type",
+            "center",
+            "major_axis",
+            "ratio",
+            "start_param",
+            "end_param",
+            "ccw"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "control_points": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Point3"
+              }
+            },
+            "degree": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "knots": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "double"
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "spline"
+            },
+            "weights": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "double"
+              }
+            }
+          },
+          "required": [
+            "type",
+            "degree",
+            "knots",
+            "control_points",
+            "weights"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "closed": {
+              "type": "boolean"
+            },
+            "type": {
+              "type": "string",
+              "const": "polyline"
+            },
+            "vertices": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Vertex"
+              }
+            }
+          },
+          "required": [
+            "type",
+            "vertices",
+            "closed"
+          ]
+        }
+      ]
+    },
+    "HatchLoop": {
+      "description": "One hatch boundary loop.",
+      "type": "object",
+      "properties": {
+        "edges": {
+          "description": "Edges in order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HatchEdge"
+          }
+        },
+        "external": {
+          "description": "Loop is the outermost boundary.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "edges",
+        "external"
+      ]
+    },
+    "Layer": {
+      "description": "A layer (DGN: level).",
+      "type": "object",
+      "properties": {
+        "color": {
+          "description": "Default color of entities on this layer.",
+          "$ref": "#/$defs/Color"
+        },
+        "description": {
+          "description": "Free-text description.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "frozen": {
+          "description": "Layer is frozen.",
+          "type": "boolean"
+        },
+        "id": {
+          "description": "Native identifier (DWG handle, DGN level id).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "linetype": {
+          "description": "Default linetype name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lineweight": {
+          "description": "Default lineweight.",
+          "$ref": "#/$defs/Lineweight"
+        },
+        "locked": {
+          "description": "Layer is locked.",
+          "type": "boolean"
+        },
+        "name": {
+          "description": "Unique name.",
+          "type": "string"
+        },
+        "plottable": {
+          "description": "Layer is plotted.",
+          "type": "boolean"
+        },
+        "props": {
+          "description": "Format-specific extras.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Value"
+          }
+        },
+        "visible": {
+          "description": "Layer is on / displayed.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "color",
+        "lineweight",
+        "visible",
+        "frozen",
+        "locked",
+        "plottable",
+        "props"
+      ]
+    },
+    "LengthUnit": {
+      "description": "Length unit. Mirrors the DWG `$INSUNITS` set.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "unitless",
+            "inch",
+            "foot",
+            "mile",
+            "millimeter",
+            "centimeter",
+            "meter",
+            "kilometer",
+            "microinch",
+            "mil",
+            "yard",
+            "angstrom",
+            "nanometer",
+            "micrometer",
+            "decimeter",
+            "decameter",
+            "hectometer",
+            "gigameter",
+            "astronomical_unit",
+            "light_year",
+            "parsec",
+            "us_survey_foot"
+          ]
+        },
+        {
+          "description": "A unit that is not in this list; see [`Units::meters_per_unit`].",
+          "type": "string",
+          "const": "custom"
+        }
+      ]
+    },
+    "Linetype": {
+      "description": "A linetype definition.",
+      "type": "object",
+      "properties": {
+        "description": {
+          "description": "Description text.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "Unique name.",
+          "type": "string"
+        },
+        "pattern": {
+          "description": "Dash pattern in drawing units: positive = dash, negative = gap, zero = dot.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "props": {
+          "description": "Format-specific extras.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Value"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "pattern",
+        "props"
+      ]
+    },
+    "Lineweight": {
+      "description": "Line weight.",
+      "oneOf": [
+        {
+          "description": "Use the layer lineweight.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "by_layer"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "Use the block reference lineweight.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "by_block"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "Application default.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "default"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "Explicit width in millimeters. DGN weight steps are converted; the original goes to props.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "millimeters"
+            },
+            "value": {
+              "type": "number",
+              "format": "double"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ]
+        }
+      ]
+    },
+    "Model": {
+      "description": "A space that holds drawn entities: model space, a paper-space layout or a DGN model.",
+      "type": "object",
+      "properties": {
+        "entities": {
+          "description": "Entities in drawing order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Entity"
+          }
+        },
+        "id": {
+          "description": "Native identifier.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "is_3d": {
+          "description": "Model stores 3D geometry.",
+          "type": "boolean"
+        },
+        "kind": {
+          "description": "Kind of space.",
+          "$ref": "#/$defs/ModelKind"
+        },
+        "name": {
+          "description": "Display name.",
+          "type": "string"
+        },
+        "props": {
+          "description": "Format-specific extras.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Value"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "kind",
+        "is_3d",
+        "entities",
+        "props"
+      ]
+    },
+    "ModelKind": {
+      "description": "Kind of [`Model`].",
+      "oneOf": [
+        {
+          "description": "Design / model space.",
+          "type": "string",
+          "const": "model"
+        },
+        {
+          "description": "Paper-space layout (DWG/DXF).",
+          "type": "string",
+          "const": "layout"
+        },
+        {
+          "description": "Sheet model (DGN).",
+          "type": "string",
+          "const": "sheet"
+        }
+      ]
+    },
+    "Point3": {
+      "description": "A 3D point. 2D data uses `z = 0` (or the elevation).",
+      "type": "object",
+      "properties": {
+        "x": {
+          "description": "X.",
+          "type": "number",
+          "format": "double"
+        },
+        "y": {
+          "description": "Y.",
+          "type": "number",
+          "format": "double"
+        },
+        "z": {
+          "description": "Z.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "z"
+      ]
+    },
+    "Raw": {
+      "description": "Original bytes of a record, for lossless inspection.",
+      "type": "object",
+      "properties": {
+        "bytes": {
+          "description": "Record bytes exactly as stored (after decompression).",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0
+          }
+        },
+        "type_code": {
+          "description": "Native type code (DGN element type, DWG object type).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "type_code",
+        "bytes"
+      ]
+    },
+    "SchemaVersion": {
+      "description": "Version of the [`Document`] JSON layout, serialized as the integer `schema_version`.\n\nEvery document this crate writes carries [`SchemaVersion::CURRENT`]. JSON without the\nfield predates versioning and reads as version 1. [`crate::export::document_from_json`]\nrejects other versions with [`crate::Error::SchemaVersion`]. The version increases only\nwhen an existing field changes meaning or shape; new optional fields do not change it.",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "SourceInfo": {
+      "description": "Origin of a [`Document`].",
+      "type": "object",
+      "properties": {
+        "application": {
+          "description": "Producing application if recorded, e.g. `\"MicroStation v8.11.9.578\"`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "codepage": {
+          "description": "Code page used for 8-bit strings, e.g. `\"windows-1254\"`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "format": {
+          "description": "File format family.",
+          "$ref": "#/$defs/Format"
+        },
+        "version": {
+          "description": "Format version as written in the file, e.g. `\"AC1032\"`, `\"V8\"`, `\"V7\"`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "format",
+        "version"
+      ]
+    },
+    "TextStyle": {
+      "description": "A text style definition.",
+      "type": "object",
+      "properties": {
+        "font": {
+          "description": "Font file or font name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "height": {
+          "description": "Fixed text height, 0 when variable.",
+          "type": "number",
+          "format": "double"
+        },
+        "name": {
+          "description": "Unique name.",
+          "type": "string"
+        },
+        "oblique": {
+          "description": "Oblique angle in radians.",
+          "type": "number",
+          "format": "double"
+        },
+        "props": {
+          "description": "Format-specific extras.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Value"
+          }
+        },
+        "width_factor": {
+          "description": "Width factor (1.0 = normal).",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "name",
+        "height",
+        "width_factor",
+        "oblique",
+        "props"
+      ]
+    },
+    "Units": {
+      "description": "Drawing units.",
+      "type": "object",
+      "properties": {
+        "meters_per_unit": {
+          "description": "Size of one drawing unit in meters, when known. Authoritative over `unit`\nfor non-standard DGN master units.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "unit": {
+          "description": "Named unit of the coordinates.",
+          "$ref": "#/$defs/LengthUnit"
+        }
+      },
+      "required": [
+        "unit"
+      ]
+    },
+    "VAlign": {
+      "description": "Vertical text alignment.",
+      "type": "string",
+      "enum": [
+        "baseline",
+        "bottom",
+        "middle",
+        "top"
+      ]
+    },
+    "Value": {
+      "description": "A loosely typed value for attributes and props.",
+      "anyOf": [
+        {
+          "description": "No value.",
+          "type": "null"
+        },
+        {
+          "description": "Boolean.",
+          "type": "boolean"
+        },
+        {
+          "description": "Integer.",
+          "type": "integer",
+          "format": "int64"
+        },
+        {
+          "description": "Floating point.",
+          "type": "number",
+          "format": "double"
+        },
+        {
+          "description": "Text.",
+          "type": "string"
+        },
+        {
+          "description": "Ordered list.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Value"
+          }
+        },
+        {
+          "description": "Binary data.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0
+          }
+        }
+      ]
+    },
+    "Vec3": {
+      "description": "A 3D vector (directions, normals, axes).",
+      "type": "object",
+      "properties": {
+        "x": {
+          "description": "X.",
+          "type": "number",
+          "format": "double"
+        },
+        "y": {
+          "description": "Y.",
+          "type": "number",
+          "format": "double"
+        },
+        "z": {
+          "description": "Z.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "z"
+      ]
+    },
+    "Vertex": {
+      "description": "Polyline vertex.",
+      "type": "object",
+      "properties": {
+        "bulge": {
+          "description": "Bulge of the segment that starts here: tan(included angle / 4), 0 = straight.",
+          "type": "number",
+          "format": "double"
+        },
+        "end_width": {
+          "description": "End width of the segment that starts here.",
+          "type": "number",
+          "format": "double"
+        },
+        "position": {
+          "description": "Position.",
+          "$ref": "#/$defs/Point3"
+        },
+        "start_width": {
+          "description": "Start width of the segment that starts here.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "position",
+        "bulge",
+        "start_width",
+        "end_width"
+      ]
+    },
+    "Warning": {
+      "description": "A recoverable problem found while reading.",
+      "type": "object",
+      "properties": {
+        "code": {
+          "description": "Stable machine-readable code, e.g. `\"dgn.unknown_element\"`.",
+          "type": "string"
+        },
+        "message": {
+          "description": "Human-readable explanation.",
+          "type": "string"
+        },
+        "object": {
+          "description": "Native id of the affected object, when known.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "offset": {
+          "description": "Byte offset in the decoded stream, when meaningful.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ]
+    }
+  }
+}

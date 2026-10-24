@@ -11,6 +11,7 @@
 use super::raster_template::Template;
 use super::{WriteOptions, compressed, encode::*};
 use crate::native::v8::{AuxPage, AuxRecord, PageHeader, RawElement, V8Model};
+use cadkit_core::LimitKind;
 use cadkit_core::{Document, Entity, EntityKind, Error, ReadOptions, Result};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -197,7 +198,8 @@ impl Preserved {
             if out.bytes > options.limits.max_decompressed_bytes
                 || out.objects >= options.limits.max_objects
             {
-                return Err(Error::LimitExceeded(
+                return Err(Error::limit(
+                    LimitKind::Objects,
                     "preserved control/auxiliary budget".into(),
                 ));
             }
@@ -245,7 +247,8 @@ impl Preserved {
         if out.bytes > options.limits.max_decompressed_bytes
             || out.objects >= options.limits.max_objects
         {
-            return Err(Error::LimitExceeded(
+            return Err(Error::limit(
+                LimitKind::Objects,
                 "preserved raster control/auxiliary budget".into(),
             ));
         }
@@ -309,7 +312,7 @@ pub(super) fn aux_page(records: &[AuxRecord], header: PageHeader) -> Result<Vec<
             &mut record,
             4,
             u32::try_from(a.payload.len())
-                .map_err(|_| Error::LimitExceeded("raster auxiliary bytes".into()))?,
+                .map_err(|_| Error::limit(LimitKind::Capacity, "raster auxiliary bytes".into()))?,
         )?;
         u32_at(&mut record, 8, a.kind)?;
         u32_at(&mut record, 12, a.reserved)?;
@@ -320,7 +323,7 @@ pub(super) fn aux_page(records: &[AuxRecord], header: PageHeader) -> Result<Vec<
     }
     let mut encoded = vec![0; 16];
     let count = u32::try_from(records.len())
-        .map_err(|_| Error::LimitExceeded("raster auxiliary count".into()))?;
+        .map_err(|_| Error::limit(LimitKind::Capacity, "raster auxiliary count".into()))?;
     u32_at(&mut encoded, 0, count)?;
     u32_at(&mut encoded, 4, header.format_version)?;
     encoded.extend(compressed(&payload)?);

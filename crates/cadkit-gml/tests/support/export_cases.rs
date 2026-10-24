@@ -3,20 +3,13 @@ use super::*;
 use cadkit_core::{Attribute, GroupKind, Vec3, Vertex};
 
 fn options() -> ExportOptions {
-    ExportOptions {
-        srs_name: "urn:ogc:def:crs:EPSG::5254".into(),
-        lod: 2,
-        limits: cadkit_core::Limits::default(),
-    }
+    ExportOptions::new("urn:ogc:def:crs:EPSG::5254", 2).with_limits(cadkit_core::Limits::default())
 }
 
 fn document(entities: Vec<Entity>) -> Document {
     let mut doc = Document::default();
-    doc.models.push(Model {
-        is_3d: true,
-        entities,
-        ..Default::default()
-    });
+    doc.models
+        .push(Model::default().with_is_3d(true).with_entities(entities));
     doc
 }
 
@@ -149,14 +142,14 @@ fn circle_reader_rejects_degenerate_and_oversized_segments_and_survives_mutation
 #[test]
 fn metadata_fallback_is_explicit_reported_and_preserves_nested_entities() {
     let mut annotation = image();
-    annotation.attributes.push(Attribute {
-        tag: "SyntheticID".into(),
-        value: Value::Text("000012345678901234567890".into()),
-        set: Some("Ids".into()),
-        position: None,
-        invisible: true,
-        ..Default::default()
-    });
+    annotation.attributes.push(
+        Attribute::new(
+            "SyntheticID",
+            Value::Text("000012345678901234567890".into()),
+        )
+        .with_set("Ids")
+        .with_invisible(true),
+    );
     let group = Entity::new(EntityKind::Group {
         group_kind: GroupKind::Other,
         name: None,

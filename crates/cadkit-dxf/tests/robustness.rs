@@ -104,10 +104,7 @@ fn damaged_binary_headers_and_noise() {
 }
 
 fn tiny(limits: Limits) -> ReadOptions {
-    ReadOptions {
-        limits,
-        ..ReadOptions::default()
-    }
+    ReadOptions::default().with_limits(limits)
 }
 
 #[test]
@@ -117,13 +114,10 @@ fn limits_are_enforced() {
         "0\nSECTION\n2\nENTITIES\n0\nTEXT\n1\nabcdefghijklmnopqrstuvwxyz\n0\nENDSEC\n0\nEOF\n";
     let r = cadkit_dxf::read(
         text.as_bytes(),
-        &tiny(Limits {
-            max_string_bytes: 8,
-            ..Limits::default()
-        }),
+        &tiny(Limits::default().with_max_string_bytes(8)),
     );
     assert!(
-        matches!(r, Err(Error::LimitExceeded(_))),
+        matches!(r, Err(Error::LimitExceeded { .. })),
         "string limit: {r:?}"
     );
     assert!(cadkit_dxf::read(text.as_bytes(), &ReadOptions::default()).is_ok());
@@ -131,13 +125,10 @@ fn limits_are_enforced() {
     // Input size.
     let r = cadkit_dxf::read(
         text.as_bytes(),
-        &tiny(Limits {
-            max_input_bytes: 10,
-            ..Limits::default()
-        }),
+        &tiny(Limits::default().with_max_input_bytes(10)),
     );
     assert!(
-        matches!(r, Err(Error::LimitExceeded(_))),
+        matches!(r, Err(Error::LimitExceeded { .. })),
         "input limit: {r:?}"
     );
 
@@ -148,13 +139,10 @@ fn limits_are_enforced() {
     );
     let r = cadkit_dxf::read(
         many.as_bytes(),
-        &tiny(Limits {
-            max_objects: 10,
-            ..Limits::default()
-        }),
+        &tiny(Limits::default().with_max_objects(10)),
     );
     assert!(
-        matches!(r, Err(Error::LimitExceeded(_))),
+        matches!(r, Err(Error::LimitExceeded { .. })),
         "object limit: {r:?}"
     );
 
@@ -165,13 +153,10 @@ fn limits_are_enforced() {
     );
     let r = cadkit_dxf::read(
         lw.as_bytes(),
-        &tiny(Limits {
-            max_vertices: 10,
-            ..Limits::default()
-        }),
+        &tiny(Limits::default().with_max_vertices(10)),
     );
     assert!(
-        matches!(r, Err(Error::LimitExceeded(_))),
+        matches!(r, Err(Error::LimitExceeded { .. })),
         "lwpolyline vertex limit: {r:?}"
     );
     let sp = format!(
@@ -180,13 +165,10 @@ fn limits_are_enforced() {
     );
     let r = cadkit_dxf::read(
         sp.as_bytes(),
-        &tiny(Limits {
-            max_vertices: 10,
-            ..Limits::default()
-        }),
+        &tiny(Limits::default().with_max_vertices(10)),
     );
     assert!(
-        matches!(r, Err(Error::LimitExceeded(_))),
+        matches!(r, Err(Error::LimitExceeded { .. })),
         "spline knot limit: {r:?}"
     );
     let pl = format!(
@@ -195,25 +177,19 @@ fn limits_are_enforced() {
     );
     let r = cadkit_dxf::read(
         pl.as_bytes(),
-        &tiny(Limits {
-            max_vertices: 10,
-            ..Limits::default()
-        }),
+        &tiny(Limits::default().with_max_vertices(10)),
     );
     assert!(
-        matches!(r, Err(Error::LimitExceeded(_))),
+        matches!(r, Err(Error::LimitExceeded { .. })),
         "polyline vertex limit: {r:?}"
     );
     let hatch = "0\nSECTION\n2\nENTITIES\n0\nHATCH\n91\n1\n92\n2\n72\n0\n73\n1\n93\n2000000000\n0\nENDSEC\n0\nEOF\n";
     let r = cadkit_dxf::read(
         hatch.as_bytes(),
-        &tiny(Limits {
-            max_vertices: 100,
-            ..Limits::default()
-        }),
+        &tiny(Limits::default().with_max_vertices(100)),
     );
     assert!(
-        matches!(r, Err(Error::LimitExceeded(_))),
+        matches!(r, Err(Error::LimitExceeded { .. })),
         "hatch count limit: {r:?}"
     );
 
@@ -224,13 +200,10 @@ fn limits_are_enforced() {
     );
     let r = cadkit_dxf::read(
         rec.as_bytes(),
-        &tiny(Limits {
-            max_vertices: 100,
-            ..Limits::default()
-        }),
+        &tiny(Limits::default().with_max_vertices(100)),
     );
     assert!(
-        matches!(r, Err(Error::LimitExceeded(_))),
+        matches!(r, Err(Error::LimitExceeded { .. })),
         "record group limit: {r:?}"
     );
 }

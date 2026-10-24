@@ -80,21 +80,18 @@ fn native_roundtrip_preserves_ids_references_holes_and_unicode() {
 #[test]
 fn new_neutral_geometry_is_writable() {
     let mut doc = Document::default();
-    doc.models.push(Model {
-        is_3d: true,
-        entities: vec![Entity::new(EntityKind::Polygon {
-            exterior: ring(0.0, 5.0),
-            interiors: vec![ring(1.0, 2.0).into_iter().rev().collect()],
-        })],
-        ..Default::default()
-    });
+    doc.models.push(
+        Model::default()
+            .with_is_3d(true)
+            .with_entities(vec![Entity::new(EntityKind::Polygon {
+                exterior: ring(0.0, 5.0),
+                interiors: vec![ring(1.0, 2.0).into_iter().rev().collect()],
+            })]),
+    );
     let bytes = write_document(
         &doc,
-        &ExportOptions {
-            srs_name: "urn:ogc:def:crs:EPSG::4979".into(),
-            lod: 1,
-            limits: cadkit_core::Limits::default(),
-        },
+        &ExportOptions::new("urn:ogc:def:crs:EPSG::4979", 1)
+            .with_limits(cadkit_core::Limits::default()),
     )
     .unwrap();
     let parsed = read_native(&bytes, &ReadOptions::default()).unwrap();
@@ -103,11 +100,7 @@ fn new_neutral_geometry_is_writable() {
     assert!(
         write_document(
             &doc,
-            &ExportOptions {
-                srs_name: String::new(),
-                lod: 1,
-                limits: cadkit_core::Limits::default(),
-            }
+            &ExportOptions::new(String::new(), 1).with_limits(cadkit_core::Limits::default())
         )
         .is_err()
     );
@@ -132,7 +125,7 @@ fn malformed_and_bounded_inputs_are_rejected() {
     options.limits.max_depth = 2;
     assert!(matches!(
         read_native(&bytes, &options),
-        Err(Error::LimitExceeded(_))
+        Err(Error::LimitExceeded { .. })
     ));
     options = ReadOptions::default();
     options.limits.max_total_vertices = 2;
@@ -149,7 +142,7 @@ fn malformed_and_bounded_inputs_are_rejected() {
         );
         assert!(matches!(
             read_native(xml.as_bytes(), &options),
-            Err(Error::LimitExceeded(_))
+            Err(Error::LimitExceeded { .. })
         ));
     }
 }
@@ -162,11 +155,11 @@ fn json_import_checks_input_and_model_budgets() {
     options.limits.max_input_bytes = 1;
     assert!(matches!(
         read_native_json(&native, &options),
-        Err(Error::LimitExceeded(_))
+        Err(Error::LimitExceeded { .. })
     ));
     assert!(matches!(
         cadkit_core::export::document_from_json(&neutral, &options.limits),
-        Err(Error::LimitExceeded(_))
+        Err(Error::LimitExceeded { .. })
     ));
     options = ReadOptions::default();
     assert!(read_native_json(&native, &options).is_ok());
@@ -174,7 +167,7 @@ fn json_import_checks_input_and_model_budgets() {
     options.limits.max_objects = 1;
     assert!(matches!(
         read_native_json(&native, &options),
-        Err(Error::LimitExceeded(_))
+        Err(Error::LimitExceeded { .. })
     ));
     assert!(read_native_json("{", &ReadOptions::default()).is_err());
     assert!(cadkit_core::export::document_from_json("{", &options.limits).is_err());
@@ -212,10 +205,7 @@ fn private_roundtrip_when_supplied() {
     let options = ReadOptions::default();
     let original = read_native(&bytes, &options).unwrap();
     // Test lossless preservation of XML structure and relationships separately from source geometry validity.
-    let validation = ValidationOptions {
-        geometry: false,
-        ..Default::default()
-    };
+    let validation = ValidationOptions::default().with_geometry(false);
     let issues_before = geometry_issues(&original, &ValidationOptions::default()).unwrap();
     let before = validate(&original, &validation).unwrap();
     let rewritten = write(&original, &validation).unwrap();
@@ -288,16 +278,7 @@ fn strict_writer_rejects_nonplanar_hole_without_changing_source() {
     let diagnostics = geometry_issues(&doc, &ValidationOptions::default()).unwrap();
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(diagnostics[0].code, "gml.polygon_geometry");
-    assert!(
-        write(
-            &doc,
-            &ValidationOptions {
-                geometry: false,
-                ..Default::default()
-            }
-        )
-        .is_ok()
-    );
+    assert!(write(&doc, &ValidationOptions::default().with_geometry(false)).is_ok());
 }
 
 #[test]
@@ -411,22 +392,19 @@ fn validate_xsd_if_cached(bytes: &[u8]) {
 fn official_schema_accepts_native_and_generic_output() {
     validate_xsd_if_cached(&write(&fixture(), &ValidationOptions::default()).unwrap());
     let mut doc = Document::default();
-    doc.models.push(Model {
-        is_3d: true,
-        entities: vec![Entity::new(EntityKind::Line {
-            start: Point3::xy(0., 0.),
-            end: Point3::xy(1., 1.),
-        })],
-        ..Default::default()
-    });
+    doc.models.push(
+        Model::default()
+            .with_is_3d(true)
+            .with_entities(vec![Entity::new(EntityKind::Line {
+                start: Point3::xy(0., 0.),
+                end: Point3::xy(1., 1.),
+            })]),
+    );
     validate_xsd_if_cached(
         &write_document(
             &doc,
-            &ExportOptions {
-                srs_name: "urn:ogc:def:crs:EPSG::4979".into(),
-                lod: 1,
-                limits: cadkit_core::Limits::default(),
-            },
+            &ExportOptions::new("urn:ogc:def:crs:EPSG::4979", 1)
+                .with_limits(cadkit_core::Limits::default()),
         )
         .unwrap(),
     );
@@ -505,39 +483,29 @@ fn solid_shell_welds_vertices_within_tolerance_and_output_limit_is_limit_exceede
     tight.limits.max_input_bytes = 32;
     assert!(matches!(
         write(&native, &tight),
-        Err(Error::LimitExceeded(_))
+        Err(Error::LimitExceeded { .. })
     ));
 
     // MetadataOnly export preserves Bool, Null, and List attributes without failing.
     let mut e = cadkit_core::Entity::new(EntityKind::Point {
         position: Point3::new(1.0, 2.0, 3.0),
     });
-    e.attributes.push(cadkit_core::Attribute {
-        tag: "active".into(),
-        value: Value::Bool(true),
-        ..Default::default()
-    });
-    e.attributes.push(cadkit_core::Attribute {
-        tag: "empty".into(),
-        value: Value::Null,
-        ..Default::default()
-    });
-    e.attributes.push(cadkit_core::Attribute {
-        tag: "tags".into(),
-        value: Value::List(vec![Value::Int(1), Value::Text("a".into())]),
-        ..Default::default()
-    });
+    e.attributes
+        .push(cadkit_core::Attribute::new("active", Value::Bool(true)));
+    e.attributes
+        .push(cadkit_core::Attribute::new("empty", Value::Null));
+    e.attributes.push(cadkit_core::Attribute::new(
+        "tags",
+        Value::List(vec![Value::Int(1), Value::Text("a".into())]),
+    ));
     let mut src = Document::default();
-    src.models.push(cadkit_core::Model {
-        name: "Model".into(),
-        entities: vec![e],
-        ..Default::default()
+    src.models.push({
+        let mut model = cadkit_core::Model::default().with_entities(vec![e]);
+        model.name = "Model".into();
+        model
     });
-    let opts = cadkit_gml::ExportOptions {
-        srs_name: "EPSG:4979".into(),
-        lod: 1,
-        limits: cadkit_core::Limits::default(),
-    };
+    let opts =
+        cadkit_gml::ExportOptions::new("EPSG:4979", 1).with_limits(cadkit_core::Limits::default());
     assert!(cadkit_gml::from_document(&src, &opts).is_err());
     let (exported, _) = cadkit_gml::from_document_with_report(
         &src,

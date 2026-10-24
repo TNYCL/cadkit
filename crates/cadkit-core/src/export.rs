@@ -1,18 +1,52 @@
 //! Validates resource budgets and float finiteness on in-memory documents before writing.
 
+use crate::LimitKind;
 use crate::{
     Attribute, Document, Entity, EntityKind, Error, HatchEdge, Limits, Lineweight, Point3, Props,
-    Result, Value, Vec3, Vertex,
+    Result, SchemaVersion, Value, Vec3, Vertex,
 };
 
 /// Parses a JSON document after checking the input byte limit and validates document budgets.
 pub fn document_from_json(text: &str, limits: &Limits) -> Result<Document> {
     if text.len() as u64 > limits.max_input_bytes {
-        return Err(Error::LimitExceeded("document JSON input bytes".into()));
+        return Err(Error::limit(
+            LimitKind::InputBytes,
+            "document JSON input bytes".into(),
+        ));
     }
-    let doc = serde_json::from_str(text).map_err(|e| Error::invalid(0, e.to_string()))?;
+    let doc: Document = match serde_json::from_str(text) {
+        Ok(doc) => doc,
+        // A newer layout may fail to parse anywhere; report its version, not the symptom.
+        Err(e) => {
+            return Err(match declared_schema_version(text) {
+                Some(found) if found != u64::from(SchemaVersion::CURRENT.get()) => {
+                    schema_version_error(found)
+                }
+                _ => Error::invalid(0, e.to_string()),
+            });
+        }
+    };
+    if doc.schema_version != SchemaVersion::CURRENT {
+        return Err(schema_version_error(u64::from(doc.schema_version.get())));
+    }
     validate_limits(&doc, limits)?;
     Ok(doc)
+}
+
+fn schema_version_error(found: u64) -> Error {
+    Error::SchemaVersion {
+        found,
+        supported: SchemaVersion::CURRENT.get(),
+    }
+}
+
+/// The top-level `schema_version` of a JSON object, when it is a non-negative integer.
+fn declared_schema_version(text: &str) -> Option<u64> {
+    #[derive(serde::Deserialize)]
+    struct Probe {
+        schema_version: Option<u64>,
+    }
+    serde_json::from_str::<Probe>(text).ok()?.schema_version
 }
 
 struct Budget<'a> {
@@ -35,7 +69,7 @@ impl<'a> Budget<'a> {
     fn add_objects(&mut self, n: usize, label: &'static str) -> Result<()> {
         self.objects = self.objects.saturating_add(n as u64);
         if self.objects > self.limits.max_objects {
-            return Err(Error::LimitExceeded(label.into()));
+            return Err(Error::limit(LimitKind::Objects, label.into()));
         }
         Ok(())
     }
@@ -43,14 +77,17 @@ impl<'a> Budget<'a> {
     fn add_bytes(&mut self, n: u64) -> Result<()> {
         self.bytes = self.bytes.saturating_add(n);
         if self.bytes > self.limits.max_decompressed_bytes {
-            return Err(Error::LimitExceeded("export byte budget".into()));
+            return Err(Error::limit(
+                LimitKind::DecompressedBytes,
+                "export byte budget".into(),
+            ));
         }
         Ok(())
     }
 
     fn check_str(&mut self, s: &str) -> Result<()> {
         if s.len() as u64 > u64::from(self.limits.max_string_bytes) {
-            return Err(Error::LimitExceeded("export string".into()));
+            return Err(Error::limit(LimitKind::StringBytes, "export string".into()));
         }
         self.add_bytes(s.len() as u64)
     }
@@ -112,7 +149,10 @@ impl<'a> Budget<'a> {
         let mut nodes = 1u64;
         while let Some((v, d)) = todo.pop() {
             if d >= max_depth {
-                return Err(Error::LimitExceeded("export property depth".into()));
+                return Err(Error::limit(
+                    LimitKind::Depth,
+                    "export property depth".into(),
+                ));
             }
             self.add_bytes(8)?;
             match v {
@@ -120,7 +160,10 @@ impl<'a> Budget<'a> {
                 Value::List(values) => {
                     nodes = nodes.saturating_add(values.len() as u64);
                     if nodes > self.limits.max_objects {
-                        return Err(Error::LimitExceeded("export property objects".into()));
+                        return Err(Error::limit(
+                            LimitKind::Objects,
+                            "export property objects".into(),
+                        ));
                     }
                     todo.extend(values.iter().map(|v| (v, d + 1)));
                 }
@@ -160,7 +203,10 @@ impl<'a> Budget<'a> {
         let max_v = u64::from(self.limits.max_vertices);
         let max_knots = max_v.saturating_mul(2).saturating_add(32);
         if knots.len() as u64 > max_knots || weights.len() as u64 > max_v {
-            return Err(Error::LimitExceeded("export entity vertices".into()));
+            return Err(Error::limit(
+                LimitKind::Vertices,
+                "export entity vertices".into(),
+            ));
         }
         for &k in knots {
             Self::check_f64(k, "spline knot")?;
@@ -246,7 +292,7 @@ impl<'a> Budget<'a> {
         todo: &mut Vec<(&'e Entity, u32)>,
     ) -> Result<()> {
         if depth >= self.limits.max_depth.min(256) {
-            return Err(Error::LimitExceeded("export depth".into()));
+            return Err(Error::limit(LimitKind::Depth, "export depth".into()));
         }
         self.add_bytes(64)?;
         self.check_opt_str(&e.layer)?;
@@ -399,7 +445,10 @@ impl<'a> Budget<'a> {
                 ..
             } => {
                 if loops.len() as u64 > self.limits.max_objects {
-                    return Err(Error::LimitExceeded("export hatch loops".into()));
+                    return Err(Error::limit(
+                        LimitKind::Objects,
+                        "export hatch loops".into(),
+                    ));
                 }
                 self.check_opt_str(pattern)?;
                 Self::check_f64(*pattern_scale, "hatch pattern scale")?;
@@ -408,7 +457,10 @@ impl<'a> Budget<'a> {
                 let mut total = 0u64;
                 for l in loops {
                     if l.edges.len() as u64 > self.limits.max_objects {
-                        return Err(Error::LimitExceeded("export hatch edges".into()));
+                        return Err(Error::limit(
+                            LimitKind::Objects,
+                            "export hatch edges".into(),
+                        ));
                     }
                     for edge in &l.edges {
                         total = total.saturating_add(self.check_hatch_edge(edge)?);
@@ -452,7 +504,7 @@ impl<'a> Budget<'a> {
                 interiors,
             } => {
                 if interiors.len() as u64 > self.limits.max_objects {
-                    return Err(Error::LimitExceeded("export rings".into()));
+                    return Err(Error::limit(LimitKind::Objects, "export rings".into()));
                 }
                 for &p in exterior {
                     Self::check_point(p, "polygon point")?;
@@ -503,7 +555,7 @@ impl<'a> Budget<'a> {
             }
             EntityKind::Mesh { vertices, faces } => {
                 if faces.len() as u64 > self.limits.max_objects {
-                    return Err(Error::LimitExceeded("export faces".into()));
+                    return Err(Error::limit(LimitKind::Objects, "export faces".into()));
                 }
                 for &p in vertices {
                     Self::check_point(p, "mesh vertex")?;
@@ -543,14 +595,20 @@ impl<'a> Budget<'a> {
         };
 
         if n > u64::from(self.limits.max_vertices) {
-            return Err(Error::LimitExceeded("export entity vertices".into()));
+            return Err(Error::limit(
+                LimitKind::Vertices,
+                "export entity vertices".into(),
+            ));
         }
         self.total_vertices = self
             .total_vertices
             .saturating_add(n)
             .saturating_add(e.attributes.len() as u64);
         if self.total_vertices > self.limits.max_total_vertices {
-            return Err(Error::LimitExceeded("export total vertices".into()));
+            return Err(Error::limit(
+                LimitKind::TotalVertices,
+                "export total vertices".into(),
+            ));
         }
 
         for a in &e.attributes {
@@ -579,7 +637,10 @@ pub fn validate_limits(doc: &Document, limits: &Limits) -> Result<()> {
         || doc.text_styles.len() as u64 > limits.max_objects
         || doc.warnings.len() as u64 > limits.max_objects
     {
-        return Err(Error::LimitExceeded("export table entries".into()));
+        return Err(Error::limit(
+            LimitKind::Objects,
+            "export table entries".into(),
+        ));
     }
 
     for layer in &doc.layers {
@@ -596,7 +657,10 @@ pub fn validate_limits(doc: &Document, limits: &Limits) -> Result<()> {
         b.check_str(&lt.name)?;
         b.check_opt_str(&lt.description)?;
         if lt.pattern.len() as u64 > u64::from(limits.max_vertices) {
-            return Err(Error::LimitExceeded("export linetype pattern".into()));
+            return Err(Error::limit(
+                LimitKind::Vertices,
+                "export linetype pattern".into(),
+            ));
         }
         for &seg in &lt.pattern {
             Budget::check_f64(seg, "linetype segment")?;
@@ -676,7 +740,7 @@ mod tests {
         };
         assert!(matches!(
             validate_limits(&doc, &limits),
-            Err(Error::LimitExceeded(_))
+            Err(Error::LimitExceeded { .. })
         ));
 
         let hatch = Entity::new(EntityKind::Hatch {
@@ -696,7 +760,7 @@ mod tests {
         doc.models[0].entities = vec![hatch];
         assert!(matches!(
             validate_limits(&doc, &limits),
-            Err(Error::LimitExceeded(_))
+            Err(Error::LimitExceeded { .. })
         ));
 
         doc.models[0].entities = vec![Entity::new(EntityKind::Leader {
@@ -705,7 +769,7 @@ mod tests {
         })];
         assert!(matches!(
             validate_limits(&doc, &limits),
-            Err(Error::LimitExceeded(_))
+            Err(Error::LimitExceeded { .. })
         ));
 
         let byte_limits = Limits {
@@ -714,7 +778,7 @@ mod tests {
         };
         assert!(matches!(
             validate_limits(&doc, &byte_limits),
-            Err(Error::LimitExceeded(msg)) if msg == "export byte budget"
+            Err(Error::LimitExceeded { message: msg, .. }) if msg == "export byte budget"
         ));
     }
 
@@ -799,5 +863,36 @@ mod tests {
             serde_json::to_string(&Lineweight::Millimeters(0.25)).unwrap(),
             r#"{"type":"millimeters","value":0.25}"#
         );
+    }
+
+    #[test]
+    fn schema_version_is_written_and_checked() {
+        let limits = Limits::default();
+        let json = serde_json::to_string(&Document::new()).unwrap();
+        assert!(json.starts_with(r#"{"schema_version":1,"#));
+        // JSON from before versioning reads as version 1.
+        let legacy = json.replacen(r#""schema_version":1,"#, "", 1);
+        assert_eq!(
+            document_from_json(&legacy, &limits).unwrap().schema_version,
+            SchemaVersion::CURRENT
+        );
+        let newer = json.replacen(r#""schema_version":1"#, r#""schema_version":2"#, 1);
+        assert!(matches!(
+            document_from_json(&newer, &limits),
+            Err(Error::SchemaVersion {
+                found: 2,
+                supported: 1
+            })
+        ));
+        // A newer layout that no longer parses still reports its version.
+        let reshaped = r#"{"schema_version":7,"layers":"not a list"}"#;
+        assert!(matches!(
+            document_from_json(reshaped, &limits),
+            Err(Error::SchemaVersion { found: 7, .. })
+        ));
+        assert!(matches!(
+            document_from_json(r#"{"layers":"not a list"}"#, &limits),
+            Err(Error::Invalid { .. })
+        ));
     }
 }

@@ -36,19 +36,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ]],
     });
     outline.layer = Some("Synthetic surfaces".into());
-    let mut doc = Document {
-        units: seed_doc.units,
-        ..Default::default()
+    let mut doc = {
+        let mut doc = Document::default();
+        doc.units = seed_doc.units;
+        doc
     };
-    doc.models.push(Model {
-        is_3d: model.is_3d,
-        entities: vec![outline],
-        ..Default::default()
-    });
-    let options = cadkit::dgn::WriteOptions {
-        clear_seed_model: true,
-        codepage: Some("windows-1254".into()),
-        ..Default::default()
+    doc.models.push(
+        Model::default()
+            .with_is_3d(model.is_3d)
+            .with_entities(vec![outline]),
+    );
+    let options = {
+        let mut options = cadkit::dgn::WriteOptions::default().with_clear_seed_model(true);
+        options.codepage = Some("windows-1254".into());
+        options
     };
     std::fs::create_dir_all(&directory)?;
     std::fs::write(
@@ -61,22 +62,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let gml = cadkit::to_citygml(
         &doc,
-        &cadkit::gml::ExportOptions {
-            srs_name: "https://example.invalid/crs/synthetic-local".into(),
-            lod: 1,
-            limits: cadkit::Limits::default(),
-        },
+        &cadkit::gml::ExportOptions::new("https://example.invalid/crs/synthetic-local", 1)
+            .with_limits(cadkit::Limits::default()),
     )?;
     std::fs::write(directory.join("synthetic.gml"), gml)?;
     if let Some(entity) = doc.models.first_mut().and_then(|m| m.entities.first_mut()) {
-        entity.attributes.push(cadkit::Attribute {
-            tag: "Açıklama".into(),
-            value: Value::Text("Sentetik ölçüm".into()),
-            set: Some("Örnek".into()),
-            position: None,
-            invisible: true,
-            ..Default::default()
-        });
+        entity.attributes.push(
+            cadkit::Attribute::new("Açıklama", Value::Text("Sentetik ölçüm".into()))
+                .with_set("Örnek")
+                .with_invisible(true),
+        );
         if let EntityKind::Polygon {
             exterior,
             interiors,

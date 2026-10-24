@@ -1,6 +1,7 @@
 //! HATCH decoding. Boundary data reuses group codes (10/20, 40, 50, ...) so it is parsed
 //! with a cursor instead of lookups.
 
+use cadkit_core::LimitKind;
 use cadkit_core::{
     Error, HatchEdge, HatchLoop, Point3, Props, Result, Value as MValue, Vec3, Vertex,
 };
@@ -62,9 +63,10 @@ pub(crate) struct HatchData {
 fn limit(count: i64, max: u32, what: &str) -> Result<usize> {
     let n = usize::try_from(count.max(0)).unwrap_or(usize::MAX);
     if n > max as usize {
-        return Err(Error::LimitExceeded(format!(
-            "hatch {what} count {n} exceeds {max}"
-        )));
+        return Err(Error::limit(
+            LimitKind::Vertices,
+            format!("hatch {what} count {n} exceeds {max}"),
+        ));
     }
     Ok(n)
 }
@@ -107,7 +109,10 @@ pub(crate) fn parse(
             let closed = cur.take_i64(73).unwrap_or(1) != 0;
             let n = limit(cur.take_i64(93).unwrap_or(0), max_vertices, "vertex")?;
             if n > budget {
-                return Err(Error::LimitExceeded("hatch vertex budget exceeded".into()));
+                return Err(Error::limit(
+                    LimitKind::Vertices,
+                    "hatch vertex budget exceeded".into(),
+                ));
             }
             budget -= n;
             let mut vertices = Vec::new();

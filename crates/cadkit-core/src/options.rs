@@ -4,6 +4,7 @@
 /// Every reader must check sizes taken from the file against these before allocating or looping.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct Limits {
     /// Largest accepted input file.
     pub max_input_bytes: u64,
@@ -24,6 +25,13 @@ pub struct Limits {
 
 impl Default for Limits {
     fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Limits {
+    /// The default limits (2 GiB input, 4 GiB decompressed, 20M objects, nesting depth 64).
+    pub const fn new() -> Self {
         Self {
             max_input_bytes: 2 << 30,
             max_decompressed_bytes: 4 << 30,
@@ -34,9 +42,7 @@ impl Default for Limits {
             max_total_vertices: 100_000_000,
         }
     }
-}
 
-impl Limits {
     /// Tighter resource limits suitable for untrusted multi-tenant web or API inputs
     /// (64 MiB input, 256 MiB decompressed, 500k objects, max nesting depth 32).
     pub const fn strict() -> Self {
@@ -97,6 +103,7 @@ impl Limits {
 /// Options accepted by every reader.
 #[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct ReadOptions {
     /// Resource limits.
     pub limits: Limits,

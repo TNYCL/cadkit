@@ -9,10 +9,7 @@ fuzz_target!(|data: &[u8]| {
     // Bound the work: a document may have many models, but a few cover the code paths.
     for model in 0..doc.models.len().min(4) {
         let _ = doc.bbox(model);
-        let options = cadkit::SvgOptions {
-            model,
-            ..cadkit::SvgOptions::default()
-        };
+        let options = cadkit::SvgOptions::new().with_model(model);
         let _ = cadkit::to_svg(&doc, &options);
     }
     let _ = cadkit::to_json(&doc, false);

@@ -184,6 +184,7 @@ fn value_text(v: &MValue) -> String {
         MValue::Bool(b) => (if *b { "1" } else { "0" }).to_owned(),
         MValue::Null => String::new(),
         MValue::List(_) | MValue::Bytes(_) => String::new(),
+        _ => String::new(),
     }
 }
 
@@ -981,6 +982,10 @@ impl Writer<'_> {
                 } else {
                     self.skip(type_name, "no DXF writer for this record");
                 }
+                return;
+            }
+            _ => {
+                self.skip("entity", "no DXF writer for this entity kind");
                 return;
             }
         }

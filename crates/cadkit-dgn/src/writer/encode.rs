@@ -1,12 +1,13 @@
 //! Bounds-checked encoder for documented DGN V8 element fields.
 
 use crate::native::v8::ModelHeader;
+use cadkit_core::LimitKind;
 use cadkit_core::{Entity, Error, Point3, Result, Value, Vec3};
 
 pub(super) fn put(b: &mut [u8], offset: usize, value: &[u8]) -> Result<()> {
     let end = offset
         .checked_add(value.len())
-        .ok_or_else(|| Error::LimitExceeded("DGN field offset".into()))?;
+        .ok_or_else(|| Error::limit(LimitKind::Capacity, "DGN field offset".into()))?;
     b.get_mut(offset..end)
         .ok_or_else(|| Error::invalid(offset as u64, "DGN output field outside record"))?
         .copy_from_slice(value);
@@ -36,26 +37,27 @@ pub(super) fn finish_aligned(mut b: Vec<u8>, links: &[u8], align: usize) -> Resu
     let aligned = b
         .len()
         .checked_add(mask)
-        .ok_or_else(|| Error::LimitExceeded("DGN record bytes".into()))?
+        .ok_or_else(|| Error::limit(LimitKind::Capacity, "DGN record bytes".into()))?
         & !mask;
     b.resize(aligned, 0);
     u32_at(
         &mut b,
         8,
         u32::try_from(aligned / 2)
-            .map_err(|_| Error::LimitExceeded("DGN attribute offset".into()))?,
+            .map_err(|_| Error::limit(LimitKind::Capacity, "DGN attribute offset".into()))?,
     )?;
     b.extend_from_slice(links);
     let end = b
         .len()
         .checked_add(mask)
-        .ok_or_else(|| Error::LimitExceeded("DGN record bytes".into()))?
+        .ok_or_else(|| Error::limit(LimitKind::Capacity, "DGN record bytes".into()))?
         & !mask;
     b.resize(end, 0);
     u32_at(
         &mut b,
         4,
-        u32::try_from(end / 2).map_err(|_| Error::LimitExceeded("DGN record bytes".into()))?,
+        u32::try_from(end / 2)
+            .map_err(|_| Error::limit(LimitKind::Capacity, "DGN record bytes".into()))?,
     )?;
     Ok(b)
 }
@@ -248,7 +250,8 @@ pub(super) fn string_link(id: u32, value: &str) -> Result<Vec<u8>> {
 pub(super) fn string_link_bytes(id: u32, text: &[u8]) -> Result<Vec<u8>> {
     let size = (12 + text.len() + 7) & !7;
     if size > 512 {
-        return Err(Error::LimitExceeded(
+        return Err(Error::limit(
+            LimitKind::Capacity,
             "DGN string linkage exceeds 512 bytes".into(),
         ));
     }

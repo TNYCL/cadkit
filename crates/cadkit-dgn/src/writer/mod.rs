@@ -20,8 +20,8 @@ use crate::{
     native::v8::{self, AuxRecord, ModelHeader, PageHeader, V8Model},
 };
 use cadkit_core::{
-    Attribute, Document, Entity, EntityKind, Error, GroupKind, Limits, Point3, ReadOptions, Result,
-    Value, Vec3,
+    Attribute, Document, Entity, EntityKind, Error, GroupKind, LimitKind, Limits, Point3,
+    ReadOptions, Result, Value, Vec3,
 };
 use encode::*;
 use flate2::{Compression, write::ZlibEncoder};
@@ -34,6 +34,7 @@ use tables::Tables;
 /// Options for DGN V8 export; each call writes a single model.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct WriteOptions {
     /// Resource limits for input, output, elements, and coordinates.
     pub limits: Limits,
@@ -71,6 +72,12 @@ impl Default for WriteOptions {
 }
 
 impl WriteOptions {
+    /// Default export options: UTF-16LE text, zero timestamp, seed rasters and controls kept.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     /// Sets resource limits for reading the seed and encoding output records.
     #[must_use]
     pub fn with_limits(mut self, limits: Limits) -> Self {
@@ -172,7 +179,7 @@ fn page(records: &[Vec<u8>], version: u32, _number: u32) -> Result<Vec<u8>> {
         &mut out,
         0,
         u32::try_from(records.len())
-            .map_err(|_| Error::LimitExceeded("DGN page records".into()))?,
+            .map_err(|_| Error::limit(LimitKind::Capacity, "DGN page records".into()))?,
     )?;
     u32_at(&mut out, 4, version)?;
     out.extend(compressed(&data)?);
@@ -209,10 +216,12 @@ fn validate_doc_and_options(doc: &Document, options: &WriteOptions) -> Result<()
 /// Source units and 2D/3D dimension must match the seed's master units and dimension; Z coordinates and attributes are never silently dropped.
 pub fn write_v8(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<Vec<u8>> {
     validate_doc_and_options(doc, options)?;
-    let read = ReadOptions {
-        limits: options.limits,
-        fallback_codepage: options.codepage.clone(),
-        keep_raw: true,
+    let read = {
+        let mut new_options = ReadOptions::default()
+            .with_limits(options.limits)
+            .with_keep_raw(true);
+        new_options.fallback_codepage = options.codepage.clone();
+        new_options
     };
     let parsed_seed = V8Seed::parse(seed, &read)?;
     write_v8_with_seed(doc, &parsed_seed, options)
@@ -227,12 +236,17 @@ pub fn write_v8_with_seed(
 ) -> Result<Vec<u8>> {
     validate_doc_and_options(doc, options)?;
     if seed.bytes.len() as u64 > options.limits.max_input_bytes {
-        return Err(Error::LimitExceeded("DGN seed input bytes".into()));
+        return Err(Error::limit(
+            LimitKind::InputBytes,
+            "DGN seed input bytes".into(),
+        ));
     }
-    let read = ReadOptions {
-        limits: options.limits,
-        fallback_codepage: options.codepage.clone(),
-        keep_raw: true,
+    let read = {
+        let mut new_options = ReadOptions::default()
+            .with_limits(options.limits)
+            .with_keep_raw(true);
+        new_options.fallback_codepage = options.codepage.clone();
+        new_options
     };
     let native = &seed.native;
     let model = seed.model()?;
@@ -438,9 +452,9 @@ fn put_pages(
     let total = records
         .iter()
         .try_fold(0u64, |sum, r| sum.checked_add(r.len() as u64 + 4))
-        .ok_or_else(|| Error::LimitExceeded("DGN output records".into()))?;
+        .ok_or_else(|| Error::limit(LimitKind::Output, "DGN output records".into()))?;
     if total > max {
-        return Err(Error::LimitExceeded("DGN output records".into()));
+        return Err(Error::limit(LimitKind::Output, "DGN output records".into()));
     }
     let mut first = 0;
     let mut bytes = 0usize;
@@ -456,7 +470,7 @@ fn put_pages(
             bytes = 0;
             number = number
                 .checked_add(1)
-                .ok_or_else(|| Error::LimitExceeded("DGN page count".into()))?;
+                .ok_or_else(|| Error::limit(LimitKind::Capacity, "DGN page count".into()))?;
         }
         bytes = bytes.saturating_add(r.len() + 4);
         numbers.push(number);
@@ -637,7 +651,10 @@ impl State<'_> {
                 .saturating_add(new_rasters)
                 >= self.options.limits.max_objects
         {
-            return Err(Error::LimitExceeded("DGN output record budget".into()));
+            return Err(Error::limit(
+                LimitKind::Objects,
+                "DGN output record budget".into(),
+            ));
         }
         if tag {
             self.tags.push(b);
@@ -648,7 +665,10 @@ impl State<'_> {
     }
     fn entity(&mut self, e: &Entity, depth: u32, component: bool) -> Result<()> {
         if depth >= self.options.limits.max_depth || self.work >= self.options.limits.max_objects {
-            return Err(Error::LimitExceeded("DGN output depth/objects".into()));
+            return Err(Error::limit(
+                LimitKind::Objects,
+                "DGN output depth/objects".into(),
+            ));
         }
         self.work += 1;
         let level = self
@@ -975,7 +995,7 @@ impl State<'_> {
                     &mut b,
                     0x6e,
                     &u16::try_from(value.len())
-                        .map_err(|_| Error::LimitExceeded("DGN text length".into()))?
+                        .map_err(|_| Error::limit(LimitKind::Capacity, "DGN text length".into()))?
                         .to_le_bytes(),
                 )?;
                 f64_at(
@@ -1108,7 +1128,10 @@ impl State<'_> {
         if count as u64 > u64::from(self.options.limits.max_vertices)
             || self.vertices > self.options.limits.max_total_vertices
         {
-            return Err(Error::LimitExceeded("DGN output vertices".into()));
+            return Err(Error::limit(
+                LimitKind::TotalVertices,
+                "DGN output vertices".into(),
+            ));
         }
         let mut coordinates: Vec<_> = points
             .iter()
@@ -1222,7 +1245,10 @@ impl State<'_> {
         name: Option<&str>,
     ) -> Result<()> {
         if children.len() as u64 > self.options.limits.max_objects {
-            return Err(Error::LimitExceeded("DGN group children".into()));
+            return Err(Error::limit(
+                LimitKind::Objects,
+                "DGN group children".into(),
+            ));
         }
         let cell = !matches!(kind, GroupKind::ComplexChain | GroupKind::ComplexShape);
         let t = if cell {
@@ -1310,7 +1336,10 @@ impl State<'_> {
         if value.len() as u64 > u64::from(self.options.limits.max_string_bytes)
             || value.contains('\0')
         {
-            return Err(Error::LimitExceeded("DGN string bytes/NUL".into()));
+            return Err(Error::limit(
+                LimitKind::StringBytes,
+                "DGN string bytes/NUL".into(),
+            ));
         }
         if let Some(label) = &self.options.codepage {
             let enc = encoding_rs::Encoding::for_label(label.as_bytes())
@@ -1360,9 +1389,10 @@ impl State<'_> {
             let widened;
             let a = match a.value {
                 Value::Int(n) if self.wide_tags.contains(&tag_key(a)) => {
-                    widened = Attribute {
-                        value: Value::Float(exact_f64(n)?),
-                        ..a.clone()
+                    widened = {
+                        let mut attribute = a.clone();
+                        attribute.value = Value::Float(exact_f64(n)?);
+                        attribute
                     };
                     &widened
                 }
@@ -1410,7 +1440,7 @@ impl State<'_> {
                 &mut b,
                 0x138,
                 u32::try_from(value.len())
-                    .map_err(|_| Error::LimitExceeded("DGN tag value".into()))?,
+                    .map_err(|_| Error::limit(LimitKind::Capacity, "DGN tag value".into()))?,
             )?;
             put(&mut b, 0x140, &value)?;
             match &a.display {

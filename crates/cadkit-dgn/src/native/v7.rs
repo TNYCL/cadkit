@@ -7,6 +7,7 @@
 //! stored as two little-endian words, high word first; doubles are VAX D-float.
 //! Layouts follow GDAL dgnlib (`dgnread.cpp`, MIT/X); see `docs/dgn/FORMAT_NOTES.md`.
 
+use cadkit_core::LimitKind;
 use cadkit_core::{
     Error, Format, LengthUnit, Limits, ReadOptions, Result, Summary, Units, Warning,
 };
@@ -130,10 +131,10 @@ pub(crate) fn scan<'a>(
         return Err(Error::UnknownFormat);
     }
     if bytes.len() as u64 > budget.limits.max_input_bytes {
-        return Err(Error::LimitExceeded(format!(
-            "input exceeds {} bytes",
-            budget.limits.max_input_bytes
-        )));
+        return Err(Error::limit(
+            LimitKind::InputBytes,
+            format!("input exceeds {} bytes", budget.limits.max_input_bytes),
+        ));
     }
     let mut warnings = Vec::new();
     let mut records = Vec::new();
@@ -145,12 +146,13 @@ pub(crate) fn scan<'a>(
         let words = usize::from(le::u16_at(head, 2).unwrap_or(0));
         let len = 4 + 2 * words;
         let Some(rec) = le::bytes(bytes, off, len) else {
-            warnings.push(Warning {
-                code: "dgn.v7_truncated".into(),
-                message: format!("record at {off} declares {len} bytes but the file ends"),
-                offset: Some(off as u64),
-                object: None,
-            });
+            warnings.push(
+                Warning::new(
+                    "dgn.v7_truncated",
+                    format!("record at {off} declares {len} bytes but the file ends"),
+                )
+                .with_offset(off as u64),
+            );
             break;
         };
         budget.charge_objects(1)?;
@@ -181,10 +183,10 @@ pub(crate) fn inspect(bytes: &[u8], options: &ReadOptions) -> Result<Summary> {
     }
     let mut budget = Budget::new(options.limits);
     if bytes.len() as u64 > budget.limits.max_input_bytes {
-        return Err(Error::LimitExceeded(format!(
-            "input exceeds {} bytes",
-            budget.limits.max_input_bytes
-        )));
+        return Err(Error::limit(
+            LimitKind::InputBytes,
+            format!("input exceeds {} bytes", budget.limits.max_input_bytes),
+        ));
     }
     let enc = text::encoding_for(options.fallback_codepage.as_deref());
     let mut tcb = None;
@@ -210,14 +212,8 @@ pub(crate) fn inspect(bytes: &[u8], options: &ReadOptions) -> Result<Summary> {
         .as_ref()
         .and_then(|t| crate::map::unit_from_label(&t.master_label))
     {
-        Some((unit, meters)) => Units {
-            unit,
-            meters_per_unit: Some(meters),
-        },
-        None => Units {
-            unit: LengthUnit::Unitless,
-            meters_per_unit: None,
-        },
+        Some((unit, meters)) => Units::new(unit).with_meters_per_unit(meters),
+        None => Units::new(LengthUnit::Unitless),
     };
     Ok(Summary::new(Format::DgnV7, "V7")
         .with_is_3d(Some(is_3d))

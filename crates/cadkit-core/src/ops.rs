@@ -63,6 +63,7 @@ impl<'a> WalkContext<'a> {
 
 /// Options of [`Document::bbox_with`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct BBoxOptions {
     /// Include `Image` entities in the box.
     pub include_images: bool,
@@ -73,15 +74,37 @@ pub struct BBoxOptions {
 
 impl Default for BBoxOptions {
     fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl BBoxOptions {
+    /// Includes images, with the default work budget.
+    pub const fn new() -> Self {
         Self {
             include_images: true,
             max_work: DEFAULT_MAX_WORK,
         }
     }
+
+    /// Sets [`Self::include_images`].
+    #[must_use]
+    pub const fn with_include_images(mut self, include_images: bool) -> Self {
+        self.include_images = include_images;
+        self
+    }
+
+    /// Sets [`Self::max_work`].
+    #[must_use]
+    pub const fn with_max_work(mut self, max_work: u64) -> Self {
+        self.max_work = max_work;
+        self
+    }
 }
 
 /// Options of [`Document::walk_with`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct WalkOptions {
     /// Deepest block / group nesting that is expanded.
     pub max_depth: u32,
@@ -96,11 +119,39 @@ pub struct WalkOptions {
 
 impl Default for WalkOptions {
     fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl WalkOptions {
+    /// Expands inserts up to the default depth, with the default work budget.
+    pub const fn new() -> Self {
         Self {
             max_depth: DEFAULT_WALK_DEPTH,
             expand_inserts: true,
             max_work: DEFAULT_MAX_WORK,
         }
+    }
+
+    /// Sets [`Self::max_depth`].
+    #[must_use]
+    pub const fn with_max_depth(mut self, max_depth: u32) -> Self {
+        self.max_depth = max_depth;
+        self
+    }
+
+    /// Sets [`Self::expand_inserts`].
+    #[must_use]
+    pub const fn with_expand_inserts(mut self, expand_inserts: bool) -> Self {
+        self.expand_inserts = expand_inserts;
+        self
+    }
+
+    /// Sets [`Self::max_work`].
+    #[must_use]
+    pub const fn with_max_work(mut self, max_work: u64) -> Self {
+        self.max_work = max_work;
+        self
     }
 }
 

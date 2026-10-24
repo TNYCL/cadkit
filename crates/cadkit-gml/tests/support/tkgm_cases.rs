@@ -115,8 +115,16 @@ fn storey_can_reference_a_common_area_room() {
 #[test]
 fn zero_unit_storeys_need_review_without_invented_membership() {
     for (count, code, severity) in [
-        (0, "tkgm.empty_storey_membership", "review"),
-        (1, "tkgm.missing_property", "error"),
+        (
+            0,
+            "tkgm.empty_storey_membership",
+            cadkit_gml::tkgm::Severity::Review,
+        ),
+        (
+            1,
+            "tkgm.missing_property",
+            cadkit_gml::tkgm::Severity::Error,
+        ),
     ] {
         let mut doc = fixture();
         let mut floor = CityObject::new(ObjectKind::CityObjectGroup, "synthetic_floor");
@@ -147,19 +155,14 @@ fn zero_unit_storeys_need_review_without_invented_membership() {
 #[test]
 fn generic_cad_geometry_cannot_be_mistaken_for_tkgm_delivery() {
     let mut doc = Document::default();
-    doc.models.push(Model {
-        entities: vec![Entity::new(EntityKind::Point {
+    doc.models.push(
+        Model::default().with_entities(vec![Entity::new(EntityKind::Point {
             position: Point3::default(),
-        })],
-        ..Default::default()
-    });
+        })]),
+    );
     let native = from_document(
         &doc,
-        &ExportOptions {
-            srs_name: "EPSG:5254".into(),
-            lod: 2,
-            limits: cadkit_core::Limits::default(),
-        },
+        &ExportOptions::new("EPSG:5254", 2).with_limits(cadkit_core::Limits::default()),
     )
     .unwrap();
     let report = tkgm::preflight(
@@ -285,10 +288,7 @@ fn preflight_enforces_explicit_turef_envelope_and_limits() {
             expected_dim
         );
         assert!(!report.acceptance_verified);
-        let limits = cadkit_core::Limits {
-            max_objects: 1,
-            ..Default::default()
-        };
+        let limits = cadkit_core::Limits::default().with_max_objects(1);
         assert!(
             tkgm::preflight(&doc, tkgm::Profile::DigitalBuildingRegistration, &limits).is_err()
         );

@@ -41,14 +41,36 @@ impl std::str::FromStr for Profile {
     }
 }
 
+/// How certain a [`ProfileIssue`] is. Serialized as `"error"` / `"review"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum Severity {
+    /// A definite mismatch with a local rule.
+    Error,
+    /// A conditional case that needs a human decision.
+    Review,
+}
+
+impl Severity {
+    /// The serialized name: `"error"` or `"review"`.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Error => "error",
+            Self::Review => "review",
+        }
+    }
+}
+
 /// A local profile finding. No source names, IDs, attribute values or coordinates.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ProfileIssue {
     /// Stable code, for example `tkgm.attribute_type`.
     pub code: String,
-    /// `error` for a definite local-rule mismatch, `review` for conditional cases.
-    /// Neither severity establishes the receiving authority's decision.
-    pub severity: String,
+    /// [`Severity::Error`] for a definite local-rule mismatch, [`Severity::Review`] for
+    /// conditional cases. Neither severity establishes the receiving authority's decision.
+    pub severity: Severity,
     /// Zero-based index in the bounded native element traversal.
     pub element: usize,
     /// Public schema field name, when relevant.
@@ -139,16 +161,16 @@ const TENDER_CONDITIONAL_FIELDS: &[&str] = &[
 
 impl ProfileReport {
     fn issue(&mut self, code: &str, element: usize, field: Option<&str>) {
-        self.finding(code, "error", element, field);
+        self.finding(code, Severity::Error, element, field);
     }
-    fn finding(&mut self, code: &str, severity: &str, element: usize, field: Option<&str>) {
+    fn finding(&mut self, code: &str, severity: Severity, element: usize, field: Option<&str>) {
         if self.issues.len() >= self.issue_limit {
             self.truncated = true;
             return;
         }
         self.issues.push(ProfileIssue {
             code: code.into(),
-            severity: severity.into(),
+            severity,
             element,
             field: field.map(str::to_owned),
         });
@@ -355,7 +377,7 @@ pub fn preflight(
                 if zero_units {
                     report.finding(
                         "tkgm.empty_storey_membership",
-                        "review",
+                        Severity::Review,
                         index,
                         Some("groupMember"),
                     );

@@ -26,23 +26,22 @@ pub(crate) fn layer(rec: &Record) -> Layer {
     let mut props = Props::new();
     props.insert("dxf.flags".into(), MValue::Int(flags));
     xdata_props(rec, &mut props);
-    Layer {
-        name: g.string(2).unwrap_or_default(),
-        id: handle(g),
-        color,
-        linetype: normalize_linetype(g.string(6)),
-        lineweight: if g.value(370).is_some() {
-            lineweight(g)
-        } else {
-            Lineweight::Default
-        },
-        // A negative color means "layer off".
-        visible: aci >= 0,
-        frozen: flags & 1 != 0,
-        locked: flags & 4 != 0,
-        plottable: g.i64_or(290, 1) != 0,
-        description: None,
-        props,
+    {
+        let mut layer = Layer::new(g.string(2).unwrap_or_default())
+            .with_color(color)
+            .with_lineweight(if g.value(370).is_some() {
+                lineweight(g)
+            } else {
+                Lineweight::Default
+            })
+            .with_visible(aci >= 0)
+            .with_frozen(flags & 1 != 0)
+            .with_locked(flags & 4 != 0)
+            .with_plottable(g.i64_or(290, 1) != 0)
+            .with_props(props);
+        layer.id = handle(g);
+        layer.linetype = normalize_linetype(g.string(6));
+        layer
     }
 }
 
@@ -54,11 +53,11 @@ pub(crate) fn linetype(rec: &Record) -> Option<Linetype> {
         props.insert("dxf.pattern_length".into(), MValue::Float(len));
     }
     xdata_props(rec, &mut props);
-    Some(Linetype {
-        name,
-        description: g.string(3).filter(|s| !s.is_empty()),
-        pattern: g.all(49).filter_map(|v| v.as_f64()).collect(),
-        props,
+    Some({
+        let mut linetype =
+            Linetype::new(name, g.all(49).filter_map(|v| v.as_f64()).collect()).with_props(props);
+        linetype.description = g.string(3).filter(|s| !s.is_empty());
+        linetype
     })
 }
 
@@ -79,12 +78,13 @@ pub(crate) fn text_style(rec: &Record) -> Option<TextStyle> {
         props.insert("dxf.last_height".into(), MValue::Float(v));
     }
     xdata_props(rec, &mut props);
-    Some(TextStyle {
-        name,
-        font: g.string(3).filter(|s| !s.is_empty()),
-        height: g.f64_or(40, 0.0),
-        width_factor: g.f64_or(41, 1.0),
-        oblique: g.f64_or(50, 0.0).to_radians(),
-        props,
+    Some({
+        let mut style = TextStyle::new(name)
+            .with_height(g.f64_or(40, 0.0))
+            .with_width_factor(g.f64_or(41, 1.0))
+            .with_oblique(g.f64_or(50, 0.0).to_radians())
+            .with_props(props);
+        style.font = g.string(3).filter(|s| !s.is_empty());
+        style
     })
 }

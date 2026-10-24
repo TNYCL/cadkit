@@ -13,6 +13,7 @@
 
 use super::{compressed, encode::u32_at, raster, tables::NamedRecord};
 use crate::native::v8::{AuxPage, AuxRecord, Page, PageHeader, RawElement};
+use cadkit_core::LimitKind;
 use cadkit_core::{Error, Result};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -30,9 +31,12 @@ pub(super) fn write(
     let total = records
         .iter()
         .try_fold(0u64, |sum, r| sum.checked_add(r.bytes.len() as u64 + 4))
-        .ok_or_else(|| Error::LimitExceeded("DGN dictionary records".into()))?;
+        .ok_or_else(|| Error::limit(LimitKind::Output, "DGN dictionary records".into()))?;
     if total > max {
-        return Err(Error::LimitExceeded("DGN dictionary records".into()));
+        return Err(Error::limit(
+            LimitKind::Output,
+            "DGN dictionary records".into(),
+        ));
     }
     let new_page = seed_pages
         .iter()
@@ -40,7 +44,7 @@ pub(super) fn write(
         .max()
         .unwrap_or(0)
         .checked_add(1)
-        .ok_or_else(|| Error::LimitExceeded("DGN page count".into()))?;
+        .ok_or_else(|| Error::limit(LimitKind::Capacity, "DGN page count".into()))?;
     let mut pages: BTreeMap<u32, Vec<&NamedRecord>> = BTreeMap::new();
     for r in records {
         pages.entry(r.page.unwrap_or(new_page)).or_default().push(r);
@@ -94,7 +98,7 @@ fn encode(records: &[&NamedRecord], version: u32) -> Result<Vec<u8>> {
         &mut out,
         0,
         u32::try_from(records.len())
-            .map_err(|_| Error::LimitExceeded("DGN page records".into()))?,
+            .map_err(|_| Error::limit(LimitKind::Capacity, "DGN page records".into()))?,
     )?;
     u32_at(&mut out, 4, version)?;
     if !records.is_empty() {

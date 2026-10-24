@@ -10,11 +10,9 @@ fuzz_target!(|data: &[u8]| {
     options.limits.max_total_vertices = 20_000;
     options.limits.max_depth = 32;
     if let Ok(doc) = cadkit_dgn::read(data, &options) {
-        let write = cadkit_dgn::WriteOptions {
-            limits: options.limits,
-            clear_seed_model: true,
-            ..Default::default()
-        };
+        let write = cadkit_dgn::WriteOptions::new()
+            .with_limits(options.limits)
+            .with_clear_seed_model(true);
         let _ = cadkit_dgn::write_v8(&doc, data, &write);
         let _ = cadkit_dgn::repack_v8(data, &options);
     }

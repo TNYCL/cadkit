@@ -245,11 +245,11 @@ impl Mapper {
         offset: Option<u64>,
         object: Option<u64>,
     ) {
-        self.warnings.push(Warning {
-            code: code.into(),
-            message,
-            offset,
-            object,
+        self.warnings.push({
+            let mut warning = Warning::new(code, message);
+            warning.offset = offset;
+            warning.object = object;
+            warning
         });
     }
 
@@ -262,12 +262,7 @@ impl Mapper {
             } else {
                 msg
             };
-            out.push(Warning {
-                code,
-                message,
-                offset: None,
-                object: None,
-            });
+            out.push(Warning::new(code, message));
         }
         out
     }
@@ -298,13 +293,12 @@ impl Mapper {
                 let name = self.font_style_name(*f);
                 let mut props = Props::new();
                 props.insert("dgn.font_number".into(), Value::Int(i64::from(*f)));
-                TextStyle {
-                    font: self.fonts.get(f).cloned(),
-                    name,
-                    height: 0.0,
-                    width_factor: 1.0,
-                    oblique: 0.0,
-                    props,
+                {
+                    let mut style = TextStyle::new(name)
+                        .with_width_factor(1.0)
+                        .with_props(props);
+                    style.font = self.fonts.get(f).cloned();
+                    style
                 }
             })
             .collect()
@@ -364,12 +358,7 @@ impl Mapper {
             .map(|s| {
                 let mut props = Props::new();
                 props.insert("dgn.style".into(), Value::Int(i64::from(*s)));
-                Linetype {
-                    name: style_name(*s),
-                    description: None,
-                    pattern: style_pattern(*s),
-                    props,
-                }
+                Linetype::new(style_name(*s), style_pattern(*s)).with_props(props)
             })
             .collect()
     }
@@ -997,24 +986,21 @@ impl Mapper {
                 Value::Int(i64::from(t.justification)),
             );
             let (halign, valign, _, _) = justification(t.justification);
-            AttributeDisplay {
-                height: xf.dist(t.size[1]),
-                width: xf.dist(t.size[0]),
-                style: Some(self.font_style_name(t.font)),
-                halign,
-                valign,
-                rotation: tag_rotation(t.quaternion),
-            }
+            AttributeDisplay::new(xf.dist(t.size[1]), xf.dist(t.size[0]))
+                .with_style(self.font_style_name(t.font))
+                .with_halign(halign)
+                .with_valign(valign)
+                .with_rotation(tag_rotation(t.quaternion))
         });
-        Attribute {
-            tag,
-            value: tag_value(&t.value),
-            set: set_name,
-            position: has_pos.then(|| xf.pt([ox + dx, oy + dy, oz + dz])),
-            invisible,
-            layer,
-            display,
-            props,
+        {
+            let mut attribute = Attribute::new(tag, tag_value(&t.value))
+                .with_invisible(invisible)
+                .with_props(props);
+            attribute.set = set_name;
+            attribute.position = has_pos.then(|| xf.pt([ox + dx, oy + dy, oz + dz]));
+            attribute.layer = layer;
+            attribute.display = display;
+            attribute
         }
     }
 }

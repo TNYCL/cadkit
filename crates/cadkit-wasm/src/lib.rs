@@ -138,7 +138,7 @@ fn from_cadkit(e: &cadkit::Error) -> JsValue {
         cadkit::Error::Truncated { .. } => "truncated",
         cadkit::Error::Invalid { .. } => "invalid",
         cadkit::Error::Unsupported(_) => "unsupported",
-        cadkit::Error::LimitExceeded(_) => "limit_exceeded",
+        cadkit::Error::LimitExceeded { .. } => "limit_exceeded",
         cadkit::Error::UnknownFormat => "unknown_format",
         cadkit::Error::Io(_) => "io",
         _ => "invalid",
@@ -407,11 +407,10 @@ fn pick_entity_in_doc(
     if !(wx.is_finite() && wy.is_finite() && tolerance.is_finite() && tolerance >= 0.0) {
         return None;
     }
-    let walk_opts = WalkOptions {
-        max_depth: DEFAULT_WALK_DEPTH,
-        expand_inserts: true,
-        max_work: 5_000_000,
-    };
+    let walk_opts = WalkOptions::default()
+        .with_max_depth(DEFAULT_WALK_DEPTH)
+        .with_expand_inserts(true)
+        .with_max_work(5_000_000);
     let mut visited_index = 0usize;
     let mut best: Option<PickCandidate> = None;
     let mut visit = |e: &Entity, ctx: &cadkit::ops::WalkContext<'_>| -> bool {
@@ -558,8 +557,12 @@ impl CadDocument {
         let mut opts = parse_read_options(options)?;
         opts.limits = wasm_limits(opts.limits);
         let native = cadkit::gml::read_native(bytes, &opts).map_err(|e| from_cadkit(&e))?;
-        let doc = cadkit::gml::to_document(&native, &cadkit::gml::ImportOptions { lod }, &opts)
-            .map_err(|e| from_cadkit(&e))?;
+        let doc = cadkit::gml::to_document(
+            &native,
+            &cadkit::gml::ImportOptions::default().with_lod(lod),
+            &opts,
+        )
+        .map_err(|e| from_cadkit(&e))?;
         Ok(CadDocument { doc })
     }
 
@@ -601,11 +604,8 @@ impl CadDocument {
     pub fn to_citygml(&self, srs_name: String, lod: u8) -> Result<Vec<u8>, JsValue> {
         cadkit::to_citygml(
             &self.doc,
-            &cadkit::gml::ExportOptions {
-                srs_name,
-                lod,
-                limits: wasm_limits(cadkit::Limits::default()),
-            },
+            &cadkit::gml::ExportOptions::new(srs_name, lod)
+                .with_limits(wasm_limits(cadkit::Limits::default())),
         )
         .map_err(|e| from_cadkit(&e))
     }
@@ -620,11 +620,8 @@ impl CadDocument {
     ) -> Result<String, JsValue> {
         let (bytes, report) = cadkit::gml::write_document_with_report(
             &self.doc,
-            &cadkit::gml::ExportOptions {
-                srs_name,
-                lod,
-                limits: wasm_limits(cadkit::Limits::default()),
-            },
+            &cadkit::gml::ExportOptions::new(srs_name, lod)
+                .with_limits(wasm_limits(cadkit::Limits::default())),
             if metadata_only {
                 cadkit::gml::UnsupportedGeometry::MetadataOnly
             } else {
@@ -878,10 +875,7 @@ impl CityGmlDocument {
     pub fn from_json_string(text: &str) -> Result<CityGmlDocument, JsValue> {
         let doc = cadkit::gml::read_native_json(
             text,
-            &ReadOptions {
-                limits: wasm_limits(cadkit::Limits::default()),
-                ..Default::default()
-            },
+            &ReadOptions::default().with_limits(wasm_limits(cadkit::Limits::default())),
         )
         .map_err(|e| from_cadkit(&e))?;
         Ok(CityGmlDocument { doc })
@@ -909,11 +903,8 @@ impl CityGmlDocument {
         Ok(CadDocument {
             doc: cadkit::gml::to_document(
                 &self.doc,
-                &cadkit::gml::ImportOptions { lod },
-                &ReadOptions {
-                    limits: wasm_limits(cadkit::Limits::default()),
-                    ..Default::default()
-                },
+                &cadkit::gml::ImportOptions::default().with_lod(lod),
+                &ReadOptions::default().with_limits(wasm_limits(cadkit::Limits::default())),
             )
             .map_err(|e| from_cadkit(&e))?,
         })
@@ -965,11 +956,10 @@ mod tests {
     #[test]
     fn pick_entity_in_doc_selects_closest_and_respects_hidden_layers() {
         let mut doc = Document::new();
-        doc.layers.push(Layer {
-            name: "FROZEN".into(),
-            visible: true,
-            frozen: true,
-            ..Layer::default()
+        doc.layers.push({
+            let mut layer = Layer::new("FROZEN").with_frozen(true);
+            layer.plottable = false;
+            layer
         });
         let mut border = Entity::polyline(
             [

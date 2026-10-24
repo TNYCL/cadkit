@@ -12,6 +12,7 @@ pub mod export;
 pub mod geom;
 pub mod geom_ops;
 pub mod model;
+mod model_builders;
 pub mod ops;
 pub mod options;
 pub mod polygon;
@@ -20,7 +21,7 @@ pub mod text;
 pub mod units;
 
 pub use doc_ops::PurgeStats;
-pub use error::{Error, Result};
+pub use error::{Error, LimitKind, Result};
 pub use geom::{BBox, Point3, Vec3};
 pub use geom_ops::Transform;
 pub use model::*;

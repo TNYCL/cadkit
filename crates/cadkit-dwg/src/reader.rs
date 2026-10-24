@@ -25,22 +25,20 @@ impl Warnings {
     }
 
     fn add(&mut self, code: &str, message: String, offset: Option<u64>, object: Option<u64>) {
-        self.push(Warning {
-            code: code.to_owned(),
-            message,
-            offset,
-            object,
+        self.push({
+            let mut warning = Warning::new(code.to_owned(), message);
+            warning.offset = offset;
+            warning.object = object;
+            warning
         });
     }
 
     fn finish(mut self) -> Vec<Warning> {
         for (code, n) in self.suppressed {
-            self.list.push(Warning {
-                code: code.clone(),
-                message: format!("{n} more {code} warnings suppressed"),
-                offset: None,
-                object: None,
-            });
+            self.list.push(Warning::new(
+                code.clone(),
+                format!("{n} more {code} warnings suppressed"),
+            ));
         }
         self.list
     }

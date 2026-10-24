@@ -5,6 +5,7 @@
 //! standard library's C `json` module. That keeps the binding independent of the
 //! model's shape: new entity kinds and fields appear automatically.
 
+use cadkit::LimitKind;
 use std::sync::Arc;
 
 use cadkit::{DxfVersion, Error, LengthUnit, ReadOptions, SvgOptions};
@@ -48,7 +49,7 @@ fn map_err(err: Error) -> PyErr {
     match err {
         Error::UnknownFormat => UnknownFormatError::new_err(err.to_string()),
         Error::Unsupported(_) => UnsupportedError::new_err(err.to_string()),
-        Error::LimitExceeded(_) => LimitExceededError::new_err(err.to_string()),
+        Error::LimitExceeded { .. } => LimitExceededError::new_err(err.to_string()),
         Error::Truncated { .. } | Error::Invalid { .. } => {
             InvalidDataError::new_err(err.to_string())
         }
@@ -103,10 +104,10 @@ fn build_read_options(
     max_objects: Option<u64>,
     max_depth: Option<u32>,
 ) -> ReadOptions {
-    let mut options = ReadOptions {
-        keep_raw,
-        fallback_codepage: codepage,
-        ..ReadOptions::default()
+    let mut options = {
+        let mut options = ReadOptions::default().with_keep_raw(keep_raw);
+        options.fallback_codepage = codepage;
+        options
     };
     let limits = &mut options.limits;
     limits.max_input_bytes = max_input_bytes.unwrap_or(limits.max_input_bytes);
@@ -179,21 +180,27 @@ impl V8Seed {
                     let file = std::fs::File::open(path)?;
                     let len = file.metadata()?.len();
                     if len > options.limits.max_input_bytes {
-                        return Err(Error::LimitExceeded(format!(
-                            "input is {len} bytes, limit is {}",
-                            options.limits.max_input_bytes
-                        )));
+                        return Err(Error::limit(
+                            LimitKind::InputBytes,
+                            format!(
+                                "input is {len} bytes, limit is {}",
+                                options.limits.max_input_bytes
+                            ),
+                        ));
                     }
                     let mut bytes = Vec::new();
                     use std::io::Read as _;
                     file.take(options.limits.max_input_bytes.saturating_add(1))
                         .read_to_end(&mut bytes)?;
                     if bytes.len() as u64 > options.limits.max_input_bytes {
-                        return Err(Error::LimitExceeded(format!(
-                            "input is {} bytes, limit is {}",
-                            bytes.len(),
-                            options.limits.max_input_bytes
-                        )));
+                        return Err(Error::limit(
+                            LimitKind::InputBytes,
+                            format!(
+                                "input is {} bytes, limit is {}",
+                                bytes.len(),
+                                options.limits.max_input_bytes
+                            ),
+                        ));
                     }
                     cadkit::dgn::V8Seed::parse(&bytes, &options)
                 }
@@ -292,7 +299,8 @@ impl Document {
             .detach(|| {
                 let mut copy = (*src).clone();
                 if copy.explode_inserts(max_depth).truncated {
-                    return Err(Error::LimitExceeded(
+                    return Err(Error::limit(
+                        LimitKind::Depth,
                         "block expansion work limit exceeded".into(),
                     ));
                 }
@@ -367,11 +375,8 @@ impl Document {
             .detach(|| {
                 cadkit::to_citygml(
                     &self.inner,
-                    &cadkit::gml::ExportOptions {
-                        srs_name,
-                        lod,
-                        limits: cadkit::Limits::default(),
-                    },
+                    &cadkit::gml::ExportOptions::new(srs_name, lod)
+                        .with_limits(cadkit::Limits::default()),
                 )
             })
             .map_err(map_err)?;
@@ -390,11 +395,8 @@ impl Document {
             .detach(|| {
                 cadkit::gml::write_document_with_report(
                     &self.inner,
-                    &cadkit::gml::ExportOptions {
-                        srs_name,
-                        lod,
-                        limits: cadkit::Limits::default(),
-                    },
+                    &cadkit::gml::ExportOptions::new(srs_name, lod)
+                        .with_limits(cadkit::Limits::default()),
                     if metadata_only {
                         cadkit::gml::UnsupportedGeometry::MetadataOnly
                     } else {
@@ -495,17 +497,18 @@ impl Document {
                 "width and stroke must be finite and greater than 0",
             ));
         }
-        let options = SvgOptions {
-            model,
-            width_px: width,
-            stroke_px: stroke,
-            background: background
+        let options = {
+            let mut options = SvgOptions::default()
+                .with_model(model)
+                .with_width_px(width)
+                .with_stroke_px(stroke)
+                .with_text(text)
+                .with_expand_blocks(expand_blocks)
+                .with_images(images);
+            options.background = background
                 .filter(|b| !b.is_empty() && *b != "none")
-                .map(str::to_owned),
-            text,
-            expand_blocks,
-            images,
-            ..SvgOptions::default()
+                .map(str::to_owned);
+            options
         };
         let doc = &self.inner;
         Ok(py.detach(|| {
@@ -641,7 +644,7 @@ impl CityGmlDocument {
             .detach(|| {
                 cadkit::gml::to_document(
                     &self.inner,
-                    &cadkit::gml::ImportOptions { lod },
+                    &cadkit::gml::ImportOptions::default().with_lod(lod),
                     &ReadOptions::default(),
                 )
             })
