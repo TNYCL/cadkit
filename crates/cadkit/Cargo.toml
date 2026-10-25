@@ -1,6 +1,6 @@
 [package]
 name = "cadkit"
-description = "Read DWG, DGN, DXF and CityGML into one format-neutral model; write DXF, DGN V8 and CityGML. Pure Rust, no vendor SDK."
+description = "CAD file I/O and document operations for cadkit: read DWG/DGN/DXF/CityGML; write DXF, seed-based DGN V8 and CityGML."
 version.workspace = true
 readme = "README.md"
 edition.workspace = true

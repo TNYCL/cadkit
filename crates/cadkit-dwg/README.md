@@ -1,7 +1,8 @@
 # cadkit-dwg
 
 Clean-room DWG reader for AC1014 (R14) through AC1032 (2018), including the 2007 format.
-Part of [cadkit](https://github.com/TNYCL/cadkit); format notes are in
+R13 (AC1012) is untested; entity coverage is still growing.
+Part of the [cadkit CAD engine](https://github.com/TNYCL/cadkit); format notes are in
 [docs/dwg/FORMAT_NOTES.md](https://github.com/TNYCL/cadkit/blob/main/docs/dwg/FORMAT_NOTES.md). There is no DWG writer.
 
 Most applications should depend on the [`cadkit`](https://crates.io/crates/cadkit) facade crate, which detects the format and re-exports this crate.

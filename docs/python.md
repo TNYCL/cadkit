@@ -5,6 +5,11 @@ platform for Python 3.9+) and maturin. The extension module is `cadkit._cadkit`;
 package is `cadkit`. The distribution is published on PyPI as `pycadkit` (the name `cadkit`
 is taken there), so it installs as `pycadkit` and imports as `cadkit`.
 
+The Python interface covers CAD file I/O, header inspection and document operations.
+It reads DWG, DGN V7/V8, DXF and CityGML 2.0; output includes DXF, seed-based DGN V8,
+CityGML 2.0, SVG and JSON. See the [format matrix](../README.md#format-support) for limits.
+The standalone Rust geometry, scene and GPU modules are separate from this binding.
+
 ## Install
 
 From PyPI: `pip install pycadkit`. Wheels cover Linux x86_64 and

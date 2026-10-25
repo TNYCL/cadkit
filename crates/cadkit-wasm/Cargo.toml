@@ -1,6 +1,6 @@
 [package]
 name = "cadkit-wasm"
-description = "WebAssembly bindings and browser viewer for cadkit."
+description = "WebAssembly file I/O, document operations and SVG viewer for the cadkit CAD engine."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

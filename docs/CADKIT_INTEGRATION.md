@@ -1,9 +1,45 @@
 # Direct library integration
 
-Downstream host applications can call cadkit directly through its Rust, Python,
-WASM, or C/C++ bindings. Format parsing, DGN record encoding, CityGML XML writing,
-and format validation belong in cadkit. The host application supplies its drawing
+cadkit supplies modules for building CAD viewers, editors, geometry tools and file
+import/export workflows. Downstream host applications can call the file/document stack
+through its Rust, Python, WASM, or C/C++ bindings. Format parsing, DGN record encoding,
+CityGML XML writing and format validation belong in cadkit. The host application supplies its drawing
 data, export settings, and file destination; no separate conversion service is required.
+
+## Choosing modules
+
+Use `cadkit` for DWG, DGN V7/V8, DXF and CityGML 2.0 input and the supported output paths:
+DXF, seed-based DGN V8, CityGML 2.0, SVG and JSON. There is no DWG or DGN V7 writer.
+`cadkit-core` supplies the neutral document and operations such as transforms, unit
+conversion, block expansion and layer filtering. Use the
+[format matrix](../README.md#format-support) and each interface's API guide for coverage.
+
+In Rust, add `cadkit-geom` independently for analytic geometry with explicit tolerances.
+Add `cadkit-scene` and `cadkit-gpu` when the application needs scene preparation and GPU
+rendering. File I/O does not require them. Python, WASM and C/C++ expose the documented
+file/document APIs; the standalone geometry, scene and GPU APIs are Rust modules.
+
+## Scene and GPU integration
+
+A Rust host can read or build a `Document`, enable the `document` feature on `cadkit-scene`,
+and call `document::plan_document` with `DocumentPlanOptions`. This turns one model into
+plan items with blocks/arrays expanded, XY projection, layer groups, resolved colors and
+lineweight widths. Curves that do not stay circular are flattened to polylines.
+Inspect `DocumentPlanReport` for skipped entity kinds, flattened curves, dashes drawn solid
+and traversal truncation. Text, hatches/fills, points, images and viewports are not drawn
+by this bridge.
+
+Insert the returned items into `Plan2d` and feed its frames to `cadkit-gpu::PlanRenderer`.
+`Plan2d` needs no GPU. `PlanRenderer` takes the host's `wgpu` device, queue, target format
+and render pass; it opens no window. The host must draw CPU handoffs, selection/preview
+cut-outs and items marked `PlanItem::force_cpu`. Domain object IDs, change tracking,
+interaction and UI remain host responsibilities.
+
+The existing `crates/cadkit-gpu/examples/render_png.rs` demonstrates the document-to-plan
+path and offscreen PNG output. It reports CPU handoffs but has no CPU renderer for them.
+For 3D rendering, supply a `MeshScene` to `MeshRenderer`;
+the document bridge does not automatically create meshes from drawing entities. The
+WASM viewer uses SVG and does not expose these Rust renderers.
 
 ## DGN export
 

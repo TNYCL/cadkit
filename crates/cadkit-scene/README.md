@@ -1,6 +1,8 @@
 # cadkit-scene
 
-GPU-free scene data for drawing CAD geometry, part of [cadkit](https://github.com/TNYCL/cadkit).
+GPU-independent scene data for CAD application viewers and editors, part of the
+[cadkit CAD engine](https://github.com/TNYCL/cadkit). It depends on `cadkit-geom` and is
+WASM-compatible; it does not create a GPU device or open a window.
 
 - `Plan2d`: a persistent store of 2D lines, polylines, arcs and circles (`cadkit-geom` curves)
   split into fixed-size chunks. Each chunk is encoded once into compact GPU instances in f32
@@ -29,5 +31,21 @@ plan.prepare(&view, |_| true);
 let frame = plan.frame(&view, |_| true, &BTreeSet::new(), true);
 assert_eq!(frame.draws.len(), 1);
 ```
+
+## From a drawing document
+
+Enable the optional `document` feature for `cadkit_scene::document::plan_document` and
+`DocumentPlanOptions`. This bridge adds `cadkit-core` and turns one document model into
+plan items: it expands blocks and arrays, projects onto XY, resolves colors/lineweights
+and groups items by layer. Curves that do not stay circular are flattened to polylines.
+
+Inspect `DocumentPlanReport`: it counts flattened curves, dashes drawn solid, skipped
+entity kinds and traversal truncation. Text, hatches/fills, points, images and viewports
+are not drawn by this bridge. It does not produce a 3D mesh from a drawing document.
+
+A frame's CPU handoff must be drawn by the host. `PlanItem::force_cpu` explicitly keeps an
+item on that path; selection/preview cut-outs and precision failures also need host handling.
+The [render_png example](https://github.com/TNYCL/cadkit/blob/main/crates/cadkit-gpu/examples/render_png.rs)
+shows the document bridge with `cadkit-gpu`.
 
 Licensed under MIT or Apache-2.0, at your option.
