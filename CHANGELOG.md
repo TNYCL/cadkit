@@ -6,6 +6,8 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-25
+
 ### Documentation
 
 - Present cadkit as a modular CAD engine, with a module map, document operations,
@@ -365,7 +367,8 @@ Fixed during development, before this first release:
 - No automatic TKGM/CityMax building inference or receiving-system acceptance.
 - DWG R13 (AC1012) is untested; entity coverage of all readers is still growing.
 
-[Unreleased]: https://github.com/TNYCL/cadkit/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/TNYCL/cadkit/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/TNYCL/cadkit/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/TNYCL/cadkit/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/TNYCL/cadkit/compare/v0.3.7...v0.4.0
 [0.3.7]: https://github.com/TNYCL/cadkit/compare/v0.3.6...v0.3.7
