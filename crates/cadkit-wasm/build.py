@@ -86,7 +86,7 @@ def assemble_npm():
     write_json(os.path.join(dest, "package.json"), {
         "name": "cadkit-wasm",
         "version": workspace_version(),
-        "description": "Read DWG, DGN, DXF and CityGML drawings in the browser or Node via WebAssembly.",
+        "description": "CAD file I/O and document operations in browser/Node WebAssembly: read DWG/DGN/DXF/CityGML; write DXF, seed-based DGN V8, CityGML, SVG and JSON.",
         "license": "MIT OR Apache-2.0",
         "author": "TNYCL (https://tnycl.com)",
         "repository": {"type": "git", "url": "git+https://github.com/TNYCL/cadkit.git", "directory": "crates/cadkit-wasm"},

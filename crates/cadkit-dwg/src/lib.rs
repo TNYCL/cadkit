@@ -1,5 +1,6 @@
-//! Clean-room reader for DWG drawings, format versions R13 through 2018
-//! (`AC1012`, `AC1014`, `AC1015`, `AC1018`, `AC1021`, `AC1024`, `AC1027`, `AC1032`).
+//! Clean-room reader for DWG drawings, AC1014 (R14) through AC1032 (2018), including 2007.
+//! The AC1012 (R13) path is implemented but untested; see the repository's DWG format notes.
+//! Entity coverage is still growing. There is no DWG writer.
 //!
 //! Contract used by the `cadkit` facade: [`sniff`], [`inspect`] and [`read`]. The [`native`]
 //! module exposes the decoded file losslessly (header variables, classes, object

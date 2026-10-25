@@ -1,6 +1,6 @@
 [package]
 name = "cadkit-py"
-description = "Python bindings for cadkit."
+description = "Python file I/O and document operations for the cadkit CAD engine."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

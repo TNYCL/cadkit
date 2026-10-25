@@ -1,7 +1,11 @@
 # cadkit-wasm
 
 WebAssembly bindings for cadkit plus a static, drag-and-drop viewer. Everything runs in the
-browser (or Node); drawings are never uploaded.
+browser (or Node); parsing and export do not require a conversion service. This interface
+covers file I/O, inspection, document operations and SVG-based viewing. It reads DWG,
+DGN V7/V8, DXF and CityGML 2.0 and writes DXF, seed-based DGN V8, CityGML 2.0, SVG and JSON;
+see the [format matrix](../README.md#format-support) for limits. The standalone Rust
+geometry, scene and GPU renderer APIs are not exported by the npm package.
 
 ## Build
 

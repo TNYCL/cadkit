@@ -6,6 +6,13 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Documentation
+
+- Present cadkit as a modular CAD engine, with a module map, document operations,
+  geometry/scene/rendering boundaries and clearer supported file input/output.
+- Align package descriptions and READMEs with the current APIs, document the scene bridge
+  and CPU handoff, and clarify 0.5 migration and the untested DWG R13 scope.
+
 ## [0.5.0] - 2026-10-24
 
 0.5 is the deliberate breaking release that settles the API: later 0.5.x releases only add.

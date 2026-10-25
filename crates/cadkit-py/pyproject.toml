@@ -7,7 +7,7 @@ build-backend = "maturin"
 # The distribution is `pycadkit` (the name `cadkit` is registered on PyPI by someone else);
 # the import name stays `cadkit`.
 name = "pycadkit"
-description = "Read DWG, DGN, DXF and CityGML into one format-neutral model; write DXF, DGN V8 and CityGML (pure Rust, no vendor SDK)."
+description = "Python CAD file I/O and document operations: read DWG/DGN/DXF/CityGML; write DXF, seed-based DGN V8, CityGML, SVG and JSON."
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT OR Apache-2.0"

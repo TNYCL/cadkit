@@ -1,6 +1,6 @@
 [package]
 name = "cadkit-dwg"
-description = "Clean-room DWG reader (R13 through 2018)."
+description = "Clean-room DWG reader for AC1014 (R14) through AC1032 (2018); R13 is untested."
 version.workspace = true
 readme = "README.md"
 edition.workspace = true

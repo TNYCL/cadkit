@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Independent f64 analytic geometry, polygon booleans and certified NURBS operations"
+description = "Independent f64 analytic CAD geometry: curves, polygon booleans, trim/offset, calibration and bounded NURBS operations."
 keywords = ["cad", "geometry", "nurbs", "polygon", "boolean"]
 categories = ["mathematics", "graphics"]
 
