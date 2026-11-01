@@ -333,6 +333,20 @@ pub fn to_svg_all_layers(doc: &Document, options: &SvgOptions) -> String {
     cadkit_core::svg::render_all_layers(doc, options)
 }
 
+/// Renders a complete SVG within the output byte and work budgets in `options`.
+/// `include_hidden_layers` includes hidden and frozen layers when true.
+/// Returns [`Error::LimitExceeded`] rather than a truncated drawing. The byte
+/// cap includes all markup and bounds temporary SVG strings during generation;
+/// it does not bound the memory already owned by the parsed document.
+#[cfg(feature = "svg")]
+pub fn to_svg_bounded(
+    doc: &Document,
+    options: &SvgOptions,
+    include_hidden_layers: bool,
+) -> Result<String> {
+    cadkit_core::svg::render_bounded(doc, options, include_hidden_layers)
+}
+
 /// Writes an SVG rendering of `doc` into `writer`.
 #[cfg(feature = "svg")]
 pub fn write_svg_to(doc: &Document, options: &SvgOptions, mut writer: impl Write) -> Result<()> {

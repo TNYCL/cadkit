@@ -52,6 +52,7 @@ doc.layers()    // [{name, color, visible, frozen, locked}]
 doc.warnings()  // [{code, message, offset}]
 doc.toJSON()    // full document as an object; toJsonString(pretty) gives text
 doc.toSvg({ model: 0, widthPx: 1600, strokePx: 1, background: "#fff", text: true, images: true, expandBlocks: true, includeHiddenLayers: false })
+doc.toSvgBounded({ model: 0, maxOutputBytes: 16 * 1024 * 1024, maxWork: 2_000_000, images: false })
 doc.toDxf("r2018")   // "r12" | "r2000" | "r2004" | "r2007" | "r2010" | "r2013" | "r2018"
 doc.toDgn(seedBytes, { clearSeedModel: true })   // Uint8Array
 doc.toCityGml("urn:ogc:def:crs:EPSG::4979", 1)                     // Uint8Array (UTF-8 XML)
@@ -68,6 +69,19 @@ doc.free()
 Errors are thrown as `Error` objects with a `kind` property: `unknown_format`, `unsupported`,
 `invalid`, `truncated`, `limit_exceeded` (from the readers), plus `io` and `bad_argument`
 (bad `model` index or DXF version). `toSvg({background: null})` gives a transparent SVG.
+
+Use `toSvgBounded` for previews of untrusted drawings. `maxOutputBytes` is required
+(positive integer, at most `2^32 - 1`) and counts the entire UTF-8 SVG, including XML,
+layer names and definitions. Temporary paths, escaped text, accumulated layer bodies
+and final assembly are checked before they grow past the cap. Derived geometry/text
+scratch has a conservative size check, so a too-large temporary can fail even when
+the final SVG would be smaller. The cap is not a bound on total process memory or on
+the parsed document: parsing still needs the `read` limits and worker isolation.
+`maxWork` optionally overrides the normal traversal work budget (positive safe integer).
+Budget exhaustion throws `Error.kind === "limit_exceeded"`; no partial SVG is returned.
+Free the document and terminate/recreate its worker after this error to release the
+WASM memory instance. A caller adding CSS or other markup must also budget that output.
+The existing `toSvg` API keeps its coarse body limit and truncation-marker behavior.
 
 Limits: wasm32 aborts on allocation failure, so `read` uses conservative defaults instead of
 the desktop ones: input 512 MiB, decompressed 1 GiB, 5,000,000 objects, depth 64. Override with
