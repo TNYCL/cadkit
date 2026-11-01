@@ -6,6 +6,8 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-11-01
+
 ### Added
 
 - `cadkit::to_svg_bounded`, `cadkit_core::svg::render_bounded` and WASM
@@ -376,7 +378,8 @@ Fixed during development, before this first release:
 - No automatic TKGM/CityMax building inference or receiving-system acceptance.
 - DWG R13 (AC1012) is untested; entity coverage of all readers is still growing.
 
-[Unreleased]: https://github.com/TNYCL/cadkit/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/TNYCL/cadkit/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/TNYCL/cadkit/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/TNYCL/cadkit/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/TNYCL/cadkit/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/TNYCL/cadkit/compare/v0.3.7...v0.4.0
