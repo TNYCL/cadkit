@@ -30,6 +30,79 @@ function thrown(fn) {
   return undefined;
 }
 
+test("bounded SVG includes UTF-8 markup, rejects excess and remains usable", () => {
+  const doc = wasm.read(new TextEncoder().encode(DXF));
+  try {
+    for (const includeHiddenLayers of [false, true]) {
+      const options = { includeHiddenLayers, background: "#fff" };
+      const expected = doc.toSvg(options);
+      const size = Buffer.byteLength(expected);
+      assert.equal(doc.toSvgBounded({ ...options, maxOutputBytes: size }), expected);
+      assert.equal(thrown(() => doc.toSvgBounded({ ...options, maxOutputBytes: size - 1 }))?.kind, "limit_exceeded");
+    }
+    assert.equal(thrown(() => doc.toSvgBounded({ maxOutputBytes: 4096, maxWork: 1 }))?.kind, "limit_exceeded");
+    for (const maxOutputBytes of [undefined, null, -1, 0, 1.5, NaN, Infinity, 2 ** 32, "100"]) {
+      assert.equal(thrown(() => doc.toSvgBounded({ maxOutputBytes }))?.kind, "bad_argument");
+    }
+    assert.equal(thrown(() => doc.toSvgBounded({ maxOutputBytes: 4096, maxWork: -1 }))?.kind, "bad_argument");
+    assertSvg(doc.toSvgBounded({ maxOutputBytes: 4096 }));
+  } finally { doc.free(); }
+});
+
+test("bounded SVG rejects one expanding Unicode entity and a large model", () => {
+  const source = wasm.read(new TextEncoder().encode(DXF));
+  const object = source.toJSON();
+  source.free();
+  const entity = object.models[0].entities[0];
+  object.models[0].entities = [{ ...entity, kind: {
+    type: "text", position: { x: 0, y: 0, z: 0 }, height: 1, rotation: 0,
+    width_factor: 1, oblique: 0, value: "<&測🙂".repeat(2000),
+    normal: { x: 0, y: 0, z: 1 }, halign: "left", valign: "baseline",
+  } }];
+  const text = wasm.CadDocument.fromJsonString(JSON.stringify(object));
+  try {
+    const full = text.toSvg();
+    assert.ok(Buffer.byteLength(full) > full.length);
+    assert.equal(thrown(() => text.toSvgBounded({ maxOutputBytes: 32_000 }))?.kind, "limit_exceeded");
+    assert.equal(text.toSvgBounded({ maxOutputBytes: Buffer.byteLength(full) }), full);
+  } finally { text.free(); }
+  object.models[0].entities = Array(20_000).fill(entity);
+  const large = wasm.CadDocument.fromJsonString(JSON.stringify(object));
+  try {
+    assert.equal(thrown(() => large.toSvgBounded({ maxOutputBytes: 64 * 1024 }))?.kind, "limit_exceeded");
+  } finally { large.free(); }
+});
+
+test("synthetic DGN V7 stays within read limits but exceeds the SVG budget", () => {
+  // Native V7 layout from native/v7.rs: TCB, 2D LINE records, EOF marker.
+  // Coordinates are middle-endian integers; no external or private fixture.
+  const count = 5000;
+  const bytes = new Uint8Array(1536 + count * 52 + 2);
+  const view = new DataView(bytes.buffer);
+  bytes.set([0x08, 0x09, 0xfe, 0x02]);
+  for (let i = 0; i < count; i++) {
+    const offset = 1536 + i * 52;
+    bytes.set([1, 3, 24, 0], offset);
+    for (const [j, coordinate] of [0, i, 10000, i + 1].entries()) {
+      view.setUint16(offset + 36 + j * 4, coordinate >>> 16, true);
+      view.setUint16(offset + 38 + j * 4, coordinate & 0xffff, true);
+    }
+  }
+  bytes.set([0xff, 0xff], bytes.length - 2);
+  const doc = wasm.read(bytes, {
+    keepRaw: false, maxInputBytes: 128 * 1024 * 1024,
+    maxDecompressedBytes: 256 * 1024 * 1024, maxObjects: 1_000_000, maxDepth: 64,
+  });
+  try {
+    assert.equal(doc.info().format, "dgn_v7");
+    assert.equal(doc.info().models[0].entities, count);
+    const full = doc.toSvg({ images: false, includeHiddenLayers: true });
+    assert.ok(Buffer.byteLength(full) > 64 * 1024);
+    assert.equal(thrown(() => doc.toSvgBounded({ images: false, includeHiddenLayers: true, maxOutputBytes: 64 * 1024 }))?.kind, "limit_exceeded");
+    assert.equal(doc.toSvgBounded({ images: false, includeHiddenLayers: true, maxOutputBytes: Buffer.byteLength(full) }), full);
+  } finally { doc.free(); }
+});
+
 test("detect returns undefined for garbage", () => {
   assert.equal(wasm.detect(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8])), undefined);
   assert.equal(wasm.detect(new Uint8Array(0)), undefined);

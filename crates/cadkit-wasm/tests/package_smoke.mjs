@@ -19,6 +19,8 @@ assert.equal(detect(DXF), "dxf");
 const web = read(DXF);
 assert.equal(web.info().format, "dxf");
 assert.match(web.toSvg(), /<svg/);
+assert.equal(web.toSvgBounded({ maxOutputBytes: 4096 }), web.toSvg());
+assert.throws(() => web.toSvgBounded({ maxOutputBytes: 1 }), { kind: "limit_exceeded" });
 web.free();
 
 // Node build: CommonJS, initialized on load.
@@ -26,6 +28,8 @@ const node = require("cadkit-wasm/node");
 assert.equal(node.detect(DXF), "dxf");
 const doc = node.read(DXF);
 assert.equal(doc.info().format, "dxf");
+assert.equal(doc.toSvgBounded({ maxOutputBytes: 4096 }), doc.toSvg());
+assert.throws(() => doc.toSvgBounded({ maxOutputBytes: 1 }), { kind: "limit_exceeded" });
 doc.free();
 
 const { version } = require("cadkit-wasm/package.json");

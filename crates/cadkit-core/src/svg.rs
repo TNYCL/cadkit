@@ -30,12 +30,20 @@
 //!   [`WalkOptions::max_work`](crate::ops::WalkOptions::max_work)) and
 //!   [`SvgOptions::max_output_bytes`]. When either limit cuts the drawing short the root
 //!   element carries `data-truncated="true"` and an XML comment says so.
+//! - [`render_bounded`] instead rejects incomplete output. Its byte cap includes the
+//!   complete UTF-8 SVG and limits intermediate SVG buffers before they grow.
 //! - Output is deterministic: no hash-order or time dependence, numbers use a fixed
 //!   precision derived from the drawing extent with trailing zeros removed.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::f64::consts::{PI, TAU};
+
+mod buffer;
+use buffer::{Budget, Buffer};
+
+#[cfg(test)]
+mod bounded_tests;
 
 use crate::geom::{Point3, Vec3};
 use crate::geom_ops::{EllipseArc, Transform, ccw_sweep, conjugate_to_axes};
@@ -72,6 +80,8 @@ pub struct SvgOptions {
     /// per vertex / segment / spline sample / text byte; see `ops::WalkOptions::max_work`).
     pub max_work: u64,
     /// Stop emitting geometry once this many bytes of SVG body have been produced.
+    /// [`render_bounded`] uses this as the complete UTF-8 output and temporary-buffer
+    /// budget instead, returning an error on exhaustion rather than partial output.
     pub max_output_bytes: usize,
 }
 
@@ -291,9 +301,17 @@ pub fn with_contrast(color: (u8, u8, u8), bg: (u8, u8, u8)) -> (u8, u8, u8) {
     }
 }
 
+#[cfg(test)]
 fn escape(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
+    escape_bounded(s, &Budget::default()).into_string()
+}
+
+fn escape_bounded(s: &str, budget: &Budget) -> Buffer {
+    let mut out = budget.buffer();
     for c in s.chars() {
+        if budget.exceeded() {
+            break;
+        }
         match c {
             '&' => out.push_str("&amp;"),
             '<' => out.push_str("&lt;"),
@@ -314,15 +332,15 @@ fn hex((r, g, b): (u8, u8, u8)) -> String {
 /// Builds an SVG path `d` string in view coordinates.
 struct PathBuilder<'f> {
     fmt: &'f Fmt,
-    d: String,
+    d: Buffer,
     cur: Option<(f64, f64)>,
 }
 
 impl<'f> PathBuilder<'f> {
-    fn new(fmt: &'f Fmt) -> Self {
+    fn new(fmt: &'f Fmt, budget: &Budget) -> Self {
         Self {
             fmt,
-            d: String::new(),
+            d: budget.buffer(),
             cur: None,
         }
     }
@@ -409,6 +427,9 @@ impl<'f> PathBuilder<'f> {
 
     fn polyline(&mut self, pts: &[(f64, f64)], closed: bool) {
         for (i, p) in pts.iter().enumerate() {
+            if self.d.exceeded() {
+                break;
+            }
             if i == 0 {
                 self.move_to(*p);
             } else {
@@ -430,6 +451,9 @@ impl<'f> PathBuilder<'f> {
         self.move_to((first.x, first.y));
         let segs = if closed { n } else { n - 1 };
         for i in 0..segs {
+            if self.d.exceeded() {
+                break;
+            }
             let (Some(a), Some(b)) = (vs.get(i), vs.get((i + 1) % n)) else {
                 continue;
             };
@@ -454,25 +478,53 @@ struct Layers {
     images: String,
     /// Bytes of body text produced so far.
     bytes: usize,
+    budget: Budget,
+    stroke_px: f64,
 }
 
 impl Layers {
     fn push_image(&mut self, text: &str) {
-        self.bytes += text.len();
+        if !self.reserve(text.len()) {
+            return;
+        }
         self.images.push_str(text);
     }
 
+    fn reserve(&mut self, bytes: usize) -> bool {
+        let next = self.bytes.saturating_add(bytes);
+        if !self.budget.allows(next) {
+            return false;
+        }
+        self.bytes = next;
+        true
+    }
+
     fn push(&mut self, name: &str, text: &str) {
-        self.bytes += text.len();
+        if !self.reserve(text.len()) || !self.budget.allows(name.len()) {
+            return;
+        }
         if let Some(&i) = self.index.get(name) {
             if let Some((_, body)) = self.items.get_mut(i) {
                 body.push_str(text);
             }
             return;
         }
+        if !self.budget.is_unlimited() {
+            let opening = layer_open(name, self.stroke_px, &self.budget);
+            if !self.reserve(opening.len().saturating_add("</g>\n".len())) {
+                return;
+            }
+        }
         self.index.insert(name.to_owned(), self.items.len());
         self.items.push((name.to_owned(), text.to_owned()));
     }
+}
+
+fn layer_open(name: &str, stroke: f64, budget: &Budget) -> Buffer {
+    budget.format(format_args!(
+        "<g data-layer=\"{}\" fill=\"none\" stroke-width=\"{}\" stroke-linecap=\"round\" stroke-linejoin=\"round\">\n",
+        escape_bounded(name, budget), fmt_num(stroke, 3)
+    ))
 }
 
 fn wrap_mtext_lines(lines: Vec<String>, width: f64, height: f64) -> Vec<String> {
@@ -510,7 +562,15 @@ fn wrap_mtext_lines(lines: Vec<String>, width: f64, height: f64) -> Vec<String> 
     wrapped
 }
 
-fn dash_array_px(pattern: &[f64], px_per_unit: f64, stroke_px: f64) -> Option<String> {
+fn dash_array_px(
+    pattern: &[f64],
+    px_per_unit: f64,
+    stroke_px: f64,
+    budget: &Budget,
+) -> Option<String> {
+    if !budget.allows(pattern.len().saturating_mul(2 * std::mem::size_of::<f64>())) {
+        return None;
+    }
     if pattern.is_empty() || !pattern.iter().any(|&v| v.is_finite() && v < -1e-12) {
         return None;
     }
@@ -532,7 +592,7 @@ fn dash_array_px(pattern: &[f64], px_per_unit: f64, stroke_px: f64) -> Option<St
         12.0 * stroke_px / unit_cycle
     };
 
-    let mut pairs: Vec<f64> = Vec::with_capacity(pattern.len() + 2);
+    let mut pairs: Vec<f64> = Vec::with_capacity(pattern.len().saturating_mul(2));
     let mut expect_dash = true;
     for &seg in pattern {
         if !seg.is_finite() {
@@ -567,8 +627,17 @@ fn dash_array_px(pattern: &[f64], px_per_unit: f64, stroke_px: f64) -> Option<St
     if pairs.len() < 2 {
         return None;
     }
-    let formatted: Vec<String> = pairs.into_iter().map(|v| fmt_num(v, 2)).collect();
-    Some(formatted.join(" "))
+    let mut formatted = budget.buffer();
+    for (i, value) in pairs.into_iter().enumerate() {
+        if budget.exceeded() {
+            break;
+        }
+        if i > 0 {
+            formatted.push(' ');
+        }
+        formatted.push_str(&fmt_num(value, 2));
+    }
+    Some(formatted.into_string())
 }
 
 struct Renderer<'a> {
@@ -588,6 +657,9 @@ struct Renderer<'a> {
     linetype_map: HashMap<String, &'a Linetype>,
     block_map: HashMap<&'a str, &'a Block>,
     background: (u8, u8, u8),
+    budget: Budget,
+    attribute_work: u64,
+    work_exceeded: bool,
 }
 
 impl<'a> Renderer<'a> {
@@ -636,19 +708,32 @@ impl<'a> Renderer<'a> {
         if raw_name.eq_ignore_ascii_case("CONTINUOUS") || raw_name.eq_ignore_ascii_case("BYBLOCK") {
             return None;
         }
+        if !self.budget.allows(raw_name.len()) {
+            return None;
+        }
         let lt = self.linetype_map.get(&raw_name.to_ascii_lowercase())?;
-        dash_array_px(&lt.pattern, self.px_per_unit, self.stroke_px)
+        dash_array_px(&lt.pattern, self.px_per_unit, self.stroke_px, &self.budget)
     }
 
     fn stroke_attrs(&self, e: &Entity, ctx: &WalkContext<'_>, color: (u8, u8, u8)) -> String {
-        let mut s = Self::stroke_base(color);
+        let mut s = self
+            .budget
+            .format(format_args!("{}", Self::stroke_base(color)));
         if let Some(w) = self.resolved_stroke_width(e, ctx) {
-            s.push_str(&format!(" stroke-width=\"{}\"", fmt_num(w, 3)));
+            s.push_str(
+                &self
+                    .budget
+                    .format(format_args!(" stroke-width=\"{}\"", fmt_num(w, 3))),
+            );
         }
         if let Some(dash) = self.resolved_dasharray(e, ctx) {
-            s.push_str(&format!(" stroke-dasharray=\"{dash}\""));
+            s.push_str(
+                &self
+                    .budget
+                    .format(format_args!(" stroke-dasharray=\"{dash}\"")),
+            );
         }
-        s
+        s.into_string()
     }
 
     fn hatch_pattern_id(
@@ -658,6 +743,9 @@ impl<'a> Renderer<'a> {
         pattern_angle: f64,
         color: (u8, u8, u8),
     ) -> String {
+        if !self.budget.allows(pattern.map_or(0, str::len)) {
+            return String::new();
+        }
         let pat_upper = pattern.unwrap_or("ANSI31").to_ascii_uppercase();
         let base_angle = if pat_upper.contains("31")
             || pat_upper.contains("32")
@@ -693,39 +781,47 @@ impl<'a> Renderer<'a> {
         let c_hex = hex(color);
         let sw_s = fmt_num((self.stroke_px * 0.75).max(0.5), 3);
 
-        let key = format!("{c_hex}:{step_s}:{deg_s}:{cross_hatch}");
-        if let Some(existing) = self.hatch_cache.get(&key) {
+        let key = self
+            .budget
+            .format(format_args!("{c_hex}:{step_s}:{deg_s}:{cross_hatch}"));
+        if let Some(existing) = self.hatch_cache.get(&*key) {
             return existing.clone();
         }
-        let id = format!("cadkit-hatch-{}", self.defs.len() + 1);
+        let id = self
+            .budget
+            .format(format_args!("cadkit-hatch-{}", self.defs.len() + 1));
         let rot_attr = if total_deg.abs() > 1e-3 {
-            format!(" patternTransform=\"rotate({deg_s})\"")
+            self.budget
+                .format(format_args!(" patternTransform=\"rotate({deg_s})\""))
         } else {
-            String::new()
+            self.budget.buffer()
         };
-        let mut def = format!(
+        let mut def = self.budget.format(format_args!(
             "<pattern id=\"{id}\" patternUnits=\"userSpaceOnUse\" width=\"{step_s}\" height=\"{step_s}\"{rot_attr}>"
-        );
-        def.push_str(&format!(
-            "<line x1=\"0\" y1=\"0\" x2=\"{step_s}\" y2=\"0\" stroke=\"{c_hex}\" stroke-width=\"{sw_s}\" vector-effect=\"non-scaling-stroke\"/>"
         ));
+        def.push_str(&self.budget.format(format_args!(
+            "<line x1=\"0\" y1=\"0\" x2=\"{step_s}\" y2=\"0\" stroke=\"{c_hex}\" stroke-width=\"{sw_s}\" vector-effect=\"non-scaling-stroke\"/>"
+        )));
         if cross_hatch {
-            def.push_str(&format!(
+            def.push_str(&self.budget.format(format_args!(
                 "<line x1=\"0\" y1=\"0\" x2=\"0\" y2=\"{step_s}\" stroke=\"{c_hex}\" stroke-width=\"{sw_s}\" vector-effect=\"non-scaling-stroke\"/>"
-            ));
+            )));
         }
         def.push_str("</pattern>\n");
-        self.layers.bytes += def.len();
-        self.defs.push(def);
-        self.hatch_cache.insert(key, id.clone());
-        id
+        if self.layers.reserve(def.len()) {
+            self.defs.push(def.into_string());
+            self.hatch_cache.insert(key.into_string(), id.to_string());
+        }
+        id.into_string()
     }
 
     fn emit_path(&mut self, layer: &str, d: &str, extra: &str) {
         if d.is_empty() {
             return;
         }
-        let line = format!("<path d=\"{d}\"{extra}/>\n");
+        let line = self
+            .budget
+            .format(format_args!("<path d=\"{d}\"{extra}/>\n"));
         self.layers.push(layer, &line);
     }
 
@@ -756,6 +852,17 @@ impl<'a> Renderer<'a> {
         let tf = self.view.compose(&ctx.transform);
         let owner_color = with_contrast(e.resolved_color_in(self.doc, ctx), self.background);
         for attr in &e.attributes {
+            if self.budget.exceeded() || self.work_exceeded {
+                break;
+            }
+            // Attributes are outside the document walk's entity accounting.
+            let cost = match &attr.value {
+                Value::Text(value) => 1_u64.saturating_add(value.len() as u64),
+                _ => 1,
+            };
+            if !self.charge_attributes(cost) {
+                break;
+            }
             if attr.invisible {
                 continue;
             }
@@ -773,6 +880,9 @@ impl<'a> Renderer<'a> {
                 _ => continue,
             };
             let attr_layer = attr.layer.as_deref().unwrap_or_else(|| ctx.layer_name(e));
+            if !self.budget.allows(attr_layer.len()) {
+                break;
+            }
             if self.layer_hidden(attr_layer) {
                 continue;
             }
@@ -813,7 +923,7 @@ impl<'a> Renderer<'a> {
         cap: usize,
     ) {
         for e in list {
-            if self.layers.bytes > cap {
+            if self.layers.bytes > cap || self.budget.exceeded() || !self.charge_attributes(1) {
                 return;
             }
             let layer = ctx.layer_name(e);
@@ -848,8 +958,11 @@ impl<'a> Renderer<'a> {
                     stack.push(def.name.as_str());
                     for r in 0..(*rows).max(1) {
                         for c in 0..(*columns).max(1) {
-                            if self.layers.bytes > cap {
-                                break;
+                            if self.layers.bytes > cap
+                                || self.budget.exceeded()
+                                || !self.charge_attributes(1)
+                            {
+                                return;
                             }
                             let offset = Vec3::new(
                                 f64::from(c) * *column_spacing,
@@ -890,11 +1003,14 @@ impl<'a> Renderer<'a> {
     }
 
     fn render_entity(&mut self, e: &Entity, ctx: &WalkContext<'_>) {
+        if !self.budget.allows(ctx.layer_name(e).len()) {
+            return;
+        }
         let layer = ctx.layer_name(e).to_owned();
         let color = with_contrast(e.resolved_color_in(self.doc, ctx), self.background);
         let tf = self.view.compose(&ctx.transform);
         let fmt = Fmt { dec: self.fmt.dec };
-        let mut pb = PathBuilder::new(&fmt);
+        let mut pb = PathBuilder::new(&fmt, &self.budget);
         match &e.kind {
             EntityKind::Point { position } => {
                 let p = tf.apply_point(*position);
@@ -1090,13 +1206,16 @@ impl<'a> Renderer<'a> {
                 normal,
             } => {
                 for l in loops {
+                    if self.budget.exceeded() {
+                        break;
+                    }
                     hatch_loop(&mut pb, &l.edges, *normal, &tf);
                 }
                 let extra = if *solid {
-                    format!(
+                    self.budget.format(format_args!(
                         " fill=\"{}\" fill-rule=\"evenodd\" stroke=\"none\"",
                         hex(color)
-                    )
+                    ))
                 } else {
                     let pid = self.hatch_pattern_id(
                         pattern.as_deref(),
@@ -1104,10 +1223,10 @@ impl<'a> Renderer<'a> {
                         *pattern_angle,
                         color,
                     );
-                    format!(
+                    self.budget.format(format_args!(
                         " fill=\"url(#{pid})\" fill-rule=\"evenodd\"{}",
                         self.stroke_attrs(e, ctx, color)
-                    )
+                    ))
                 };
                 self.emit_path(&layer, &pb.d, &extra);
             }
@@ -1134,9 +1253,10 @@ impl<'a> Renderer<'a> {
                     pb.polyline(&v, true);
                     let stroke = self.stroke_attrs(e, ctx, color);
                     let extra = if *filled {
-                        format!(" fill=\"{}\"{stroke}", hex(color))
+                        self.budget
+                            .format(format_args!(" fill=\"{}\"{stroke}", hex(color)))
                     } else {
-                        stroke
+                        self.budget.format(format_args!("{stroke}"))
                     };
                     self.emit_path(&layer, &pb.d, &extra);
                 }
@@ -1146,6 +1266,9 @@ impl<'a> Renderer<'a> {
                 interiors,
             } => {
                 for ring in std::iter::once(exterior).chain(interiors.iter()) {
+                    if self.budget.exceeded() {
+                        break;
+                    }
                     let points: Vec<_> = ring
                         .iter()
                         .map(|p| tf.apply_point(*p))
@@ -1157,7 +1280,10 @@ impl<'a> Renderer<'a> {
                 self.emit_path(
                     &layer,
                     &pb.d,
-                    &format!(" fill=\"{}\" fill-rule=\"evenodd\"{stroke}", hex(color)),
+                    &self.budget.format(format_args!(
+                        " fill=\"{}\" fill-rule=\"evenodd\"{stroke}",
+                        hex(color)
+                    )),
                 );
             }
             EntityKind::Leader {
@@ -1223,17 +1349,23 @@ impl<'a> Renderer<'a> {
                 } else {
                     ""
                 };
-                let extra = format!(
+                let extra = self.budget.format(format_args!(
                     "{}{faint} stroke-dasharray=\"4 3\"",
                     Self::stroke_base(color)
-                );
+                ));
                 if !pb.d.is_empty() {
-                    self.layers
-                        .push_image(&format!("<path d=\"{}\"{extra}/>\n", pb.d));
+                    self.layers.push_image(
+                        &self
+                            .budget
+                            .format(format_args!("<path d=\"{}\"{extra}/>\n", pb.d)),
+                    );
                 }
             }
             EntityKind::Mesh { vertices, faces } => {
                 for f in faces {
+                    if self.budget.exceeded() {
+                        break;
+                    }
                     let v: Vec<(f64, f64)> = f
                         .iter()
                         .filter_map(|&i| vertices.get(i as usize))
@@ -1265,6 +1397,19 @@ impl<'a> Renderer<'a> {
         pb.line_to((p.0 + s, p.1));
         pb.move_to((p.0, p.1 - s));
         pb.line_to((p.0, p.1 + s));
+    }
+
+    fn charge_attributes(&mut self, cost: u64) -> bool {
+        if self.budget.is_unlimited() {
+            return true;
+        }
+        if let Some(remaining) = self.attribute_work.checked_sub(cost) {
+            self.attribute_work = remaining;
+            true
+        } else {
+            self.work_exceeded = true;
+            false
+        }
     }
 
     /// Aligned / fit text along the baseline `ends.0 -> ends.1` (world points).
@@ -1303,28 +1448,30 @@ impl<'a> Renderer<'a> {
         let font = if fit { base } else { base * len / natural };
         let angle = (p1.y - p0.y).atan2(p1.x - p0.x).to_degrees();
         let (x, y) = (self.fmt.num(p0.x), self.fmt.num(p0.y));
-        let mut el = format!("<text x=\"{x}\" y=\"{y}\"");
+        let mut el = self
+            .budget
+            .format(format_args!("<text x=\"{x}\" y=\"{y}\""));
         if angle.abs() > 1e-6 {
-            el.push_str(&format!(
+            el.push_str(&self.budget.format(format_args!(
                 " transform=\"rotate({} {x} {y})\"",
                 fmt_num(angle, 3)
-            ));
+            )));
         }
-        el.push_str(&format!(
+        el.push_str(&self.budget.format(format_args!(
             " font-size=\"{}\" text-anchor=\"start\"",
             self.fmt.num(font)
-        ));
+        )));
         if fit {
-            el.push_str(&format!(
+            el.push_str(&self.budget.format(format_args!(
                 " textLength=\"{}\" lengthAdjust=\"spacingAndGlyphs\"",
                 self.fmt.num(len)
-            ));
+            )));
         }
-        el.push_str(&format!(
+        el.push_str(&self.budget.format(format_args!(
             " fill=\"{}\">{}</text>\n",
             hex(color),
-            escape(value)
-        ));
+            escape_bounded(value, &self.budget)
+        )));
         self.layers.push(layer, &el);
     }
 
@@ -1372,39 +1519,50 @@ impl<'a> Renderer<'a> {
         } else {
             None
         };
-        let mut el = format!("<text x=\"{x}\" y=\"{y}\"");
+        let mut el = self
+            .budget
+            .format(format_args!("<text x=\"{x}\" y=\"{y}\""));
         match (angle.abs() > 1e-6, skew_deg) {
             (true, None) => {
-                el.push_str(&format!(
+                el.push_str(&self.budget.format(format_args!(
                     " transform=\"rotate({} {x} {y})\"",
                     fmt_num(angle, 3)
-                ));
+                )));
             }
             (has_rot, Some(sk)) => {
                 let nx = self.fmt.num(-p.x);
                 let ny = self.fmt.num(-p.y);
                 let rot_part = if has_rot {
-                    format!("rotate({} {x} {y}) ", fmt_num(angle, 3))
+                    self.budget
+                        .format(format_args!("rotate({} {x} {y}) ", fmt_num(angle, 3)))
                 } else {
-                    String::new()
+                    self.budget.buffer()
                 };
-                el.push_str(&format!(
+                el.push_str(&self.budget.format(format_args!(
                     " transform=\"{rot_part}translate({x} {y}) skewX({}) translate({nx} {ny})\"",
                     fmt_num(sk, 3)
-                ));
+                )));
             }
             (false, None) => {}
         }
-        el.push_str(&format!(
+        el.push_str(&self.budget.format(format_args!(
             " font-size=\"{}\" text-anchor=\"{anchor}\"",
             self.fmt.num(size)
-        ));
+        )));
         if let Some(b) = baseline {
-            el.push_str(&format!(" dominant-baseline=\"{b}\""));
+            el.push_str(
+                &self
+                    .budget
+                    .format(format_args!(" dominant-baseline=\"{b}\"")),
+            );
         }
-        el.push_str(&format!(" fill=\"{}\">", hex(color)));
+        el.push_str(
+            &self
+                .budget
+                .format(format_args!(" fill=\"{}\">", hex(color))),
+        );
         match body {
-            TextBody::Single(v) => el.push_str(&escape(v)),
+            TextBody::Single(v) => el.push_str(&escape_bounded(v, &self.budget)),
             TextBody::Multi(lines, lh) => {
                 let lh = lh * scale;
                 let n = lines.len().max(1) as f64;
@@ -1414,12 +1572,15 @@ impl<'a> Renderer<'a> {
                     _ => -(n - 1.0) * lh,
                 };
                 for (i, line) in lines.iter().enumerate() {
+                    if self.budget.exceeded() {
+                        break;
+                    }
                     let dy = if i == 0 { first } else { lh };
-                    el.push_str(&format!(
+                    el.push_str(&self.budget.format(format_args!(
                         "<tspan x=\"{x}\" dy=\"{}\">{}</tspan>",
                         self.fmt.num(dy),
-                        escape(line)
-                    ));
+                        escape_bounded(line, &self.budget)
+                    )));
                 }
             }
         }
@@ -1437,6 +1598,9 @@ enum TextBody<'a> {
 fn hatch_loop(pb: &mut PathBuilder<'_>, edges: &[HatchEdge], normal: Vec3, t: &Transform) {
     pb.cur = None;
     for edge in edges {
+        if pb.d.exceeded() {
+            break;
+        }
         match edge {
             HatchEdge::Line { start, end } => {
                 let (a, b) = (t.apply_point(*start), t.apply_point(*end));
@@ -1528,16 +1692,157 @@ fn hatch_loop(pb: &mut PathBuilder<'_>, edges: &[HatchEdge], normal: Vec3, t: &T
 /// An empty model (or a model index out of range) yields a valid SVG with an empty 100x100
 /// view box. See the module documentation for the drawing conventions.
 pub fn render(doc: &Document, options: &SvgOptions) -> String {
-    render_internal(doc, options, false)
+    render_internal(doc, options, false, &Budget::default()).0
 }
 
 /// Like [`render`], but also emits `<g data-layer="...">` groups for layers marked invisible
 /// (`visible == false`) or frozen (`frozen == true`).
 pub fn render_all_layers(doc: &Document, options: &SvgOptions) -> String {
-    render_internal(doc, options, true)
+    render_internal(doc, options, true, &Budget::default()).0
 }
 
-fn render_internal(doc: &Document, options: &SvgOptions, include_hidden_layers: bool) -> String {
+/// Renders a complete SVG within `max_output_bytes` UTF-8 bytes, including markup.
+/// Temporary SVG strings use the same cap. Returns `LimitExceeded` instead of a
+/// partial drawing if output or traversal work exceeds the configured budget.
+/// This bounds serialization, not the memory already owned by `doc`.
+/// Derived text/geometry scratch is checked conservatively against the same cap;
+/// an oversized temporary can be rejected even if its final SVG would be smaller.
+pub fn render_bounded(
+    doc: &Document,
+    options: &SvgOptions,
+    include_hidden_layers: bool,
+) -> crate::Result<String> {
+    let budget = Budget::new(options.max_output_bytes);
+    let walk = WalkOptions {
+        max_work: options.max_work,
+        expand_inserts: options.expand_blocks,
+        ..WalkOptions::default()
+    };
+    // A bounding-box walk can return None after exhausting its budget. Check
+    // completeness first so that case cannot turn into a successful empty SVG.
+    let check = |entity: &Entity, _: &WalkContext<'_>| check_temporary_inputs(entity, &budget);
+    let stats = if include_hidden_layers {
+        doc.walk_all_layers_while(options.model, &walk, check)
+    } else {
+        doc.walk_while(options.model, &walk, check)
+    };
+    if budget.exceeded() {
+        return Err(crate::Error::limit(
+            crate::LimitKind::Output,
+            "SVG temporary buffer budget exceeded".into(),
+        ));
+    }
+    if stats.truncated {
+        return Err(crate::Error::limit(
+            crate::LimitKind::Work,
+            "SVG work budget exceeded".into(),
+        ));
+    }
+    let (svg, truncated) = render_internal(doc, options, include_hidden_layers, &budget);
+    if budget.exceeded() {
+        return Err(crate::Error::limit(
+            crate::LimitKind::Output,
+            "SVG output budget exceeded".into(),
+        ));
+    }
+    if truncated {
+        return Err(crate::Error::limit(
+            crate::LimitKind::Work,
+            "SVG work budget exceeded".into(),
+        ));
+    }
+    Ok(svg)
+}
+
+// Bound derived geometry/text scratch before the bounding-box pass allocates it.
+// Output paths and XML escaping have their own incremental checks.
+fn check_temporary_inputs(entity: &Entity, budget: &Budget) -> bool {
+    let points = |count: usize| budget.allows(count.saturating_mul(std::mem::size_of::<Point3>()));
+    match &entity.kind {
+        EntityKind::Spline {
+            control_points,
+            fit_points,
+            ..
+        } => {
+            if !points(
+                control_points
+                    .len()
+                    .max(fit_points.len())
+                    .saturating_mul(16),
+            ) {
+                return false;
+            }
+        }
+        EntityKind::Dimension { points: values, .. } | EntityKind::Face { points: values, .. } => {
+            if !points(values.len()) {
+                return false;
+            }
+        }
+        EntityKind::Leader { vertices, .. } => {
+            if !points(vertices.len()) {
+                return false;
+            }
+        }
+        EntityKind::Polygon {
+            exterior,
+            interiors,
+        } => {
+            if !points(exterior.len()) || interiors.iter().any(|ring| !points(ring.len())) {
+                return false;
+            }
+        }
+        EntityKind::Mesh { faces, .. } => {
+            if faces.iter().any(|face| !points(face.len())) {
+                return false;
+            }
+        }
+        EntityKind::Hatch { loops, .. } => {
+            for edge in loops.iter().flat_map(|item| &item.edges) {
+                if let HatchEdge::Spline { control_points, .. } = edge
+                    && !points(control_points.len().saturating_mul(16))
+                {
+                    return false;
+                }
+            }
+        }
+        EntityKind::Text { value, .. } => {
+            if !budget.allows(value.len()) {
+                return false;
+            }
+        }
+        EntityKind::MText { value, plain, .. } => {
+            let text = if plain.is_empty() { value } else { plain };
+            // One String per paragraph/word is a conservative bound for wrapping.
+            let parts = text
+                .split_whitespace()
+                .count()
+                .saturating_add(if plain.is_empty() {
+                    text.matches("\\P").count()
+                } else {
+                    text.bytes().filter(|&b| b == b'\n').count()
+                })
+                .saturating_add(1);
+            if !budget.allows(
+                text.len()
+                    .saturating_add(parts.saturating_mul(std::mem::size_of::<String>())),
+            ) {
+                return false;
+            }
+        }
+        _ => {}
+    }
+    !budget.exceeded()
+}
+
+fn render_internal(
+    doc: &Document,
+    options: &SvgOptions,
+    include_hidden_layers: bool,
+    budget: &Budget,
+) -> (String, bool) {
+    if !budget.allows(options.background.as_ref().map_or(0, String::len)) {
+        return (String::new(), false);
+    }
     let width = if options.width_px.is_finite() && options.width_px > 0.0 {
         options.width_px
     } else {
@@ -1568,18 +1873,18 @@ fn render_internal(doc: &Document, options: &SvgOptions, include_hidden_layers: 
             .or_else(|| doc.bbox_with(options.model, &bbox_with_images))
     };
     let Some(bb) = fitted else {
-        let mut out = format!(
+        let mut out = budget.format(format_args!(
             "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w}\" height=\"{w}\" viewBox=\"0 0 100 100\">\n",
             w = px.num(width)
-        );
+        ));
         if let Some(b) = bg {
-            out.push_str(&format!(
+            out.push_str(&budget.format(format_args!(
                 "<rect x=\"0\" y=\"0\" width=\"100\" height=\"100\" fill=\"{}\"/>\n",
-                escape(b)
-            ));
+                escape_bounded(b, budget)
+            )));
         }
         out.push_str("</svg>\n");
-        return out;
+        return (out.into_string(), false);
     };
 
     let extent = bb.width().max(bb.height());
@@ -1598,7 +1903,12 @@ fn render_internal(doc: &Document, options: &SvgOptions, include_hidden_layers: 
         layer_map.entry(l.name.as_str()).or_insert(l);
     }
     let mut linetype_map = HashMap::with_capacity(doc.linetypes.len());
+    let mut linetype_bytes = 0usize;
     for lt in &doc.linetypes {
+        linetype_bytes = linetype_bytes.saturating_add(lt.name.len());
+        if !budget.allows(linetype_bytes) {
+            return (String::new(), false);
+        }
         linetype_map
             .entry(lt.name.to_ascii_lowercase())
             .or_insert(lt);
@@ -1618,13 +1928,20 @@ fn render_internal(doc: &Document, options: &SvgOptions, include_hidden_layers: 
         extent: view_extent,
         px_per_unit,
         stroke_px: stroke,
-        layers: Layers::default(),
+        layers: Layers {
+            budget: budget.clone(),
+            stroke_px: stroke,
+            ..Layers::default()
+        },
         defs: Vec::new(),
         hatch_cache: HashMap::new(),
         layer_map,
         linetype_map,
         block_map,
         background: background_rgb(options.background.as_deref()),
+        budget: budget.clone(),
+        attribute_work: options.max_work,
+        work_exceeded: false,
     };
     let walk_opts = WalkOptions {
         max_depth: DEFAULT_WALK_DEPTH,
@@ -1633,7 +1950,7 @@ fn render_internal(doc: &Document, options: &SvgOptions, include_hidden_layers: 
     };
     let cap = options.max_output_bytes;
     let visit = |e: &Entity, ctx: &WalkContext<'_>| {
-        if r.layers.bytes > cap {
+        if r.layers.bytes > cap || budget.exceeded() || r.work_exceeded {
             return false;
         }
         r.render_entity(e, ctx);
@@ -1646,6 +1963,7 @@ fn render_internal(doc: &Document, options: &SvgOptions, include_hidden_layers: 
     };
     let mut truncated = stats.truncated;
     if !truncated
+        && !budget.exceeded()
         && options.expand_blocks
         && options.text
         && !doc.blocks.is_empty()
@@ -1653,12 +1971,14 @@ fn render_internal(doc: &Document, options: &SvgOptions, include_hidden_layers: 
     {
         let mut stack = Vec::new();
         r.render_expanded_insert_attributes(&m.entities, &WalkContext::root(), &mut stack, cap);
-        if r.layers.bytes > cap {
+        if r.layers.bytes > cap || budget.exceeded() {
             truncated = true;
         }
     }
 
-    let mut out = format!(
+    truncated |= r.work_exceeded;
+
+    let mut out = budget.format(format_args!(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{}\" height=\"{}\" viewBox=\"{} {} {} {}\"{}>\n",
         px.num(width),
         px.num(height),
@@ -1671,19 +1991,19 @@ fn render_internal(doc: &Document, options: &SvgOptions, include_hidden_layers: 
         } else {
             ""
         }
-    );
+    ));
     if truncated {
         out.push_str("<!-- cadkit: drawing truncated, work or output size limit reached -->\n");
     }
     if let Some(b) = bg {
-        out.push_str(&format!(
+        out.push_str(&budget.format(format_args!(
             "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{}\"/>\n",
             fmt.num(vx),
             fmt.num(vy),
             fmt.num(vw),
             fmt.num(vh),
-            escape(b)
-        ));
+            escape_bounded(b, budget)
+        )));
     }
     if !r.defs.is_empty() {
         out.push_str("<defs>\n");
@@ -1693,24 +2013,20 @@ fn render_internal(doc: &Document, options: &SvgOptions, include_hidden_layers: 
         out.push_str("</defs>\n");
     }
     for (name, body) in &r.layers.items {
-        out.push_str(&format!(
-            "<g data-layer=\"{}\" fill=\"none\" stroke-width=\"{}\" stroke-linecap=\"round\" stroke-linejoin=\"round\">\n",
-            escape(name),
-            fmt_num(stroke, 3)
-        ));
+        out.push_str(&layer_open(name, stroke, budget));
         out.push_str(body);
         out.push_str("</g>\n");
     }
     if !r.layers.images.is_empty() {
-        out.push_str(&format!(
+        out.push_str(&budget.format(format_args!(
             "<g data-kind=\"images\" fill=\"none\" stroke-width=\"{}\">\n",
             fmt_num(stroke, 3)
-        ));
+        )));
         out.push_str(&r.layers.images);
         out.push_str("</g>\n");
     }
     out.push_str("</svg>\n");
-    out
+    (out.into_string(), truncated)
 }
 
 #[cfg(test)]

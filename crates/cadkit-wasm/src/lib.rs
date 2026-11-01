@@ -39,6 +39,12 @@ export interface SvgOptions {
   includeHiddenLayers?: boolean;
 }
 
+/** Complete SVG export with a strict UTF-8 output budget. */
+export interface BoundedSvgOptions extends SvgOptions {
+  maxOutputBytes: number;
+  maxWork?: number;
+}
+
 export interface Summary {
   format: FormatName | "unknown";
   version: string;
@@ -751,52 +757,7 @@ impl CadDocument {
             JsValue,
         >,
     ) -> Result<String, JsValue> {
-        let mut o = SvgOptions::default();
-        let mut include_hidden_layers = false;
-        if let Some(js) = options {
-            if let Some(v) = get(&js, "model") {
-                match v.as_f64() {
-                    Some(n) if n >= 0.0 && n.fract() == 0.0 => o.model = n as usize,
-                    _ => {
-                        return Err(js_error(
-                            "bad_argument",
-                            "model must be a non-negative integer",
-                        ));
-                    }
-                }
-            }
-            if let Some(n) = get(&js, "widthPx").and_then(|v| v.as_f64()) {
-                o.width_px = n;
-            }
-            if let Some(n) = get(&js, "strokePx").and_then(|v| v.as_f64()) {
-                o.stroke_px = n;
-            }
-            if js.is_object()
-                && let Ok(v) = Reflect::get(&js, &JsValue::from_str("background"))
-            {
-                if v.is_null() {
-                    o.background = None;
-                } else if let Some(s) = v.as_string() {
-                    o.background = if s.is_empty() || s == "none" {
-                        None
-                    } else {
-                        Some(s)
-                    };
-                }
-            }
-            if let Some(v) = get(&js, "text") {
-                o.text = v.is_truthy();
-            }
-            if let Some(v) = get(&js, "images") {
-                o.images = v.is_truthy();
-            }
-            if let Some(v) = get(&js, "expandBlocks") {
-                o.expand_blocks = v.is_truthy();
-            }
-            if let Some(v) = get(&js, "includeHiddenLayers") {
-                include_hidden_layers = v.is_truthy();
-            }
-        }
+        let (o, include_hidden_layers) = svg_options(options)?;
         if o.model >= self.doc.models.len() && !self.doc.models.is_empty() {
             return Err(js_error("bad_argument", "model index out of range"));
         }
@@ -805,6 +766,29 @@ impl CadDocument {
         } else {
             cadkit::to_svg(&self.doc, &o)
         })
+    }
+
+    /// Renders a complete SVG within a required UTF-8 byte budget, including markup.
+    /// Throws `limit_exceeded` before growing a generated SVG buffer past the cap,
+    /// or when the work budget is exhausted. Never returns a truncated drawing.
+    #[wasm_bindgen(js_name = toSvgBounded)]
+    pub fn to_svg_bounded(
+        &self,
+        #[wasm_bindgen(unchecked_param_type = "BoundedSvgOptions")] options: JsValue,
+    ) -> Result<String, JsValue> {
+        let max_output = svg_integer_option(&options, "maxOutputBytes", u32::MAX as f64)?
+            .ok_or_else(|| js_error("bad_argument", "maxOutputBytes is required"))?;
+        let max_work = svg_integer_option(&options, "maxWork", 9_007_199_254_740_991.0)?;
+        let (mut o, include_hidden_layers) = svg_options(Some(options))?;
+        o.max_output_bytes = max_output as usize;
+        if let Some(max_work) = max_work {
+            o.max_work = max_work;
+        }
+        if o.model >= self.doc.models.len() && !self.doc.models.is_empty() {
+            return Err(js_error("bad_argument", "model index out of range"));
+        }
+        cadkit::to_svg_bounded(&self.doc, &o, include_hidden_layers)
+            .map_err(|error| from_cadkit(&error))
     }
 
     /// Writes the drawing as ASCII DXF. `version` is `"r12"`, `"r2000"`, `"r2004"`, `"r2007"`,
@@ -933,6 +917,70 @@ fn wasm_limits(mut limits: cadkit::Limits) -> cadkit::Limits {
     limits
 }
 
+fn svg_options(options: Option<JsValue>) -> Result<(SvgOptions, bool), JsValue> {
+    let mut o = SvgOptions::default();
+    let mut include_hidden_layers = false;
+    if let Some(js) = options {
+        if let Some(v) = get(&js, "model") {
+            match v.as_f64() {
+                Some(n) if n >= 0.0 && n.fract() == 0.0 => o.model = n as usize,
+                _ => {
+                    return Err(js_error(
+                        "bad_argument",
+                        "model must be a non-negative integer",
+                    ));
+                }
+            }
+        }
+        if let Some(n) = get(&js, "widthPx").and_then(|v| v.as_f64()) {
+            o.width_px = n;
+        }
+        if let Some(n) = get(&js, "strokePx").and_then(|v| v.as_f64()) {
+            o.stroke_px = n;
+        }
+        if js.is_object()
+            && let Ok(v) = Reflect::get(&js, &JsValue::from_str("background"))
+        {
+            if v.is_null() {
+                o.background = None;
+            } else if let Some(s) = v.as_string() {
+                o.background = if s.is_empty() || s == "none" {
+                    None
+                } else {
+                    Some(s)
+                };
+            }
+        }
+        if let Some(v) = get(&js, "text") {
+            o.text = v.is_truthy();
+        }
+        if let Some(v) = get(&js, "images") {
+            o.images = v.is_truthy();
+        }
+        if let Some(v) = get(&js, "expandBlocks") {
+            o.expand_blocks = v.is_truthy();
+        }
+        if let Some(v) = get(&js, "includeHiddenLayers") {
+            include_hidden_layers = v.is_truthy();
+        }
+    }
+    Ok((o, include_hidden_layers))
+}
+
+fn svg_integer_option(options: &JsValue, key: &str, max: f64) -> Result<Option<u64>, JsValue> {
+    let value = Reflect::get(options, &JsValue::from_str(key))
+        .map_err(|_| js_error("bad_argument", "SVG budget options must be an object"))?;
+    if value.is_undefined() {
+        return Ok(None);
+    }
+    match value.as_f64() {
+        Some(n) if n.is_finite() && n > 0.0 && n.fract() == 0.0 && n <= max => Ok(Some(n as u64)),
+        _ => Err(js_error(
+            "bad_argument",
+            &format!("{key} must be a positive integer within its supported range"),
+        )),
+    }
+}
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {

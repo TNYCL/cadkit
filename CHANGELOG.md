@@ -6,6 +6,15 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `cadkit::to_svg_bounded`, `cadkit_core::svg::render_bounded` and WASM
+  `CadDocument.toSvgBounded` reject SVG output or work-budget exhaustion without
+  returning a partial drawing. The UTF-8 output cap covers XML, layer names,
+  definitions, intermediate SVG strings and final assembly. Existing SVG entry
+  points retain their truncation behavior.
+
+
 ## [0.5.1] - 2026-10-25
 
 ### Documentation

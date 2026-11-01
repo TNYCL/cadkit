@@ -139,6 +139,13 @@ replacements. Later 0.5.x releases follow the documented additive API policy.
 built; recoverable issues become `Document::warnings`. All file-provided sizes are checked
 against `Limits` before allocation.
 
+For untrusted SVG previews, `to_svg_bounded` (`toSvgBounded` in WASM) enforces an
+explicit complete-output UTF-8 byte budget, bounds temporary SVG strings before
+growth and rejects work-budget exhaustion. It returns `LimitExceeded`, never a
+partial drawing. Existing SVG APIs retain their coarse body cap and truncation
+marker. A host still owns parser limits, worker lifetime and any markup added to
+the result; the SVG cap is not a total-process-memory cap.
+
 ## Bindings
 
 - **cadkit-py**: `cadkit.read(bytes|path) -> Document`, `cadkit.read_citygml(bytes) -> CityGmlDocument`
