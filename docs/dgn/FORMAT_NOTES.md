@@ -67,7 +67,9 @@ first directory sector `0x30`, mini stream cutoff `0x38` (4096), first mini FAT 
 Directory entries are 128 bytes (name UTF-16 `0x00`, name length `0x40`, type `0x42`,
 color `0x43`, left/right/child `0x44`/`0x48`/`0x4C`, start sector `0x74`, size `0x78`;
 the high size dword is ignored for version 3). Streams below the cutoff live in the mini
-stream (the root entry's chain). All observed DGN files are version 3. MicroStation writes
+stream (the root entry's chain). Most observed DGN files are version 3; some seeds are version 4
+(4096-byte sectors), where the 512-byte header is padded to fill sector -1, so sector `n`
+starts at `(n + 1) * 4096`. MicroStation writes
 `Dgn~H` at directory entry 1, `Dgn~S` at entry 2, `Dgn-Md` at entry 3, and balances every
 storage's child tree with top-down 2-3-4 red-black insertion in directory slot order
 (524 of 567 private corpus files match bit for bit; the remaining 43 reused freed slots).

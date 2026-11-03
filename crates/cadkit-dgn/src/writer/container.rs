@@ -226,6 +226,16 @@ fn put_u32_le(data: &mut [u8], offset: usize, value: u32) -> Result<()> {
     Ok(())
 }
 
+/// Byte offset of sector `sec`: the header fills sector -1, which is 512 bytes in a version 3
+/// file and a whole 4096-byte sector in a version 4 file (MS-CFB 2.2), so sector `sec` starts at
+/// `(sec + 1) * ss`, not at `512 + sec * ss`.
+fn sector_offset(sec: u32, ss: usize, field: u64, what: &str) -> Result<usize> {
+    (sec as usize)
+        .checked_add(1)
+        .and_then(|n| n.checked_mul(ss))
+        .ok_or_else(|| Error::invalid(field, format!("CFB {what} sector offset overflow")))
+}
+
 /// Byte offsets of every 128-byte directory entry in `data`, following the CFB FAT chain.
 fn directory_entry_offsets(data: &[u8]) -> Result<Vec<usize>> {
     let shift = u16_le(data, 0x1e).ok_or_else(|| Error::invalid(0, "short CFB header"))?;
@@ -251,13 +261,7 @@ fn directory_entry_offsets(data: &[u8]) -> Result<Vec<usize>> {
         if difat_sec >= 0xffff_fffa {
             break;
         }
-        let base = 512usize
-            .checked_add(
-                (difat_sec as usize)
-                    .checked_mul(ss)
-                    .ok_or_else(|| Error::invalid(0x44, "CFB DIFAT sector offset overflow"))?,
-            )
-            .ok_or_else(|| Error::invalid(0x44, "CFB DIFAT sector offset overflow"))?;
+        let base = sector_offset(difat_sec, ss, 0x44, "DIFAT")?;
         for i in 0..per_difat {
             if let Some(sec) = u32_le(data, base + i * 4).filter(|&s| s < 0xffff_fffa) {
                 fat_sectors.push(sec);
@@ -268,13 +272,7 @@ fn directory_entry_offsets(data: &[u8]) -> Result<Vec<usize>> {
     fat_sectors.truncate(n_fat);
     let mut fat = Vec::new();
     for sec in fat_sectors {
-        let base = 512usize
-            .checked_add(
-                (sec as usize)
-                    .checked_mul(ss)
-                    .ok_or_else(|| Error::invalid(0x2c, "CFB FAT sector offset overflow"))?,
-            )
-            .ok_or_else(|| Error::invalid(0x2c, "CFB FAT sector offset overflow"))?;
+        let base = sector_offset(sec, ss, 0x2c, "FAT")?;
         for i in 0..(ss / 4) {
             fat.push(
                 u32_le(data, base + i * 4)
@@ -285,13 +283,7 @@ fn directory_entry_offsets(data: &[u8]) -> Result<Vec<usize>> {
     let mut offsets = Vec::new();
     let mut visited = BTreeSet::new();
     while dir_sec < 0xffff_fffa && visited.insert(dir_sec) {
-        let base = 512usize
-            .checked_add(
-                (dir_sec as usize)
-                    .checked_mul(ss)
-                    .ok_or_else(|| Error::invalid(0x30, "CFB directory sector offset overflow"))?,
-            )
-            .ok_or_else(|| Error::invalid(0x30, "CFB directory sector offset overflow"))?;
+        let base = sector_offset(dir_sec, ss, 0x30, "directory")?;
         for slot in 0..(ss / 128) {
             let off = base + slot * 128;
             if off.checked_add(128).is_none_or(|end| end > data.len()) {
@@ -674,9 +666,32 @@ mod tests {
 
     #[test]
     fn rewrite_balances_cfb_directory_as_red_black_trees() {
+        let seed = balances_directory(::cfb::Version::V3);
+
+        // Replacing a stream with data larger than `max_input_bytes` yields LimitExceeded.
+        let mut tight = ReadOptions::default();
+        tight.limits.max_input_bytes = seed.len() as u64;
+        let mut replacements = BTreeMap::new();
+        replacements.insert("Dgn~H".into(), Some(vec![0u8; 64 * 1024]));
+        assert!(matches!(
+            rewrite(&seed, &replacements, &tight),
+            Err(Error::LimitExceeded { .. })
+        ));
+    }
+
+    /// Version 4 files have 4096-byte sectors, and the header fills a whole one: the rewrite
+    /// once took sector `n` to start at `512 + n * 4096`, so it rebalanced FAT bytes as if they
+    /// were directory entries and wrote colour flags into the FAT (an output `cfb` refused to
+    /// open as a seed: "Malformed FAT").
+    #[test]
+    fn rewrite_balances_cfb_v4_directory_and_leaves_the_fat_alone() {
+        balances_directory(::cfb::Version::V4);
+    }
+
+    /// Rewrites a small seed of `version` and checks every sibling tree; returns the seed.
+    fn balances_directory(version: ::cfb::Version) -> Vec<u8> {
         let mut cf =
-            ::cfb::CompoundFile::create_with_version(::cfb::Version::V3, Cursor::new(Vec::new()))
-                .unwrap();
+            ::cfb::CompoundFile::create_with_version(version, Cursor::new(Vec::new())).unwrap();
         for name in ["Dgn~H", "Dgn~S", "Dgn~Mf"] {
             cf.create_stream(name).unwrap().write_all(b"hdr").unwrap();
         }
@@ -691,6 +706,7 @@ mod tests {
         cf.flush().unwrap();
         let seed = cf.into_inner().into_inner();
         let out = rewrite(&seed, &BTreeMap::new(), &ReadOptions::default()).unwrap();
+        ::cfb::CompoundFile::open_strict(Cursor::new(out.clone())).expect("output is a valid CFB");
         let offsets = directory_entry_offsets(&out).unwrap();
         let name_at =
             |idx: u32| String::from_utf16_lossy(&entry_utf16_name(&out, offsets[idx as usize]));
@@ -738,15 +754,6 @@ mod tests {
                 }
             }
         }
-
-        // Replacing a stream with data larger than `max_input_bytes` yields LimitExceeded.
-        let mut tight = ReadOptions::default();
-        tight.limits.max_input_bytes = seed.len() as u64;
-        let mut replacements = BTreeMap::new();
-        replacements.insert("Dgn~H".into(), Some(vec![0u8; 64 * 1024]));
-        assert!(matches!(
-            rewrite(&seed, &replacements, &tight),
-            Err(Error::LimitExceeded { .. })
-        ));
+        seed
     }
 }

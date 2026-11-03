@@ -6,6 +6,14 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- `write_v8` on a version 4 seed (4096-byte sectors) no longer corrupts the FAT. The
+  directory rebalancing added in 0.3.6 placed sector `n` at `512 + n * 4096` instead of
+  `(n + 1) * 4096` (a version 4 header fills a whole sector), so it read FAT entries as
+  directory entries, wrote colour flags into the FAT and left the real directory
+  unbalanced. The output could not be opened again as a seed ("Malformed FAT").
+
 ## [0.5.2] - 2026-11-01
 
 ### Added
