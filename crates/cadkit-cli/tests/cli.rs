@@ -500,3 +500,38 @@ fn completions_for_all_shells() {
     }
     assert_eq!(cadkit(&["completions", "unknown"]).status.code(), Some(2));
 }
+
+#[test]
+fn check_dgn_prints_the_structure_report() {
+    let dir = temp_dir("check-dgn");
+    // Not a DGN file: a read error, no report.
+    let dxf = write_dxf(&dir);
+    let out = cadkit(&["check-dgn", dxf.to_str().expect("dxf path")]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(out.stdout.is_empty());
+
+    let sample =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/public/gdal/test_dgnv8.dgn");
+    if !sample.exists() {
+        eprintln!("check_dgn_prints_the_structure_report: public sample absent, skipped");
+        return;
+    }
+    let sample = sample.to_str().expect("sample path");
+    // The sample leaves stale bytes in unused directory slots: a warning, exit 1.
+    let out = cadkit(&["check-dgn", sample]);
+    assert_eq!(out.status.code(), Some(1));
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("JSON report");
+    assert_eq!(report["warnings"][0]["code"], "dgn.cfb_free_entry");
+    assert_eq!(report["writer_slot_order"], false);
+    // Repacked, it is clean.
+    let repacked = dir.join("repacked.dgn");
+    let repacked = repacked.to_str().expect("output path");
+    assert!(cadkit(&["repack-dgn", sample, repacked]).status.success());
+    let out = cadkit(&["check-dgn", repacked]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("JSON report");
+    assert_eq!(report["warnings"], serde_json::json!([]));
+    assert_eq!(report["writer_slot_order"], true);
+    assert_eq!(report["irregular_free_entries"], 0);
+    assert_eq!(report["storages"], report["top_down_trees"]);
+}

@@ -21,10 +21,15 @@ cadkit convert plan.dxf plan.json --pretty
 cadkit convert plan.dxf plan.dgn --seed blank.dgn
 cadkit convert surfaces.dxf model.gml --crs "YOUR_EXPLICIT_CRS" --lod 1
 cadkit validate-gml model.gml
+cadkit check-dgn plan.dgn
 cadkit convert plan.dxf - --to dxf --dxf-version r2000 --output-codepage DOS857 > legacy.dxf
 cadkit convert - plan.svg --explode-inserts --units meter --layer WALLS < plan.dxf
 cadkit completions bash > cadkit.bash
 ```
+
+`check-dgn` prints the structural report of a DGN V8 file (`cadkit_dgn::check_structure`)
+as JSON and exits 1 when it holds warnings; it reports the container and pages, not
+acceptance by another application.
 
 `cadkit --help` lists every command and option. `info`, `layers`, `blocks`, and `inspect`
 support `--json`; `dump --json` writes the neutral document. Use `-` for stdin/stdout;

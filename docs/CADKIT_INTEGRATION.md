@@ -60,6 +60,29 @@ rewrite all attachments as new `Image` entities or keep the seed's attachments
 unchanged. Callers must retain external image files alongside or at the referenced
 paths, as DGN raster attachments reference external files rather than embedding pixel data.
 
+A host needs no compound-file or page code of its own to check or prepare a write:
+
+- `dgn::check_structure(bytes, &ReadOptions)` returns a `StructureReport` of any V8 file (also
+  `cadkit check-dgn file.dgn`): sibling tree order and shape, unused directory slots, the
+  writer's slot order, page headers, record times, split dictionary pages and the model
+  header's page count, with stable warning codes. Every `write_v8` / `repack_v8` output is
+  checked to report no warning when the write has a time (`WriteOptions::timestamp_ms` or the
+  seed's own). A slot order or a page number/population other than the writer's is not a
+  defect: observed files differ.
+- `dgn::V8Seed` gives the seed's palette, levels (reader names), font table
+  (`font_entries` in stored order; `font_number` resolves a name exactly, then trimmed and
+  ASCII case-insensitive, and tells an absent name from an ambiguous one) and file header
+  time. `dgn::palette::exact_index` is the writer's color match, `nearest_index` the
+  mapping `prepare_document` uses.
+- `dgn::native::v8::read` and `native::decode_v8::decode` expose pages, page headers, raw
+  records (type, id, complex flags) and decoded tables (`ColorTable`, `Font`, `Level`).
+
+Policies stay with the host: loose or locale-aware matching of level, tag and font names
+(pass the resolved `dgn.font_number` / exact names on), resolving `ByBlock` from a parent,
+how far an RGB may move to a palette entry, and which time to give new records. The writer
+keeps unchanged seed pages byte for byte and writes level-sentinel symbology
+(`dgn.color_index` / `dgn.weight` `0xFFFFFFFF`) back as read.
+
 Center/right text requires measured `dgn.text_length` in drawing units. The
 application must update that value when text or its font metrics change.
 Identifier attributes should use the receiving profile's declared data type;

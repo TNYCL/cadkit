@@ -26,7 +26,7 @@ Clean-room: no ODA/Bentley SDK material, no GPL code. Sources used:
 
 | Source | License | Used for |
 |---|---|---|
-| `[MS-CFB]` Compound File Binary format (public Microsoft open specification) | open spec | CFB header, FAT/DIFAT, directory, mini stream |
+| `[MS-CFB]` Compound File Binary format (public Microsoft open specification) | open spec | CFB header, FAT/DIFAT, directory (2.6.1), free directory entries (2.6.3 "Other Directory Entries"), sibling tree order and colours (2.6.4 "Red-Black Tree"), mini stream |
 | `[MS-OLEPS]` property sets (public Microsoft open specification) | open spec | `\u0005SummaryInformation` (application name, code page) |
 | ezdgn <https://github.com/monozukuri-ai/ezdgn> `docs/v8/FORMAT_NOTES.md`, `crates/ezdgn-core/src/v8/*.rs`, `src/entities.rs` | MIT | V8 page/record framing, model index and model header search (`find_model_header`), common header, line/vertex/ellipse/arc/text/text-node offsets, string-linkage framing; V7 description-length rule (`container_descriptor`), V7 shared cell offsets |
 | GDAL dgnlib `ogr/ogrsf_frmts/dgn/{dgnread.cpp,dgnhelp.cpp,dgnopen.cpp,dgnlib.h}` <https://github.com/OSGeo/gdal> | MIT/X | V7 record header, display header, TCB, color table, every V7 element layout, tag set / tag value layout, default 256-color palette (`abyDefaultPCT`, ported to `src/palette.rs`), RAD-50, linkage framing, quaternion convention; `DGNPF_*` property flags (no meaning for `0x0080`, so V7 visibility is unchanged) |
@@ -70,10 +70,31 @@ color `0x43`, left/right/child `0x44`/`0x48`/`0x4C`, start sector `0x74`, size `
 the high size dword is ignored for version 3). Streams below the cutoff live in the mini
 stream (the root entry's chain). Most observed DGN files are version 3; some seeds are version 4
 (4096-byte sectors), where the 512-byte header is padded to fill sector -1, so sector `n`
-starts at `(n + 1) * 4096`. MicroStation writes
-`Dgn~H` at directory entry 1, `Dgn~S` at entry 2, `Dgn-Md` at entry 3, and balances every
-storage's child tree with top-down 2-3-4 red-black insertion in directory slot order
-(524 of 567 private corpus files match bit for bit; the remaining 43 reused freed slots).
+starts at `(n + 1) * 4096`.
+
+Directory slot order and sibling tree shape differ between writers. Readers find entries
+through the sibling trees ([MS-CFB] 2.6.4: shorter names first, then upper-cased UTF-16
+units), so neither affects a lookup. Structural counts (`tests/structure.rs`):
+
+| Property | Private corpus (567 files, all version 3) | Public V8 samples (test_dgnv8, TreeText, Water) |
+|---|---|---|
+| Slots 1–3 hold `Dgn~H`, `Dgn~S`, `Dgn-Md` | 277 files (290 start with `Dgn~S`) | none: test_dgnv8 and Water start `Dgn^Ix`, `Dgn~Mix`, `Dgn-Md`; TreeText (saved by MicroStation 8.11) `Dgn~H`, `Dgn~S`, `Dgn~Mf` |
+| Every entry in the writer's slot order (below) | 0 files | 0 files |
+| Sibling trees that are ordered red-black trees | 5,363 of 5,372 storages (9 files have one ordered tree with invalid colours) | 27 of 27 |
+| Trees shaped by top-down 2-3-4 red-black insertion in slot order | 5,323 of 5,372; every tree in 524 files | 25 of 27 (Water 8 of 10) |
+| Root entry colour 0 | 567 files | 3 files |
+| Unused slots in the [MS-CFB] 2.6.3 free form | 823 of 829 (6 in 5 files differ) | TreeText 3 of 3; test_dgnv8 0 of 3 and Water 0 of 1 (object type 0 and name length 0, but stale bytes elsewhere) |
+
+The writer orders the directory it builds by `cfb_tree::writer_slot_rank` (`Dgn~H`,
+`Dgn~S`, `Dgn-Md` at slots 1–3, every storage before its children, `^AH` before `$1`),
+the order of one seed lineage of the private corpus, not a rule other files follow; it
+rebuilds every sibling tree with top-down 2-3-4 insertion in slot order, keeps the seed's
+root colour, and writes every slot the root does not reach in the free form of [MS-CFB]
+2.6.3 ("Other Directory Entries": object type 0, all bytes zero except the left sibling,
+right sibling and child ids, which hold `0xFFFFFFFF`). The `cfb` crate writes such slots
+with a name length of 2; outputs before this change kept that form. `cfb::CompoundFile::open_strict`,
+cadkit's reader and the writer itself (using the output as a seed) accept the free form
+(`writer/container.rs` tests); the public TreeText sample has it too.
 
 Short final sector: `[MS-CFB]` files are whole sectors, but 2 of 112 private V8 files
 (written by the same application version as the other 110) end inside their last sector,
@@ -114,9 +135,16 @@ index. Pages of 16 bytes have no payload (record count 0).
 |---|---|---|
 | `0x00` | u32 | record count |
 | `0x04` | u32 | page format version (2 or 3 observed) |
-| `0x08` | u32 | page number (0 on every MicroStation page: 8,905 of 8,905 pages in the private corpus) |
-| `0x0C` | u32 | population (0 on every MicroStation page: 8,905 of 8,905 pages in the private corpus) |
+| `0x08` | u32 | page number: 0 on 8,905 of 8,905 pages of the private corpus; on the public samples the page's own `n` on graphic, control and dictionary pages that store one (test_dgnv8, Water, and the graphic page of TreeText, saved by MicroStation 8.11), another non-zero value on their auxiliary pages |
+| `0x0C` | u32 | population: 0 on the same 8,905 private pages; the record count on every public page that stores a page number |
 | `0x10` | zlib | records |
+
+Pages that store numbers: test_dgnv8 3 of 4, Water 137 of 138, TreeText 1 of 4
+(`check_structure`, `pages_with_number_or_population`). Readers ignore both fields; the
+writer stores 0 in the pages it writes and keeps unchanged seed pages as they are. A page
+without records is the 16-byte header alone: every empty page observed (private corpus 644
+graphic and 1,087 dictionary pages; public: one `Dgn^GA` and one `Dgn^CA` page). The writer
+does the same (Unreleased); before, it appended a zlib stream of no data to the header.
 
 Records follow back to back: `u32` prefix (always 0 observed), then the element. Element
 length is `2 * words` (`u32` at element `+4`). On every page of every sample the walk ends
@@ -149,7 +177,7 @@ asserts the rules on the 274 plan files and on what the writer makes of them):
 | A page has no size bound of its own | every file has a page over 256 KiB; largest 595,424 inflated bytes (1,356 records) |
 | Empty pages (16-byte header, no payload) occur | 1,087 of 3,932 pages |
 | Page format versions 2 and 3 both occur; each page keeps its own | 3,364 version-2 and 568 version-3 pages |
-| Page number and population (`+0x08`, `+0x0C`) are 0 | 3,932 of 3,932 `Dgn^Nm` and 1,188 of 1,188 `Dgn^NmA` pages |
+| Page number and population (`+0x08`, `+0x0C`) are 0 | 3,932 of 3,932 `Dgn^Nm` and 1,188 of 1,188 `Dgn^NmA` pages (the public test_dgnv8 and Water samples store the page number and record count on theirs, see "Page stream") |
 | Every `Dgn^NmA/$n` XAttribute belongs to an element of `Dgn^Nm/$n` | 4,215 of 4,215 records |
 | `Dgn^NmA/^AH` (meaning unknown) never exceeds the highest dictionary page number | equal in 91 files, lower in 476 |
 
@@ -345,6 +373,18 @@ stream end (found by scanning, as ezdgn does).
 | `0xC8` | 3 × f64 | global origin (UOR; 0 in all samples) | |
 | `0xE0` | f64 | UOR per master unit (10000 / 10) | oracle coordinates |
 | `0xE8`… | f64 | further unit data (1, 1, 1e7, …; not decoded) | |
+
+**Stream prefix.** The bytes before the element are mostly zero. Observed relation, not a specified meaning: the first dword equals the number of
+graphic and control pages (`Dgn^G/$n`, `Dgn^C/$n`) whose record count is not 0 in 552 of
+567 private files and in all 3 public V8 files (test_dgnv8 1, TreeText 2, Water 68); the
+other 15 private files have empty graphic pages between filled ones and a value between
+that count and the number of graphic and control pages. No observed file lies outside that
+range; counting auxiliary pages too breaks the relation (260 of 567). The dwords at `+4` and
+`+8` are non-zero in every private file and in TreeText; their meaning is unknown (open
+question 14). The writer sets the first dword to the number of graphic and control pages it
+stores that hold records and keeps every other prefix byte (Unreleased; before, it copied
+the seed's value, so 0.5.2 rewrites of TreeText and Water into themselves lay outside the
+observed range and `check_structure` reports them with `dgn.model_page_counter`).
 
 Master coordinates: `(uor − global_origin) / uor_per_master` (confirmed by the oracle).
 Size of a unit in meters = `denominator / numerator` (consistent with m and mm; feet
@@ -653,6 +693,15 @@ characters), and tag set definition strings are NUL-terminated.
     from the report and GDAL's reader, see "Mapping decisions".
 12. **Byte-order-marked names** (issue #26): no corpus file stores one; the precedence in
     "Strings" rests on the report.
+13. **Line style table**: the type-96 table holding custom line styles has not been
+    identified (table numbers seen: private 1–8 in every file, 19 in 536, 18 in 2; public
+    test_dgnv8 {1, 2, 4}, TreeText {1, 3–7, 19}, Water {1, 4–7}), and no sample uses a custom
+    style: private graphics store style 0 or `0x7FFFFFFF` (42 records), the public ones 0
+    or 4. The writer therefore cannot check a `dgn.style` number against the seed; a sample
+    with a custom line style would settle it.
+14. **Model header prefix dwords** `+4` and `+8`: non-zero in every private file and in
+    TreeText, meaning unknown; the writer keeps the seed's values. The first dword's
+    relation to the page count is an observation (see "Model header").
 
 ## Seed-based V8 writer
 
@@ -716,7 +765,8 @@ its content could be neither checked for emptiness nor carried into the named ta
 | Written structure | Layout evidence |
 |---|---|
 | File header | Existing reader and own corpus analysis; zlib payload after `0x14`, expected 1,576 bytes; `0x128` high-water element ID updated |
-| Model header | Existing decoded header bytes, including original stream prefix; model extent fields at `0x90` updated |
+| Model header | Existing decoded header bytes, including original stream prefix; model extent fields at `0x90` updated; prefix dword 0 = graphic and control pages holding records (observed relation, "Model header") |
+| Container | Directory in the writer's slot order, top-down red-black sibling trees, unused slots in the MS-CFB 2.6.3 free form ("Compound file") |
 | Element pages | Existing page decoder, zero delimiter per record, bounded batches, zlib encoding |
 | Element identity | 64-bit ID at `0x10`, allocated above both observed records and header high-water mark |
 | Display/geometry | Existing V8 decoder layouts; finite UOR conversion, 64-bit range bounds |
@@ -734,7 +784,9 @@ and ordinary cell groups. Zero-width bulged polylines are decomposed into exact
 line/arc components, with signed XY sweeps for clockwise 2D arcs; no tessellation
 is involved. Parent attributes remain attached to the resulting complex group.
 Faces and meshes become shapes/cells. Polygons with holes become a cell with
-hole-marked shape components. Polygon rings must lie within
+hole-marked shape components. Polygon rings and mesh faces inherit the level, colour,
+line style, lineweight, visibility and `dgn.color_index` / `dgn.style` / `dgn.weight` of
+their entity (before the Unreleased version mesh faces took only level and colour). Polygon rings must lie within
 `WriteOptions::planarity_tolerance` (default 0.01 source units, 1 cm in metres) of the
 exterior ring's plane; 1e-6 rejected every polygon with a hole in 0.1 mm-rounded
 CityGML sources. Shared-cell instances, edited raster attachments, splines,
@@ -842,21 +894,86 @@ value type, so when any integer value of a (tag set, tag) pair exceeds that rang
 every value of that tag is written as a double (type 4); values beyond ±2^53, which
 a double cannot hold exactly, fail.
 
-ACI/RGB colors are matched exactly against the seed's palette. An unavailable
+ACI/RGB colors are matched exactly against the seed's palette (`palette::exact_index`, the
+lowest matching index; `V8Seed::prepare_document` maps off-palette colors with
+`palette::nearest_index`, squared RGB distance, lowest index on a tie). An unavailable
 color fails unless the caller explicitly provides `dgn.color_index`. ByLayer
 color uses a supplied neutral layer color or seed palette index zero when no
 explicit color exists. This materializes the color, not a live inheritance rule.
 ByBlock requires prior resolution. Native lineweight indexes must be in `0..31`;
 an entity's explicit `dgn.weight` takes precedence over the neutral layer's
 `dgn.weight`. A millimetre-only weight has no universal DGN index mapping and
-requires explicit caller conversion. Nonzero font indexes must be in the seed's
-font table or actually referenced by seed Text/TextNode records; font zero is
-the default when a text names neither a style nor a number (before 0.3.0 the first
-table entry by name was taken, an arbitrary seed font). A named style must agree with its numeric font index.
-Line-style indexes must refer to the seed's tables. Existing seed level settings are retained;
+requires explicit caller conversion.
+
+**Level sentinels** (Unreleased). Elements store color `0xFFFFFFFF` and weight
+`0xFFFFFFFF` (with style `0x7FFFFFFF`) when they take them from their level: 854 graphic
+records of 54 private files store the color value (text, shapes, a cell and raster
+frames), 42 records of 2 files the weight and style values; no public sample has them. The
+reader maps the color to `Color::ByLayer` and the weight to no millimetre value, keeping
+the numbers in `dgn.color_index` / `dgn.weight` / `dgn.style`. An element's (or tag's)
+`dgn.color_index` or `dgn.weight` of `0xFFFFFFFF` is written back as stored, and
+`prepare_document` keeps it; a layer's `dgn.weight` of `0xFFFFFFFF` is still rejected.
+Before, the writer rejected such a document ("extended DGN color table entries"): 51 of the
+54 private files could not be written back into themselves; now 52 of 54 can (the other
+two fail on unrelated content: an unknown element and a non-zero Z in a 2D model).
+
+**Fonts.** Nonzero font indexes must be in the seed's font table or actually referenced by
+seed Text/TextNode records; font zero is the default when a text names neither a style nor
+a number (before 0.3.0 the first table entry by name was taken, an arbitrary seed font). A
+text style names a font by its exact table name. When the table stores that name with two
+different numbers the style is ambiguous: the write fails ("text font style is ambiguous in
+seed") unless `dgn.font_number` names one of the two (before the Unreleased version the
+last entry won silently). A named style must agree with its numeric font index.
+`V8Seed::font_entries` lists the table as stored and `V8Seed::font_number` resolves a name
+(exact first, then trimmed and ASCII case-insensitive; absent and ambiguous names are
+distinct `Unsupported` errors) for a host that matches font names loosely. The private
+corpus has 1,701 font entries and no ambiguous name; `prepare_document` drops an
+ambiguous style as it drops an unknown one.
+
+**Line styles.** `dgn.style` must be an integer (any other value fails); every `u32` is
+written as given at `0x2C`. 0–7 are the standard styles; other numbers (custom styles,
+`0x7FFFFFFF`) are not checked against the seed, whose line style table has not been
+located (open question 13); the reader reports values from `0x7FFFFF00` up without a
+linetype. Existing seed level settings are retained;
 writing arbitrary neutral level flags, custom fonts/linetypes, CAD props and
 layout/application semantics is not implemented. This is new geometry export,
 not general lossless Document-to-DGN roundtripping.
+
+**Record times.** New records (graphics, tags, levels, tag sets, raster records) take
+`WriteOptions::timestamp_ms`; when it is 0 they take `V8Seed::timestamp_ms` (`Dgn~H`
+`0x130`). Unchanged seed records keep their bytes and time. When both are 0 the records are
+written with time 0, which `check_structure` reports as `dgn.record_time`; every graphic
+and control record of the public and private corpus has a positive time.
+
+### Structural report
+
+`check_structure(bytes, &ReadOptions) -> Result<StructureReport>` (crate root and
+`native::structure`; no `write` feature needed; `cadkit check-dgn` prints it as JSON)
+reports the container and pages of any V8 file without changing it. `Err` only when the
+file is not a readable DGN V8 compound file or a limit is exceeded. Fields: CFB version;
+storages with a non-empty child tree; how many of those are ordered red-black trees and how
+many have the top-down shape; unused slots not in the free form; whether the entries use
+the writer's slot order; page count and pages with a non-zero page number or population
+(information, not a warning); graphic and control records without a positive time; split
+dictionary pages. Warnings (stable codes):
+
+| Code | Meaning |
+|---|---|
+| `dgn.cfb_tree_unordered` | a sibling tree is not ordered by CFB name, reaches a slot twice or points outside the directory: lookups can miss entries |
+| `dgn.cfb_tree_unbalanced` | ordered, but the colours break a red-black rule (black tree root, no red parent of a red node, equal black height); MS-CFB permits this |
+| `dgn.cfb_free_entry` | an unused slot is not in the MS-CFB 2.6.3 free form |
+| `dgn.record_time` | a graphic or control record has no positive finite time at `+0x18` (`object` = first record id) |
+| `dgn.dictionary_page_split` | a `Dgn^Nm` page starts with a complex component |
+| `dgn.model_page_counter` | the model header prefix's first dword lies outside [pages holding records, pages] of the model's graphic and control pages |
+
+Observed: the public test_dgnv8 (3 slots) and Water (1 slot) report `dgn.cfb_free_entry`,
+TreeText reports nothing; the private corpus reports `dgn.cfb_tree_unbalanced` in 9 files
+and `dgn.cfb_free_entry` in 5, nothing else. Every 0.5.2 repack and write of the public
+samples reported `dgn.cfb_free_entry`, and the writes of TreeText and Water into
+themselves also `dgn.model_page_counter`; current repacks and writes of all three, and
+writes into 274 private plan seeds, report no warning (`tests/structure.rs`,
+`tests/private_dictionary.rs`). A clean report says the container is consistent; it is
+not evidence that an external application accepts the file.
 
 ### Evidence and acceptance boundary
 

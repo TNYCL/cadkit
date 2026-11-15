@@ -374,3 +374,155 @@ fn a_second_level_table_with_repeated_codes_cannot_capture_new_elements() {
     // The second table's levels are kept under fresh codes.
     assert!(parsed.layers.iter().any(|l| l.name.starts_with("Temp")));
 }
+
+/// A file whose graphics carry the level sentinels (color and weight `0xFFFF_FFFF`, style
+/// `0x7FFF_FFFF`), as 854 records of the private corpus do for color, reads into a document
+/// that writes back into the same seed with the sentinels as stored. Before, the writer
+/// rejected the color as an extended color and the weight as an index above 31.
+#[test]
+fn level_sentinels_from_a_read_file_are_written_back() {
+    const COLOR: u32 = 0xffff_ffff;
+    const WEIGHT: u32 = 0xffff_ffff;
+    const STYLE: u32 = 0x7fff_ffff;
+    let mut shape = line();
+    shape.kind = EntityKind::Polyline {
+        vertices: [(0., 0.), (4., 0.), (4., 3.)]
+            .into_iter()
+            .map(|(x, y)| cadkit_core::Vertex::at(Point3::xy(x, y)))
+            .collect(),
+        closed: true,
+        normal: Vec3::Z,
+    };
+    let mut cell = Entity::new(EntityKind::Group {
+        group_kind: GroupKind::Cell,
+        name: None,
+        origin: None,
+        children: vec![line()],
+    });
+    cell.attributes.push(
+        Attribute::new("Note", Value::Text("tagged".into()))
+            .with_set("Set A")
+            .with_invisible(true),
+    );
+    let options = WriteOptions::default().with_timestamp_ms(1.7e12);
+    let written = write_v8(
+        &document(false, vec![line(), shape, cell]),
+        &seed(false),
+        &options,
+    )
+    .unwrap();
+    // Every graphic record of the file takes its symbology from its level.
+    let native = v8::read(&written, &ReadOptions::default()).unwrap();
+    let records: Vec<Vec<u8>> = native.models[0].graphic_pages[0]
+        .elements
+        .iter()
+        .map(|r| {
+            let mut b = r.bytes.clone();
+            u32_at(&mut b, 0x2c, STYLE).unwrap();
+            u32_at(&mut b, 0x30, WEIGHT).unwrap();
+            u32_at(&mut b, 0x34, COLOR).unwrap();
+            b
+        })
+        .collect();
+    let mut file = ::cfb::CompoundFile::open(Cursor::new(written)).unwrap();
+    file.create_stream("Dgn-Md/#000000/Dgn^G/$1")
+        .unwrap()
+        .write_all(&page(&records, 3, 1).unwrap())
+        .unwrap();
+    file.flush().unwrap();
+    let source_file = file.into_inner().into_inner();
+
+    let sentinels = |doc: &Document| -> Vec<(Value, Value, Value)> {
+        let mut out = vec![];
+        let mut todo: Vec<&Entity> = doc.models[0].entities.iter().collect();
+        while let Some(e) = todo.pop() {
+            out.push((
+                e.props["dgn.color_index"].clone(),
+                e.props["dgn.weight"].clone(),
+                e.props["dgn.style"].clone(),
+            ));
+            if let EntityKind::Group { children, .. } = &e.kind {
+                todo.extend(children);
+            }
+        }
+        out
+    };
+    let expected = (
+        Value::Int(i64::from(COLOR)),
+        Value::Int(i64::from(WEIGHT)),
+        Value::Int(i64::from(STYLE)),
+    );
+    let source = crate::read(&source_file, &ReadOptions::default()).unwrap();
+    let read = sentinels(&source);
+    assert_eq!(read.len(), 4);
+    assert!(read.iter().all(|s| *s == expected));
+    assert!(
+        source.models[0]
+            .entities
+            .iter()
+            .all(|e| e.color == cadkit_core::Color::ByLayer)
+    );
+    let back = write_v8(
+        &source,
+        &source_file,
+        &options.clone().with_clear_seed_model(true),
+    )
+    .unwrap();
+    let reread = crate::read(&back, &ReadOptions::default()).unwrap();
+    assert_eq!(sentinels(&reread), read);
+    // Preparing the document for the seed keeps them as well.
+    let parsed = V8Seed::from_bytes(&source_file).unwrap();
+    let prepared = parsed
+        .prepare_document(&source, &SeedPrepareOptions::default())
+        .unwrap();
+    let back =
+        write_v8_with_seed(&prepared, &parsed, &options.with_clear_seed_model(true)).unwrap();
+    let reread = crate::read(&back, &ReadOptions::default()).unwrap();
+    assert_eq!(sentinels(&reread), read);
+    // A level cannot take its weight from itself: the sentinel on a layer is rejected.
+    let mut layered = document(false, vec![line().on_layer("Walls")]);
+    let mut layer = cadkit_core::Layer::new("Walls");
+    layer
+        .props
+        .insert("dgn.weight".into(), Value::Int(i64::from(WEIGHT)));
+    layered.layers.push(layer);
+    assert!(write_v8(&layered, &seed(false), &WriteOptions::default()).is_err());
+}
+
+/// Mesh faces inherit the mesh's symbology as polygon rings do: level, color, line style,
+/// weight, visibility and the native indexes (before, faces kept only level and color).
+#[test]
+fn mesh_faces_inherit_the_full_symbology() {
+    let mut mesh = Entity::new(EntityKind::Mesh {
+        vertices: vec![
+            Point3::xy(0., 0.),
+            Point3::xy(1., 0.),
+            Point3::xy(1., 1.),
+            Point3::xy(0., 1.),
+        ],
+        faces: vec![vec![0, 1, 2], vec![0, 2, 3]],
+    });
+    mesh.layer = Some("Mesh level".into());
+    mesh.visible = false;
+    for (key, value) in [("dgn.color_index", 5), ("dgn.weight", 4), ("dgn.style", 2)] {
+        mesh.props.insert(key.into(), Value::Int(value));
+    }
+    let bytes = write_v8(
+        &document(false, vec![mesh]),
+        &seed(false),
+        &WriteOptions::default(),
+    )
+    .unwrap();
+    let doc = crate::read(&bytes, &ReadOptions::default()).unwrap();
+    let EntityKind::Group { children, .. } = &doc.models[0].entities[0].kind else {
+        panic!("a cell")
+    };
+    assert_eq!(children.len(), 2);
+    for face in children {
+        assert_eq!(face.layer.as_deref(), Some("Mesh level"));
+        assert!(!face.visible);
+        for (key, value) in [("dgn.color_index", 5), ("dgn.weight", 4), ("dgn.style", 2)] {
+            assert_eq!(face.props[key], Value::Int(value), "{key}");
+        }
+    }
+}

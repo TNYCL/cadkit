@@ -156,6 +156,12 @@ enum Command {
         #[arg(long)]
         tkgm_profile: Option<cadkit::gml::tkgm::Profile>,
     },
+    /// Print the structural report of a DGN V8 file as JSON (exits 1 if it has warnings).
+    /// Use - for stdin. The report states what the file holds, not acceptance elsewhere.
+    CheckDgn {
+        /// Input DGN V8 file.
+        file: PathBuf,
+    },
     /// Repack DGN V8 streams into a fresh CFB container without altering stream contents.
     RepackDgn {
         /// Input DGN V8 file.
@@ -490,6 +496,18 @@ fn run(cli: &Cli) -> Result<(), CliError> {
             {
                 return Err(CliError::Failure(
                     "CityGML geometry or requested profile preflight failed".into(),
+                ));
+            }
+        }
+        Command::CheckDgn { file } => {
+            let options = read_options(cli);
+            let bytes = load_bytes(file, options.limits.max_input_bytes)?;
+            let report =
+                cadkit::dgn::check_structure(&bytes, &options).map_err(|e| failure(file, &e))?;
+            print_json(&serde_json::json!(report))?;
+            if !report.is_clean() {
+                return Err(CliError::Failure(
+                    "DGN structure report has warnings".into(),
                 ));
             }
         }
@@ -1113,8 +1131,7 @@ fn apply_transforms(doc: &mut Document, options: &TransformOptions) -> Result<()
 }
 
 fn completions(shell: &str) -> String {
-    let commands =
-        "inspect info layers blocks convert dump validate-gml repack-dgn completions help";
+    let commands = "inspect info layers blocks convert dump validate-gml check-dgn repack-dgn completions help";
     let flags = "--help --version --keep-raw --codepage --max-input-bytes --max-decompressed-bytes --max-objects --planarity-tolerance --json --warnings --max-warnings --to --output-codepage --explode-inserts --units --layer --kind --model --dxf-version --width --pretty --seed --clear-seed-model --crs --lod --preserve-invalid-geometry --gml-metadata-only --tkgm-profile";
     match shell {
         "bash" => format!(

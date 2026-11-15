@@ -52,6 +52,36 @@ pub const DEFAULT_PALETTE: [[u8; 3]; 256] = [
     [30, 30, 0], [30, 0, 30], [192, 192, 192], [28, 0, 100],
 ];
 
+/// The lowest index of `table` whose entry equals `rgb`, as the DGN writer matches a neutral
+/// RGB or ACI color against the seed palette ([`crate::V8Seed::palette`]); `None` when no
+/// entry equals it.
+pub fn exact_index(table: &[[u8; 3]; 256], rgb: [u8; 3]) -> Option<u8> {
+    table
+        .iter()
+        .position(|c| *c == rgb)
+        .and_then(|i| u8::try_from(i).ok())
+}
+
+/// The index of the entry of `table` nearest to `rgb` by squared RGB distance, the lowest
+/// index on a tie. [`crate::V8Seed::prepare_document`] maps off-palette colors this way.
+pub fn nearest_index(table: &[[u8; 3]; 256], rgb: [u8; 3]) -> u8 {
+    let mut best = (u32::MAX, 0u8);
+    for (i, c) in (0..=u8::MAX).zip(table.iter()) {
+        let dist: u32 = c
+            .iter()
+            .zip(rgb)
+            .map(|(&a, b)| u32::from(a.abs_diff(b)).pow(2))
+            .sum();
+        if dist < best.0 {
+            best = (dist, i);
+            if dist == 0 {
+                break;
+            }
+        }
+    }
+    best.1
+}
+
 /// RGB of `index` in `table`; `None` for indices outside 0..=255 (V8 extended colors).
 pub(crate) fn lookup(table: &[[u8; 3]; 256], index: u32) -> Option<[u8; 3]> {
     usize::try_from(index)
@@ -70,5 +100,22 @@ mod tests {
         assert_eq!(DEFAULT_PALETTE[3], [255, 0, 0]);
         assert_eq!(DEFAULT_PALETTE[255], [28, 0, 100]);
         assert_eq!(lookup(&DEFAULT_PALETTE, 256), None);
+    }
+
+    #[test]
+    fn exact_and_nearest_indexes() {
+        // Entries 17 and 25 are both [0, 0, 240]: the lowest index wins.
+        assert_eq!(exact_index(&DEFAULT_PALETTE, [255, 255, 255]), Some(0));
+        assert_eq!(exact_index(&DEFAULT_PALETTE, [0, 0, 240]), Some(17));
+        assert_eq!(exact_index(&DEFAULT_PALETTE, [1, 2, 3]), None);
+        assert_eq!(nearest_index(&DEFAULT_PALETTE, [255, 0, 0]), 3);
+        assert_eq!(nearest_index(&DEFAULT_PALETTE, [250, 12, 18]), 3);
+        // Equal distances go to the lowest index.
+        let mut table = [[0u8; 3]; 256];
+        table[7] = [10, 10, 10];
+        table[9] = [10, 10, 10];
+        assert_eq!(nearest_index(&table, [9, 10, 11]), 7);
+        assert_eq!(exact_index(&table, [10, 10, 10]), Some(7));
+        assert_eq!(nearest_index(&table, [0, 0, 0]), 0);
     }
 }

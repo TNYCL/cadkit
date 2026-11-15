@@ -9,6 +9,7 @@
 
 pub mod cfb;
 pub mod native;
+pub use native::structure::{StructureReport, check_structure};
 #[cfg(feature = "write")]
 pub mod writer;
 #[cfg(feature = "write")]
@@ -21,6 +22,7 @@ pub mod symbology;
 pub use symbology::Symbology;
 
 mod budget;
+mod cfb_tree;
 #[cfg(test)]
 mod fuzz_tests;
 mod le;

@@ -14,7 +14,7 @@ const ENTRY: u32 = 0x4440_0000;
 
 /// A level entry with a 240-byte fixed part: level id at `0x20`, code at `0x5C`, name in
 /// string linkage 1.
-fn level(id: u64, level: u32, code: u32, name: &str) -> Vec<u8> {
+pub(super) fn level(id: u64, level: u32, code: u32, name: &str) -> Vec<u8> {
     let mut b = prefix(ENTRY | 95, 0xf0, id, 1, 0.).unwrap();
     u32_at(&mut b, 0x20, level).unwrap();
     u32_at(&mut b, 0x24, u32::MAX).unwrap();
@@ -23,7 +23,7 @@ fn level(id: u64, level: u32, code: u32, name: &str) -> Vec<u8> {
 }
 
 /// A table header (type 96) of `table` with `count` entries.
-fn table(id: u64, table: u32, count: u32) -> Vec<u8> {
+pub(super) fn table(id: u64, table: u32, count: u32) -> Vec<u8> {
     let mut b = prefix(HEADER | 96, 0x28, id, table, 0.).unwrap();
     u32_at(&mut b, 0x20, count).unwrap();
     finish(b, &[]).unwrap()
@@ -91,7 +91,7 @@ fn seed_with(named: &[(u32, Vec<u8>)], named_aux: &[(u32, Vec<u8>)]) -> Vec<u8> 
 }
 
 /// Every stream under `storage` (`Dgn^Nm`), by its path joined with `/`.
-fn streams(bytes: &[u8], storage: &str) -> BTreeMap<String, Vec<u8>> {
+pub(super) fn streams(bytes: &[u8], storage: &str) -> BTreeMap<String, Vec<u8>> {
     let mut cf = ::cfb::CompoundFile::open(Cursor::new(bytes)).unwrap();
     let paths: Vec<_> = cf
         .walk()

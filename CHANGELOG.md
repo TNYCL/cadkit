@@ -26,6 +26,20 @@ All notable changes are recorded here. The format follows
   a tag element by its 3D flag.
 - Warning `dgn.complex_count`: a complex chain or shape declared more components than it
   stores and was closed by the next chain or shape header.
+- `cadkit_dgn::check_structure` (also `native::structure`, and `cadkit::dgn::check_structure`
+  through the facade) returns a `StructureReport` of a DGN V8 file without the `write`
+  feature: sibling trees that are ordered red-black trees and that have the writer's
+  top-down shape, unused directory slots outside the MS-CFB free form, the writer's slot
+  order, pages with a page number or population, records without a time and split
+  dictionary pages, with the stable warning codes `dgn.cfb_tree_unordered`,
+  `dgn.cfb_tree_unbalanced`, `dgn.cfb_free_entry`, `dgn.record_time`,
+  `dgn.dictionary_page_split` and `dgn.model_page_counter`. CLI: `cadkit check-dgn file.dgn`
+  prints it as JSON (exit 1 when it has warnings).
+- `cadkit_dgn::palette::exact_index` (the writer's palette match) and `nearest_index` (the
+  match `V8Seed::prepare_document` uses for off-palette colors).
+- `V8Seed::font_entries` (the seed's font table in stored order, repeated names included)
+  and `V8Seed::font_number` (exact name, then trimmed ASCII case-insensitive; absent and
+  ambiguous names are distinct `Unsupported` errors).
 
 ### Changed
 
@@ -43,6 +57,18 @@ All notable changes are recorded here. The format follows
 - A complex chain or shape header that follows an unfinished chain or shape closes it
   instead of becoming its component, so chains in cells no longer nest into each other
   when a writer declares more components than it stores (#27).
+- **Bytes of every DGN file `write_v8` writes change**: the first dword of the model header
+  stream prefix (`Dgn~Mh`) is the number of graphic and control pages the output holds with
+  records, the relation observed in 552 of 567 private and 3 of 3 public V8 files (it was
+  the seed's value); a page without records is its 16-byte header (no empty zlib stream).
+  `write_v8` and `repack_v8` write unused directory slots in the MS-CFB 2.6.3 free form
+  (the `cfb` crate's form had a name length of 2). Slot order and the page headers of
+  unchanged seed pages are unchanged.
+- A text style naming a font that the seed's font table stores with two different numbers
+  is rejected ("text font style is ambiguous in seed") unless `dgn.font_number` picks one;
+  before, the last entry won silently. `prepare_document` drops such a style like an
+  unknown one.
+- A non-integer `dgn.style` is rejected instead of being ignored.
 
 ### Fixed
 
@@ -54,6 +80,17 @@ All notable changes are recorded here. The format follows
   as a quaternion, so `[π, 0, 0, 0]` came out unrotated. 3D tags keep the quaternion, and
   the writer now stores an angle for tags written into a 2D seed (#29).
 
+- Documents read from DGN files whose elements take color or weight from their level
+  (`dgn.color_index` / `dgn.weight` `0xFFFFFFFF`, style `0x7FFFFFFF`) are written back with
+  those values instead of failing with "extended DGN color table entries" or a weight
+  above 31 (51 of 54 such private files failed; 52 now write back). `prepare_document`
+  keeps them on elements and tags.
+- Mesh faces written by `write_v8` inherit the mesh's line style, lineweight, visibility and
+  `dgn.style` / `dgn.weight` / `dgn.color_index`, as polygon rings do (they kept level
+  and color only).
+- Font numbers of a repeated font table name are known to the writer, not only the last.
+- The writer's raw CFB directory walk stops at the header's FAT sector count and at a
+  repeated DIFAT sector.
 - `write_v8` on a version 4 seed (4096-byte sectors) no longer corrupts the FAT. The
   directory rebalancing added in 0.3.6 placed sector `n` at `512 + n * 4096` instead of
   `(n + 1) * 4096` (a version 4 header fills a whole sector), so it read FAT entries as

@@ -89,9 +89,11 @@ fn storage<'a>(path: Option<&'a String>, default: &'a str) -> &'a str {
 
 /// A dictionary page: `{record count, format version, 0, 0}`, then the zlib-compressed
 /// records, each after its 4-byte prefix. An empty page is the header alone. The page
-/// number and population are 0 as on every dictionary page MicroStation wrote (private
-/// corpus: 3,932 of 3,932 pages); cadkit before 0.3.5 wrote the page number and the
-/// record count there.
+/// number and population are 0, as on 3,932 of 3,932 dictionary pages of the private
+/// corpus; the public test_dgnv8 and Water samples store page number `n` and population =
+/// record count on their dictionary pages, so this is the seed lineage's form, not a format
+/// rule.
+/// cadkit before 0.3.5 wrote the page number and the record count there.
 fn encode(records: &[&NamedRecord], version: u32) -> Result<Vec<u8>> {
     let mut out = vec![0; 16];
     u32_at(

@@ -168,12 +168,10 @@ fn compressed(bytes: &[u8]) -> Result<Vec<u8>> {
     encoder.write_all(bytes)?;
     Ok(encoder.finish()?)
 }
+/// A graphic or control page: the 16-byte header `{record count, version, 0, 0}`, then the
+/// zlib-compressed records. A page without records is the header alone, as every empty page
+/// of the observed files is (private corpus: 644 graphic and 1,087 dictionary pages).
 fn page(records: &[Vec<u8>], version: u32, _number: u32) -> Result<Vec<u8>> {
-    let mut data = vec![];
-    for b in records {
-        data.extend(0u32.to_le_bytes());
-        data.extend_from_slice(b);
-    }
     let mut out = vec![0; 16];
     u32_at(
         &mut out,
@@ -182,6 +180,14 @@ fn page(records: &[Vec<u8>], version: u32, _number: u32) -> Result<Vec<u8>> {
             .map_err(|_| Error::limit(LimitKind::Capacity, "DGN page records".into()))?,
     )?;
     u32_at(&mut out, 4, version)?;
+    if records.is_empty() {
+        return Ok(out);
+    }
+    let mut data = vec![];
+    for b in records {
+        data.extend(0u32.to_le_bytes());
+        data.extend_from_slice(b);
+    }
     out.extend(compressed(&data)?);
     Ok(out)
 }
@@ -356,7 +362,7 @@ pub fn write_v8_with_seed(
         version,
         options.limits.max_decompressed_bytes,
     )?;
-    rasters.write_auxiliary(&mut replacements, &new_controls)?;
+    let control_pages = rasters.write_auxiliary(&mut replacements, &new_controls)?;
     if let Some(template) = rasters
         .template
         .as_ref()
@@ -426,6 +432,22 @@ pub fn write_v8_with_seed(
         put(&mut mh, 0x90 + i * 8, &n.to_le_bytes())?;
     }
     let mut full_header = seed.mh_prefix.clone();
+    // The first prefix dword equals the number of graphic and control pages that hold
+    // records in 552 of 567 private files and all 3 public V8 files; the other 15 lie
+    // between that number and the page count (FORMAT_NOTES, "Model header"). The other
+    // prefix bytes keep the seed's values.
+    if full_header.len() >= 4 {
+        let graphic_pages = if records.is_empty() {
+            0
+        } else {
+            record_pages.last().copied().unwrap_or(0)
+        };
+        u32_at(
+            &mut full_header,
+            0,
+            graphic_pages.saturating_add(control_pages),
+        )?;
+    }
     full_header.extend(mh);
     replacements.insert(seed.mh_path.clone(), Some(compressed(&full_header)?));
     let mut data = seed.header_data.clone();
@@ -578,8 +600,14 @@ impl State<'_> {
                 }
             };
             if let Some(rgb) = rgb {
-                let index=self.tables.palette.iter().position(|c|*c==rgb).ok_or_else(||Error::Unsupported("RGB color is absent from seed palette; provide dgn.color_index explicitly".into()))?;
-                u32_at(&mut b, 0x34, index as u32)?;
+                let index =
+                    crate::palette::exact_index(&self.tables.palette, rgb).ok_or_else(|| {
+                        Error::Unsupported(
+                        "RGB color is absent from seed palette; provide dgn.color_index explicitly"
+                            .into(),
+                    )
+                    })?;
+                u32_at(&mut b, 0x34, u32::from(index))?;
             }
         }
         if entity.linetype.as_deref().is_some_and(|s| {
@@ -594,12 +622,14 @@ impl State<'_> {
     }
 
     fn lineweight(&self, entity: &Entity) -> Result<u32> {
-        fn native(props: &cadkit_core::Props) -> Result<Option<u32>> {
+        // `element`: an element may hold `BY_LEVEL` as read; a level cannot take its weight
+        // from itself.
+        fn native(props: &cadkit_core::Props, element: bool) -> Result<Option<u32>> {
             match props.get("dgn.weight") {
                 Some(Value::Int(n)) => {
                     let weight = u32::try_from(*n)
                         .map_err(|_| Error::invalid(0, "DGN weight must be a nonnegative index"))?;
-                    if weight > 31 {
+                    if weight > 31 && !(element && weight == BY_LEVEL) {
                         return Err(Error::Unsupported("DGN lineweight indexes above 31".into()));
                     }
                     Ok(Some(weight))
@@ -608,7 +638,7 @@ impl State<'_> {
                 None => Ok(None),
             }
         }
-        if let Some(weight) = native(&entity.props)? {
+        if let Some(weight) = native(&entity.props, true)? {
             return Ok(weight);
         }
         let weight = if entity.lineweight == cadkit_core::Lineweight::ByLayer {
@@ -618,7 +648,7 @@ impl State<'_> {
                 .find(|layer| Some(layer.name.as_str()) == entity.layer.as_deref())
             {
                 Some(layer) => {
-                    if let Some(weight) = native(&layer.props)? {
+                    if let Some(weight) = native(&layer.props, false)? {
                         return Ok(weight);
                     }
                     layer.lineweight
@@ -794,17 +824,7 @@ impl State<'_> {
                         let mut child = Entity::new(EntityKind::Point {
                             position: Point3::default(),
                         });
-                        child.layer = e.layer.clone();
-                        child.color = e.color;
-                        child.linetype = e.linetype.clone();
-                        child.lineweight = e.lineweight;
-                        child.visible = e.visible;
-                        for key in ["dgn.color_index", "dgn.style", "dgn.weight"] {
-                            if let Some(value) = e.props.get(key) {
-                                child.props.insert(key.into(), value.clone());
-                            }
-                        }
-                        child.attributes.clear();
+                        copy_symbology(e, &mut child);
                         child.kind = EntityKind::Polyline {
                             vertices: ring.iter().copied().map(cadkit_core::Vertex::at).collect(),
                             closed: true,
@@ -854,8 +874,7 @@ impl State<'_> {
                         points,
                         filled: true,
                     });
-                    child.layer = e.layer.clone();
-                    child.color = e.color;
+                    copy_symbology(e, &mut child);
                     children.push(child);
                 }
                 self.group(e, id, level, flags, depth, &children, GroupKind::Cell, None)?;
@@ -1538,6 +1557,21 @@ impl State<'_> {
             })
             .collect();
         range(b, &corners)
+    }
+}
+
+/// Symbology a component written for `parent` inherits (polygon rings, mesh faces): level,
+/// colour, line style and weight, visibility and the native DGN indexes.
+fn copy_symbology(parent: &Entity, child: &mut Entity) {
+    child.layer = parent.layer.clone();
+    child.color = parent.color;
+    child.linetype = parent.linetype.clone();
+    child.lineweight = parent.lineweight;
+    child.visible = parent.visible;
+    for key in ["dgn.color_index", "dgn.style", "dgn.weight"] {
+        if let Some(value) = parent.props.get(key) {
+            child.props.insert(key.into(), value.clone());
+        }
     }
 }
 

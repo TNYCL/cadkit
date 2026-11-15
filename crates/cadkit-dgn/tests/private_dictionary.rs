@@ -120,6 +120,14 @@ fn private_plan_seeds_keep_their_dictionary_pages() {
         let output = cadkit_dgn::write_v8(&doc, &bytes, &options).unwrap();
         let after = v8::read(&output, &read).unwrap();
         seeds += 1;
+        // The container of every output is clean: ordered top-down trees, free slots in the
+        // MS-CFB form, the writer's slot order and a model header page count in range.
+        let report = cadkit_dgn::check_structure(&output, &read).unwrap();
+        assert!(report.is_clean(), "a written file has structural warnings");
+        assert_eq!(report.red_black_trees, report.storages);
+        assert_eq!(report.top_down_trees, report.storages);
+        assert_eq!(report.irregular_free_entries, 0);
+        assert!(report.writer_slot_order);
         assert!(
             layout_holds(&after),
             "a written file breaks the layout rules"

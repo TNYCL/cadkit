@@ -272,22 +272,27 @@ impl Preserved {
     }
 
     /// Writes the retained control records followed by `new_controls` (the control records
-    /// of new attachments) to the control pages, and the retained auxiliary pages.
+    /// of new attachments) to the control pages, and the retained auxiliary pages. Returns
+    /// the number of control pages written, each of which holds records.
     pub fn write_auxiliary(
         &self,
         replacements: &mut BTreeMap<String, Option<Vec<u8>>>,
         new_controls: &[Vec<u8>],
-    ) -> Result<()> {
+    ) -> Result<u32> {
+        let mut pages = 0;
         if !self.controls.is_empty() || !new_controls.is_empty() {
             let controls: Vec<Vec<u8>> =
                 self.controls.iter().chain(new_controls).cloned().collect();
-            super::put_pages(
+            pages = super::put_pages(
                 replacements,
                 &self.control_prefix,
                 &controls,
                 self.control_version,
                 self.max_bytes,
-            )?;
+            )?
+            .last()
+            .copied()
+            .unwrap_or(0);
         }
         for page in &self.auxiliary {
             replacements.insert(
@@ -295,12 +300,13 @@ impl Preserved {
                 Some(aux_page(&page.records, page.header)?),
             );
         }
-        Ok(())
+        Ok(pages)
     }
 }
 
-/// An auxiliary page stream: the 16-byte page header (`{record count, format version, 0, 0}`
-/// as MicroStation writes every auxiliary page) and the zlib-compressed records, each a
+/// An auxiliary page stream: the 16-byte page header (`{record count, format version, 0, 0}`,
+/// as on every auxiliary page of the private corpus; the public Water sample stores page
+/// number and population instead) and the zlib-compressed records, each a
 /// 28-byte header (magic `0xA11B`, payload length, kind, reserved, element id, flags) +
 /// payload.
 pub(super) fn aux_page(records: &[AuxRecord], header: PageHeader) -> Result<Vec<u8>> {

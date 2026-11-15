@@ -356,3 +356,71 @@ fn external_font_referenced_by_seed_graphics_is_retained_without_a_named_table()
     );
     assert!(write_v8(&source, &seed(false), &WriteOptions::default()).is_err());
 }
+
+#[test]
+fn a_font_name_with_two_numbers_is_ambiguous_until_a_number_picks_one() {
+    let seed = seed_with_fonts(&[(23, "Twin"), (41, "Twin"), (50, "Case"), (51, "case")]);
+    let parsed = V8Seed::from_bytes(&seed).unwrap();
+    assert_eq!(
+        parsed.font_entries().collect::<Vec<_>>(),
+        [("Twin", 23), ("Twin", 41), ("Case", 50), ("case", 51)]
+    );
+    // Each name once in `fonts`, every entry in `font_entries`.
+    assert_eq!(parsed.fonts().count(), 3);
+    let message = |r: Result<u32>| match r {
+        Err(Error::Unsupported(m)) => m,
+        other => panic!("{other:?}"),
+    };
+    let ambiguous = "DGN font name is ambiguous in the seed font table";
+    let absent = "DGN font is absent from the seed font table";
+    assert_eq!(message(parsed.font_number("Twin")), ambiguous);
+    // The exact name wins over the loose match; without one, the loose match decides.
+    assert_eq!(parsed.font_number("Case").unwrap(), 50);
+    assert_eq!(parsed.font_number("case").unwrap(), 51);
+    assert_eq!(message(parsed.font_number(" CASE ")), ambiguous);
+    assert_eq!(message(parsed.font_number("Other")), absent);
+
+    let mut source = text_entity(2, Vec3::Z, false);
+    let write = |entity: &Entity| {
+        write_v8(
+            &document(false, vec![entity.clone()]),
+            &seed,
+            &WriteOptions::default(),
+        )
+    };
+    if let EntityKind::Text { style, .. } = &mut source.kind {
+        *style = Some("Twin".into());
+    }
+    // The writer once took the last entry of a repeated name silently.
+    assert!(matches!(write(&source), Err(Error::Unsupported(m)) if m.contains("ambiguous")));
+    for number in [23, 41] {
+        source
+            .props
+            .insert("dgn.font_number".into(), Value::Int(number));
+        let bytes = write(&source).unwrap();
+        let parsed = crate::read(&bytes, &ReadOptions::default()).unwrap();
+        assert_eq!(
+            parsed.models[0].entities[0].props["dgn.font_number"],
+            Value::Int(number)
+        );
+    }
+    source
+        .props
+        .insert("dgn.font_number".into(), Value::Int(50));
+    assert!(write(&source).is_err(), "number and style disagree");
+    // A document prepared for the seed drops the ambiguous style and keeps the number.
+    source
+        .props
+        .insert("dgn.font_number".into(), Value::Int(23));
+    let prepared = parsed
+        .prepare_document(
+            &document(false, vec![source.clone()]),
+            &SeedPrepareOptions::default(),
+        )
+        .unwrap();
+    let EntityKind::Text { style, .. } = &prepared.models[0].entities[0].kind else {
+        panic!("text")
+    };
+    assert_eq!(style, &None);
+    assert!(write_v8_with_seed(&prepared, &parsed, &WriteOptions::default()).is_ok());
+}

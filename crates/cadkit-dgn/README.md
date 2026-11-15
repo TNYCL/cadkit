@@ -10,7 +10,11 @@ seed-based DGN V8 writer for a documented geometry and tag subset. Part of
 Build DGN import/export into a CAD application using a neutral document and a compatible
 seed. `V8Seed` parses a single-design-model seed once for reuse; `prepare_document` handles
 explicit unit, dimension and symbology conversion. Rust accessors expose the seed palette,
-levels, font names and timestamp, and `Symbology` provides typed access to DGN property keys.
+levels, font names and entries (`font_entries`, `font_number`) and timestamp;
+`palette::exact_index` / `nearest_index` match colors the way the writer does, and
+`Symbology` provides typed access to DGN property keys. `check_structure` reports the
+compound file directory and pages of any V8 file (sibling trees, free slots, page headers,
+record times) with stable warning codes; it needs no `write` feature.
 The `write` Cargo feature is enabled by default; disable default features for reading only.
 
 There is no DGN V7 writer. V8 output covers the documented geometry/tag/raster subset;

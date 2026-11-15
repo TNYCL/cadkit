@@ -6,10 +6,12 @@ use std::io::{Cursor, Read};
 
 mod application;
 mod dictionary;
+mod host_contract;
 mod microstation;
 mod raster;
 mod raster_template;
 mod regressions;
+mod structure;
 mod text;
 
 fn seed(three: bool) -> Vec<u8> {
