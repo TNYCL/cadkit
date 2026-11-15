@@ -199,8 +199,25 @@ pub struct TagData {
     pub font: u32,
     /// V8: text justification code of the displayed value (`0x130`).
     pub justification: u16,
-    /// V8: display orientation quaternion `(w, x, y, z)` as stored (`0x100`).
+    /// V8: the four doubles at `0x100` as stored. A 3D tag (3D property flag) stores the
+    /// display orientation as a quaternion `(w, x, y, z)`; a 2D tag stores the rotation
+    /// angle in radians in the first double and zeros in the others, as 2D text does.
+    /// [`TagData::display_rotation`] interprets them.
     pub quaternion: [f64; 4],
+}
+
+impl TagData {
+    /// Orientation of the displayed value: `Rotation::Angle` (first double at `0x100`)
+    /// for a 2D tag element, `Rotation::Quaternion` for a 3D one, the same split as text
+    /// (type 17). `is_3d` is the tag element's own flag, [`ElementHeader::is_3d`].
+    pub fn display_rotation(&self, is_3d: bool) -> Rotation {
+        let [angle, ..] = self.quaternion;
+        if is_3d {
+            Rotation::Quaternion(self.quaternion)
+        } else {
+            Rotation::Angle(angle)
+        }
+    }
 }
 
 /// One tag definition in a tag set.

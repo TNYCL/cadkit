@@ -403,6 +403,164 @@ fn displayed_tags_follow_the_microstation_layout() {
     assert_eq!(&tag_again.bytes[0xd2..0x138], &b[0xd2..0x138]);
 }
 
+/// A line at z = 0 with one displayed tag (usable in 2D and 3D seeds).
+fn line_with_tag(display: AttributeDisplay) -> Entity {
+    let mut e = line();
+    e.props.insert("dgn.color_index".into(), Value::Int(3));
+    e.props.insert("dgn.weight".into(), Value::Int(0));
+    e.attributes.push(
+        Attribute::new("Name", Value::Text("A".into()))
+            .with_set("Set")
+            .with_position(Point3::new(2.0, 3.0, 0.0))
+            .with_display(display.with_style("Arial")),
+    );
+    e
+}
+
+fn record(bytes: &[u8], t: u16) -> RawElement {
+    graphics(bytes)
+        .into_iter()
+        .find(|r| r.type_code() == t)
+        .unwrap()
+}
+
+#[test]
+fn hidden_graphics_round_trip_without_doubling_the_flag() {
+    for three in [false, true] {
+        let seed = seed_with_fonts(three, &[(1042, "Arial")]);
+        let mut hidden = line();
+        hidden.visible = false;
+        // A stale 0x0080 in `dgn.properties` must not hide a visible entity.
+        let mut shown = line();
+        shown
+            .props
+            .insert("dgn.properties".into(), Value::Int(0x0680));
+        let mut owner = line_with_tag(AttributeDisplay::new(0.5, 0.5));
+        owner.visible = false;
+        let doc = document(three, vec![hidden, shown, owner]);
+        let bytes = write_v8(&doc, &seed, &WriteOptions::default()).unwrap();
+        let lines: Vec<_> = graphics(&bytes)
+            .into_iter()
+            .filter(|r| r.type_code() == 3)
+            .collect();
+        let dim = if three { 0x0800 } else { 0 };
+        let words: Vec<_> = lines.iter().map(|r| le::u32_at(&r.bytes, 0x28)).collect();
+        assert_eq!(
+            words,
+            vec![Some(dim | 0x80), Some(dim | 0x0600), Some(dim | 0x80)]
+        );
+        // The displayed tag of a hidden owner stays displayed.
+        let tag = record(&bytes, 37);
+        assert_eq!(le::u32_at(&tag.bytes, 0x28).map(|w| w & 0x80), Some(0));
+        let read = crate::read(&bytes, &ReadOptions::default()).unwrap();
+        let visible: Vec<bool> = read.models[0].entities.iter().map(|e| e.visible).collect();
+        assert_eq!(visible, vec![false, true, false]);
+        assert!(!read.models[0].entities[2].attributes[0].invisible);
+        // Read -> write -> read keeps every flag.
+        let again = write_v8(&read, &seed, &WriteOptions::default()).unwrap();
+        let back = crate::read(&again, &ReadOptions::default()).unwrap();
+        let visible: Vec<bool> = back.models[0].entities.iter().map(|e| e.visible).collect();
+        assert_eq!(visible, vec![false, true, false]);
+        let words_again: Vec<_> = graphics(&again)
+            .into_iter()
+            .filter(|r| r.type_code() == 3)
+            .map(|r| le::u32_at(&r.bytes, 0x28))
+            .collect();
+        assert_eq!(words_again, words);
+    }
+}
+
+#[test]
+fn tag_rotation_is_an_angle_in_2d_and_a_quaternion_in_3d() {
+    use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI};
+    for three in [false, true] {
+        let seed = seed_with_fonts(three, &[(1042, "Arial")]);
+        for angle in [FRAC_PI_2, PI, -1.25, 0.0] {
+            let e = line_with_tag(AttributeDisplay::new(0.5, 0.5).with_rotation(angle));
+            let bytes =
+                write_v8(&document(three, vec![e]), &seed, &WriteOptions::default()).unwrap();
+            let tag = record(&bytes, 37);
+            let stored = [0, 1, 2, 3].map(|i| le::f64_at(&tag.bytes, 0x100 + i * 8).unwrap());
+            if three {
+                assert_eq!(
+                    le::u32_at(&tag.bytes, 0x28).map(|w| w & 0x0800),
+                    Some(0x0800)
+                );
+                if angle == 0.0 {
+                    assert_eq!(stored, [-1.0, 0.0, 0.0, 0.0]);
+                } else if angle == FRAC_PI_2 {
+                    assert!((stored[0] - FRAC_PI_4.cos()).abs() < 1e-12);
+                    assert!((stored[3] + FRAC_PI_4.sin()).abs() < 1e-12);
+                }
+            } else {
+                assert_eq!(le::u32_at(&tag.bytes, 0x28).map(|w| w & 0x0800), Some(0));
+                assert_eq!(stored, [angle, 0.0, 0.0, 0.0]);
+            }
+            let read = crate::read(&bytes, &ReadOptions::default()).unwrap();
+            let got = read.models[0].entities[0].attributes[0]
+                .display
+                .as_ref()
+                .unwrap()
+                .rotation;
+            assert!((got - angle).abs() < 1e-9, "{three} {angle} {got}");
+            // And back again: the same doubles at 0x100.
+            let again = write_v8(&read, &seed, &WriteOptions::default()).unwrap();
+            let tag = record(&again, 37);
+            let again = [0, 1, 2, 3].map(|i| le::f64_at(&tag.bytes, 0x100 + i * 8).unwrap());
+            for (a, b) in again.iter().zip(stored.iter()) {
+                assert!((a - b).abs() < 1e-12, "{again:?} {stored:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn typed_attribute_symbology_resolves_against_the_seed() {
+    let seed = seed_with_fonts(true, &[(1042, "Arial")]);
+    let magenta = cadkit_core::Color::Rgb {
+        r: 255,
+        g: 0,
+        b: 255,
+    };
+    let write = |e: Entity| write_v8(&document(true, vec![e]), &seed, &WriteOptions::default());
+    let tag_symbology = |bytes: &[u8]| {
+        let tag = record(bytes, 37);
+        (le::u32_at(&tag.bytes, 0x34), le::u32_at(&tag.bytes, 0x30))
+    };
+    // A typed color is looked up in the seed palette (index 5 there); the owner keeps 3.
+    let mut e = line_with_tag(AttributeDisplay::new(0.5, 0.5));
+    e.attributes[0].color = Some(magenta);
+    let bytes = write(e.clone()).unwrap();
+    assert_eq!(tag_symbology(&bytes), (Some(5), Some(0)));
+    assert_eq!(le::u32_at(&record(&bytes, 3).bytes, 0x34), Some(3));
+    let read = crate::read(&bytes, &ReadOptions::default()).unwrap();
+    let a = &read.models[0].entities[0].attributes[0];
+    assert_eq!(a.color, Some(magenta));
+    assert_eq!(a.props.get("dgn.color_index"), Some(&Value::Int(5)));
+    assert_eq!(a.lineweight, None, "same weight as the owner");
+    // An explicit index wins over the typed color.
+    let mut explicit = e.clone();
+    explicit.attributes[0]
+        .props
+        .insert("dgn.color_index".into(), Value::Int(9));
+    assert_eq!(tag_symbology(&write(explicit).unwrap()).0, Some(9));
+    // A color the seed palette lacks fails as it does for entities.
+    let mut absent = e.clone();
+    absent.attributes[0].color = Some(cadkit_core::Color::Rgb { r: 1, g: 2, b: 3 });
+    assert!(write(absent).is_err());
+    // Typed lineweights need a native index, as entity lineweights do; with it they apply.
+    let mut weight = e.clone();
+    weight.attributes[0].lineweight = Some(cadkit_core::Lineweight::Millimeters(0.5));
+    assert!(write(weight.clone()).is_err());
+    weight.attributes[0]
+        .props
+        .insert("dgn.weight".into(), Value::Int(2));
+    assert_eq!(tag_symbology(&write(weight).unwrap()).1, Some(2));
+    // Without typed values the owner's symbology is inherited, as before.
+    let plain = line_with_tag(AttributeDisplay::new(0.5, 0.5));
+    assert_eq!(tag_symbology(&write(plain).unwrap()), (Some(3), Some(0)));
+}
+
 #[test]
 fn hidden_tags_keep_an_empty_range_and_the_hidden_display_flag() {
     let seed = seed_with_fonts(true, &[(1042, "Arial")]);

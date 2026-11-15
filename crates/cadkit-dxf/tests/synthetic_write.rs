@@ -821,6 +821,64 @@ fn ellipse_with_ratio_above_one_is_normalised() {
 }
 
 #[test]
+fn fit_point_splines_carry_dgn_curve_end_tangents() {
+    let spline = |props: &[(&str, Value)]| {
+        let mut e = Entity::new(EntityKind::Spline {
+            degree: 3,
+            knots: Vec::new(),
+            control_points: Vec::new(),
+            weights: Vec::new(),
+            fit_points: vec![p(0.0, 0.0, 0.0), p(1.0, 1.0, 0.0), p(2.0, 0.0, 0.0)],
+            closed: false,
+        });
+        for (k, v) in props {
+            e.props.insert((*k).into(), v.clone());
+        }
+        e
+    };
+    let list = |v: [f64; 3]| Value::List(v.iter().map(|f| Value::Float(*f)).collect());
+    let groups = |e: Entity| {
+        let mut doc = Document::default();
+        doc.models
+            .push(Model::new("Model", ModelKind::Model).with_entities(vec![e]));
+        let text = cadkit_dxf::write(&doc, DxfVersion::R2013).unwrap();
+        let lines: Vec<&str> = text.lines().map(str::trim).collect();
+        let start = lines.windows(2).position(|w| w == ["0", "SPLINE"]).unwrap();
+        let mut out = Vec::new();
+        for pair in lines[start + 2..].chunks(2) {
+            if pair[0] == "0" {
+                break;
+            }
+            out.push((pair[0].parse::<i32>().unwrap(), pair[1].to_owned()));
+        }
+        out
+    };
+    let value = |g: &[(i32, String)], code: i32| {
+        g.iter()
+            .find(|(c, _)| *c == code)
+            .map(|(_, v)| v.parse::<f64>().unwrap())
+    };
+    // Tangents are written normalised in groups 12 / 13.
+    let g = groups(spline(&[
+        ("dgn.curve_start_tangent", list([0.6, 0.0, 0.0])),
+        ("dgn.curve_end_tangent", list([0.0, -0.5, 0.0])),
+    ]));
+    assert_eq!(value(&g, 12), Some(1.0));
+    assert_eq!(value(&g, 22), Some(0.0));
+    assert_eq!(value(&g, 13), Some(0.0));
+    assert_eq!(value(&g, 23), Some(-1.0));
+    // Absent, zero or malformed tangents leave the fit data with free ends.
+    for props in [
+        vec![],
+        vec![("dgn.curve_start_tangent", list([0.0, 0.0, 0.0]))],
+        vec![("dgn.curve_end_tangent", Value::Text("x".into()))],
+    ] {
+        let g = groups(spline(&props));
+        assert!(g.iter().all(|(c, _)| *c != 12 && *c != 13), "{g:?}");
+    }
+}
+
+#[test]
 fn names_are_cleaned_and_duplicates_dropped() {
     let mut doc = Document::default();
     doc.layers = vec![

@@ -774,10 +774,10 @@ fn parse_model_index(
         let name_len = usize::from(name_len);
         let desc_len = usize::try_from(desc_len).unwrap_or(usize::MAX);
         let name = le::bytes(b, off + 32, name_len)
-            .map(text::decode_utf16)
+            .map(text::decode_utf16_name)
             .unwrap_or_default();
         let description = le::bytes(b, off + 32 + name_len, desc_len)
-            .map(text::decode_utf16)
+            .map(text::decode_utf16_name)
             .unwrap_or_default();
         out.push(ModelIndexEntry {
             storage_index: (raw & 0xffff) as u16,

@@ -9,7 +9,7 @@ use cadkit_core::{
 
 use crate::budget::Budget;
 use crate::le;
-use crate::map::{Item, Mapper, Node, Xf, length_unit, tree_v8, unit_from_label};
+use crate::map::{Item, Mapper, Node, Xf, length_unit, tree_v8_counted, unit_from_label};
 use crate::native::decode_v8::{self, DEP_TAG_TARGET};
 use crate::native::element::{ElementData, LevelData};
 use crate::native::linkage;
@@ -42,6 +42,7 @@ fn items<'a>(
 
 fn map_file(file: &V8File, options: &ReadOptions, enc: TextDecoder) -> Document {
     let mut m = Mapper::new(options.keep_raw, options.limits.max_depth);
+    m.v8 = true;
     let named = items(
         file.named_pages.iter().flat_map(|p| p.elements.iter()),
         enc,
@@ -100,7 +101,7 @@ fn map_file(file: &V8File, options: &ReadOptions, enc: TextDecoder) -> Document 
             |h| xf_of(h, doc_mpu),
         )
         .relative();
-    let named_tree = tree_v8(&named, options.limits.max_depth);
+    let named_tree = tree(&mut m, &named, options.limits.max_depth);
     let mut blocks: Vec<Block> = Vec::new();
     let mut block_names: HashSet<String> = HashSet::new();
     for node in &named_tree {
@@ -208,7 +209,7 @@ fn map_file(file: &V8File, options: &ReadOptions, enc: TextDecoder) -> Document 
                 m.attached.insert(i);
             }
         }
-        let tree = tree_v8(&graphic, options.limits.max_depth);
+        let tree = tree(&mut m, &graphic, options.limits.max_depth);
         let mut entities = Vec::with_capacity(tree.len());
         for node in &tree {
             if m.attached.contains(&node.idx) {
@@ -384,6 +385,19 @@ fn map_file(file: &V8File, options: &ReadOptions, enc: TextDecoder) -> Document 
     }
 }
 
+/// The element hierarchy; chains and shapes closed before their declared count are noted.
+fn tree(m: &mut Mapper, items: &[Item<'_>], max_depth: u32) -> Vec<Node> {
+    let (roots, closed_early) = tree_v8_counted(items, max_depth);
+    for _ in 0..closed_early {
+        m.note("dgn.complex_count", || {
+            "complex chain or shape declared more components than it stores; the next chain \
+             or shape header closed it"
+                .into()
+        });
+    }
+    roots
+}
+
 /// Document units from a model header: the master unit definition, else its label.
 pub(crate) fn units_of(h: Option<&ModelHeader>) -> (Units, Option<f64>) {
     let Some(h) = h else {
@@ -425,13 +439,95 @@ mod tests {
     fn string_linkage(id: u32, text: &str) -> Vec<u8> {
         let mut payload = text.as_bytes().to_vec();
         payload.push(0);
+        string_linkage_bytes(id, &payload)
+    }
+
+    fn string_linkage_bytes(id: u32, payload: &[u8]) -> Vec<u8> {
         let total = (12 + payload.len()).div_ceil(2) * 2;
         let mut l = vec![(total / 2 - 1) as u8, 0x10, 0xd2, 0x56];
         l.extend_from_slice(&id.to_le_bytes());
         l.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-        l.extend_from_slice(&payload);
+        l.extend_from_slice(payload);
         l.resize(total, 0);
         l
+    }
+
+    /// `ff fe` + UTF-16LE + NUL unit.
+    fn bom_utf16(text: &str) -> Vec<u8> {
+        let mut b = vec![0xff, 0xfe];
+        b.extend(text.encode_utf16().flat_map(u16::to_le_bytes));
+        b.extend_from_slice(&[0, 0]);
+        b
+    }
+
+    #[test]
+    fn byte_order_marked_level_and_model_names_decode_as_utf16() {
+        // Model index name with a BOM; levels named `ff fe` + UTF-16 (Cyrillic, Turkish,
+        // ASCII), one `ff fe 01 00` marked 8-bit name, one plain name.
+        let mut mix = Vec::new();
+        for v in [0xaa00_ba11u32, 4, 1, 0] {
+            mix.extend_from_slice(&v.to_le_bytes());
+        }
+        let name: Vec<u8> = bom_utf16("Модель")[..14].to_vec();
+        mix.extend_from_slice(&0x0001_0000u32.to_le_bytes());
+        mix.extend_from_slice(&0u32.to_le_bytes());
+        mix.extend_from_slice(&0u64.to_le_bytes());
+        mix.extend_from_slice(&((32 + name.len()) as u16).to_le_bytes());
+        mix.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        mix.extend_from_slice(&[0; 12]);
+        mix.extend_from_slice(&name);
+        let names: [(u32, Vec<u8>); 5] = [
+            (1, bom_utf16("Стены")),
+            (2, bom_utf16("Duvar İç Çizgi")),
+            (3, bom_utf16("- (7)")),
+            (4, vec![0xff, 0xfe, 1, 0, b'C', 0xe9, b'l']),
+            (5, b"Default".to_vec()),
+        ];
+        let mut records = vec![element(
+            0x2000_0060,
+            &record(1, 30, &5u32.to_le_bytes()),
+            &[],
+        )];
+        for (id, payload) in &names {
+            let mut lvl = id.to_le_bytes().to_vec();
+            lvl.extend_from_slice(&u32::MAX.to_le_bytes());
+            lvl.resize(0x48, 0);
+            records.push(element(
+                0x4000_005f,
+                &record(1, 40 + u64::from(*id), &lvl),
+                &string_linkage_bytes(1, payload),
+            ));
+        }
+        let mut line = header(3, 10, 0, 3);
+        line.extend(f64s(&[0.0, 0.0, 1000.0, 1000.0]));
+        let mut h = vec![0u8; 0x14];
+        h.extend_from_slice(&zlib::compress(&[0u8; 64]));
+        let bytes = build(&[
+            ("Dgn~H", h),
+            ("Dgn^Ix/Dgn~Mix", zlib::compress(&mix)),
+            (
+                "Dgn-Md/#000000/Dgn~Mh",
+                model_header_stream(false, 1000.0, "Model A"),
+            ),
+            ("Dgn-Md/#000000/Dgn^G/$1", page(&[element(3, &line, &[])])),
+            ("Dgn^Nm/$1", page(&records)),
+        ]);
+        let doc = crate::read(&bytes, &ReadOptions::default()).unwrap();
+        assert_eq!(doc.models[0].name, "Модель");
+        let mut layers: Vec<(Option<u64>, &str)> =
+            doc.layers.iter().map(|l| (l.id, l.name.as_str())).collect();
+        layers.sort_unstable();
+        assert_eq!(
+            layers,
+            vec![
+                (Some(1), "Стены"),
+                (Some(2), "Duvar İç Çizgi"),
+                (Some(3), "- (7)"),
+                (Some(4), "Cél"),
+                (Some(5), "Default"),
+            ]
+        );
+        assert_eq!(doc.models[0].entities[0].layer.as_deref(), Some("- (7)"));
     }
 
     fn dependency(app: u16, root_type: u8, id: u64) -> Vec<u8> {

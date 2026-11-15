@@ -29,7 +29,8 @@ Clean-room: no ODA/Bentley SDK material, no GPL code. Sources used:
 | `[MS-CFB]` Compound File Binary format (public Microsoft open specification) | open spec | CFB header, FAT/DIFAT, directory, mini stream |
 | `[MS-OLEPS]` property sets (public Microsoft open specification) | open spec | `\u0005SummaryInformation` (application name, code page) |
 | ezdgn <https://github.com/monozukuri-ai/ezdgn> `docs/v8/FORMAT_NOTES.md`, `crates/ezdgn-core/src/v8/*.rs`, `src/entities.rs` | MIT | V8 page/record framing, model index and model header search (`find_model_header`), common header, line/vertex/ellipse/arc/text/text-node offsets, string-linkage framing; V7 description-length rule (`container_descriptor`), V7 shared cell offsets |
-| GDAL dgnlib `ogr/ogrsf_frmts/dgn/{dgnread.cpp,dgnhelp.cpp,dgnopen.cpp,dgnlib.h}` <https://github.com/OSGeo/gdal> | MIT/X | V7 record header, display header, TCB, color table, every V7 element layout, tag set / tag value layout, default 256-color palette (`abyDefaultPCT`, ported to `src/palette.rs`), RAD-50, linkage framing, quaternion convention |
+| GDAL dgnlib `ogr/ogrsf_frmts/dgn/{dgnread.cpp,dgnhelp.cpp,dgnopen.cpp,dgnlib.h}` <https://github.com/OSGeo/gdal> | MIT/X | V7 record header, display header, TCB, color table, every V7 element layout, tag set / tag value layout, default 256-color palette (`abyDefaultPCT`, ported to `src/palette.rs`), RAD-50, linkage framing, quaternion convention; `DGNPF_*` property flags (no meaning for `0x0080`, so V7 visibility is unchanged) |
+| GDAL dgnlib `ogr/ogrsf_frmts/dgn/dgnstroke.cpp` (`DGNStrokeCurve`), `dgnwrite.cpp` (`DGNCreateComplexHeaderFromGroup`), `ogrdgnlayer.cpp` (complex header children) | MIT/X | type 11 curve end tangents (Akima slope at the first and last fit points, `map::curve_end_tangents`); complex chain/shape headers own plain components (count excludes the header; the reader expects no further header among the children) |
 | GDAL `autotest/ogr/data/dgnv8/test_dgnv8_ref.csv` (ODA-driver output) | MIT/X | black-box oracle only (no layout knowledge taken from it) |
 | Own hex analysis of the samples below | — | everything marked "inferred" and all V8 tag/table/raster layouts |
 
@@ -176,7 +177,7 @@ was not separated; the writer removes all three.
 | `0x18` | f64 | last modified, milliseconds since 1970 (inferred: same value on every element of a save; 2017 in test_dgnv8, 2014 in TreeText) | — |
 | `0x20` | u32 | graphic group | oracle row 1 (= 2) |
 | `0x24` | u32 | unknown (`0x80000000` in test_dgnv8, 0 elsewhere) | — |
-| `0x28` | u32 | property flags: `0x0800` 3D, `0x8000` hole (shapes), `0x0200`/`0x0400` new/modified (as V7), `0x0080` set on hidden tags (inferred) | oracle: Z vs 2D geometry; hole ring in a cell |
+| `0x28` | u32 | property flags: `0x0800` 3D, `0x8000` hole (shapes), `0x0200`/`0x0400` new/modified (as V7), `0x0080` hidden (see below) | oracle: Z vs 2D geometry; hole ring in a cell; `0x0080`: every hidden TreeText tag (13,808), no other record of the public or private corpus |
 | `0x2C` | u32 | line style | oracle (4) |
 | `0x30` | u32 | line weight | oracle (5) |
 | `0x34` | u32 | color index (>255 = extended color) | oracle (3, 256) |
@@ -206,7 +207,7 @@ store 3 doubles and a quaternion `(w, x, y, z)`. All coordinates are UOR doubles
 | 2 cell, 34 shared cell definition, 35 instance | `0x68` u32 components, `0x6C` u32 1 in every ODA and MicroStation cell (meaning unknown); 2D (primary length `0xC0`): `0x70` range low, `0x80` high, `0x90` 2×2 matrix, `0xB0` origin; 3D (`0x100`): `0x70` low, `0x88` high, `0xA0` 3×3 row-major matrix, `0xE8` origin; name = string linkage 1 | test_dgnv8: identity matrices, instance matrix `10000·I` at origin (0,1,2) = oracle POINT Z; definitions are stored in the 3D layout even with the 2D flag, so the variant is chosen by length |
 | 27 B-spline curve | `0x68` u32 components, `0x6C` u8 order−2 (low nibble) + flags (`0x10` curve display, `0x20` polygon display, `0x40` rational, `0x80` closed), `0x6D` u8, `0x6E` u16 (unknown), `0x70` u32 poles, `0x74` u32 knots (0 = uniform) | oracle: cubic, see open question on "closed" |
 | 26, 28 knots / weights | doubles after the `0x20` prefix (unverified, no sample) | — |
-| 37 tag | `0xA0` origin (3 doubles), `0xB8` offset (3 doubles), `0xD0` u16 tag number, `0xD2` u16 value type, `0xF0`/`0xF8` text multipliers, `0x138` u32 value length, `0x140` value; set = dependency `0x2717`, target = dependency `0x2710`; displayed tags: see "Displayed tags" below | TreeText (13,808 tags, 2D) and private sample (418 tags, 3D) — same offsets for 2D and 3D |
+| 37 tag | `0xA0` origin (3 doubles), `0xB8` offset (3 doubles), `0xD0` u16 tag number, `0xD2` u16 value type, `0xF0`/`0xF8` text multipliers, `0x100` orientation (2D: angle in radians + three zero doubles; 3D: quaternion), `0x138` u32 value length, `0x140` value; set = dependency `0x2717`, target = dependency `0x2710`; displayed tags: see "Displayed tags" below | TreeText (13,808 tags, 2D) and private sample (418 tags, 3D) — same offsets for 2D and 3D; `0x100`: see "Displayed tags" |
 | 39 tag set definition | `0x28` magic `teSt`, `0x2C` u32 (`0xF81` in every set), `0x30` u32 (varies), `0x34` u32 definitions length, `0x38` u32 same, `0x3C` definitions (V7 layout below), set name = string linkage 1 | TreeText (1 set), private sample (8 sets) |
 | 94 raster frame | see [Raster attachments](#raster-attachments) | private corpus (2,029 frames) |
 | 90, 91, 92, 93 raster attachment (control) | see [Raster attachments](#raster-attachments) | private corpus |
@@ -259,7 +260,7 @@ files) with the layout below; offsets from the element start.
 | `0xD0` / `0xD2` | tag number / value type |
 | `0xD4` | u32 `0x02000000` on most tags (meaning unknown) |
 | `0xF0` / `0xF8` | width / height multipliers (UOR = value × 6/1000) |
-| `0x100` | quaternion; `(-1, 0, 0, 0)` when unrotated |
+| `0x100` | 3D tags: quaternion, `(-1, 0, 0, 0)` when unrotated (current private corpus: 226,755 of 267,273 3D tags; the other 40,518 hold other rotations). 2D tags: the rotation angle in radians in the first double and zeros in the other three, as 2D text stores it (issue #29: 1,074 zero and 82 `[a, 0, 0, 0]` 2D tags in the reporter's files, `a` ∈ {π, π/2, …}; TreeText: 13,808 2D tags, all zero) |
 | `0x12C` / `0x130` | u32 font number / u32 justification (7 = center-middle) |
 | `0x138` / `0x140` | value length / value: 8-bit text in the locale code page with a counted NUL, i32, or f64 |
 | after the value | 10 bytes, then the linkages at a 2-byte boundary: set dependency (24 bytes), target dependency (56 bytes, root type 9) |
@@ -424,9 +425,42 @@ skipped (counted in `dgn.deleted_count`). Records without a display header and t
   longer axis; parameters shifted by π/2 when the secondary axis is longer). Clockwise
   sweeps become the equivalent CCW range. Quaternions: GDAL convention (stored
   `(w,0,0,z)` with `z = sin(−θ/2)` is a CCW rotation by θ).
+- **Flat ellipses / arcs** (issue #24): when the smaller semi-axis is at most
+  1e-9 × the larger one (the tolerance used for equal axes) the element draws a segment,
+  and `Ellipse { ratio }` would leave its documented (0, 1] range (the report saw 0 and
+  6e-17). It becomes a `Line` between the extreme points the sweep reaches along the
+  non-zero axis: the whole diameter for a full sweep; for a partial sweep the positions at
+  both ends and ±1 wherever the swept range passes an axis end (parameter 0 / π for a flat
+  secondary axis, π/2 / 3π/2 for a flat primary axis). The line starts at the extreme
+  nearer the arc's start point, so an arc that passes no axis end keeps its travel
+  direction (complex chain continuity). Both axes zero, or a segment of zero length →
+  `Point`. The element data stays in props: `dgn.degenerate_ellipse = true`,
+  `dgn.primary_axis` / `dgn.secondary_axis` and `dgn.center` (document units),
+  `dgn.start_angle` / `dgn.sweep_angle` (arcs, radians as stored) and the stored
+  orientation (`dgn.rotation` angle in 2D, `dgn.quaternion` `(w, x, y, z)` in 3D). Ratios
+  above 1e-9 stay `Ellipse` (a consumer with a stricter lower bound, e.g. 1e-6 for some
+  DXF readers, still has to handle them). The writer writes such an entity back as a
+  type 3 line (or zero-length line for a point); it does not recreate the type 15/16 element
+  from the props. No flat ellipse or arc occurs in the public or private corpus (0 of the
+  type 15/16 elements); the tests are synthetic.
 - **Curves (11)** → `Spline` with `fit_points` = stored points minus the two tangent points
-  at each end (oracle: stroke starts at point 3, ends at point n−2); all points in
-  `dgn.curve_points`.
+  at each end (oracle: stroke starts at point 3, ends at point n−2). `dgn.curve_points`
+  keeps every stored point (document units, `[x, y, z]` lists in stored order, tangent
+  points included), so the element can be reproduced. The end conditions are also given
+  (issue #28) as `dgn.curve_start_tangent` / `dgn.curve_end_tangent`
+  (`[x, y, z]`), derived as GDAL dgnlib's `DGNStrokeCurve` derives the slopes at the
+  first fit point `P[2]` and the last one `P[n−3]`: with `m[k]` the unit direction of the
+  chord `P[k] → P[k+1]` (zero for a zero-length chord), each component is the Akima mean
+  `(m[k−1]·|m[k+1] − m[k]| + m[k]·|m[k−1] − m[k−2]|) / (|m[k+1] − m[k]| + |m[k−1] − m[k−2]|)`,
+  or `(m[k−1] + m[k]) / 2` when both weights are zero. The vectors are dimensionless slopes
+  along the chord length, **not normalised** (each component lies in [−1, 1]; the length
+  is not 1 in general and may be 0); normalise them for a direction. GDAL measures chords
+  in XY; 3D curves use 3D chords (equal for 2D files). Curves of fewer than six points
+  (GDAL does not stroke them) get no tangents. `EntityKind::Spline` has no tangent fields
+  in 0.5.x. The DXF writer emits them, normalised, as SPLINE groups 12/13 of fit-point
+  splines; its R12 polyline output and the DGN writer (which samples splines into line
+  strings) do not use them. Checked: the two test_dgnv8 curves get tangents and still meet
+  the oracle's start and end points.
 - **B-splines (27 + 21/26/28)** → `Spline`; uniform knots: clamped for open curves,
   periodic curves unwrapped into an open NURBS (poles + first `degree` poles, knots
   0..n+order) so standard evaluation traces the closed curve.
@@ -435,7 +469,21 @@ skipped (counted in `dgn.deleted_count`). Records without a display header and t
   with scale = matrix column lengths, rotation/normal from the matrix (raw matrix in
   `dgn.matrix`).
 - **Complex chains/shapes** → `Group { ComplexChain | ComplexShape }`; 18/19 and unknown
-  headers with components → `Group { Other }`.
+  headers with components → `Group { Other }`. V8 hierarchy (`tree_v8`): a component
+  decrements the innermost open header's declared count (`0x68`); a non-component closes
+  every open header. A complex chain or shape header (12/14)
+  that arrives while a chain or shape is open closes it instead of nesting into it (issue #27),
+  because a chain/shape owns plain components only: GDAL dgnlib's complex-header reader
+  collects line geometry only and notes that a child "should verify complex bit set, not
+  another header"; every 12/14 header of the public (6) and private (6) corpus declares
+  exactly the run of plain components that follows it, and none holds another header.
+  The reporter's files (14 chains in chains, up to ~14 levels inside cells) were not
+  available; the staircase they describe is what an over-declared count produces
+  (`Cell → chain A (declares n, stores fewer) → … → chain B`, B becoming A's component), and
+  is reproduced synthetically. Such early closes are counted in the warning
+  `dgn.complex_count`. Not covered: an over-declared chain followed by a plain component
+  of the enclosing cell (it still joins the chain; nothing in the record distinguishes
+  it), and B-spline curve headers (27), which may stay chain components.
 - **Line strings / shapes (4, 6)** → `Polyline` (`normal = +Z`: DGN has no bulges); shapes
   are `closed` and drop the repeated first vertex. A zero-length line (3) is a `Point`
   (the oracle reports it as POINT).
@@ -443,9 +491,29 @@ skipped (counted in `dgn.deleted_count`). Records without a display header and t
 - **Tags** → `Attribute { tag: definition name, value, set: set name, position: origin +
   offset, invisible: property bit 0x0080, layer: the tag element's level when it is not
   the target's, display: size, font style, alignment and rotation of displayed tags,
+  color / lineweight: the tag element's own, when they differ from the target's,
   props: symbology and flags that differ from the target's }` on the target entity (looked up by element
-  id, also inside groups). Tags whose target is missing (and V7 tags) stay as
+  id, also inside groups). The display rotation comes from `0x100`: an angle in 2D tag
+  elements, a quaternion in 3D ones (issue #29; before, a 2D `[π, 0, 0, 0]`
+  was normalised as a quaternion and read as unrotated). `color` is resolved like an
+  entity color (file color table, else the default palette; `ByBlock` for
+  `0xFFFFFFFE`) and `lineweight` like an entity lineweight; both stay `None` when the
+  tag's `dgn.color_index` / `dgn.weight` equal the target's (then those props are dropped
+  too), so `None` means "the owner's" (issue #30; private corpus: 20,624 of
+  267,273 tags have their own color index, 33,797 their own weight). Tags whose target is missing (and V7 tags) stay as
   `Unknown { "dgn.type_37" }` entities carrying the attribute (`dgn.tag_target_missing`).
+- **Hidden graphics** (issue #25): a V8 element with a display header and
+  property bit `0x0080` maps with `Entity::visible = false` (the raw word stays in
+  `dgn.properties`). The bit marks hidden tags in TreeText (13,808 of 13,808), and the
+  report states that other DGN readers do not draw graphics carrying it; no graphic
+  element of the public or private corpus has it, so the change is verified on synthetic
+  records only. It applies to every display-header element alike: raster frames, cell and
+  complex headers (their children keep their own bits; an invisible group hides them in
+  renderers that skip invisible entities) and standalone tags. V7 is unchanged: GDAL
+  dgnlib's property flags (`DGNPF_*`) give `0x0080` no meaning. The writer sets the bit
+  from `visible` only (`dgn.properties` contributes its `0x0600` bits), so it is not applied
+  twice, and a hidden owner no longer hides the displayed tags written for it (their bit
+  comes from `Attribute::invisible`).
 - **Raster frames (94)** → `Image`: `position` = matrix translation (lower-left image
   corner), `u_vector = â·ext_x`, `v_vector = b̂·ext_y` with `â`, `b̂` the unit matrix X / Y
   columns and `ext` the edge lengths at `0x108`/`0x110` (see
@@ -467,7 +535,8 @@ skipped (counted in `dgn.deleted_count`). Records without a display header and t
 - Warnings use stable codes: `dgn.page_records`, `dgn.page_count`, `dgn.zlib`,
   `dgn.stream_unreadable`, `dgn.model_header`, `dgn.model_index`, `dgn.v7_truncated`,
   `dgn.v7_units`, `dgn.unknown_element.type_N`, `dgn.decode_failed.type_N`,
-  `dgn.tag_target_missing`, `dgn.raster_unlinked`, `dgn.bspline_knots`, `dgn.depth_limit`
+  `dgn.tag_target_missing`, `dgn.raster_unlinked`, `dgn.bspline_knots`, `dgn.depth_limit`,
+  `dgn.complex_count`
   (repeated issues are aggregated with a count).
 
 ## Tag sets in props
@@ -492,7 +561,29 @@ The model has no table for attribute definitions, so every tag set is stored in
 ## Strings
 
 `ff fd` + UTF-16LE (V8 string linkages, tag-set names, V7 multibyte text); `ff fe 01 00`
-+ 8-bit text (V8 text, test_dgnv8 "myTéxt"); otherwise 8-bit. 8-bit text is decoded with
++ 8-bit text (V8 text, test_dgnv8 "myTéxt"); otherwise 8-bit.
+
+Precedence per string kind (`text.rs`; issue #26):
+
+| String kind | Rules, first match wins |
+|---|---|
+| V8 string linkages `0x56D2` (level, model, cell, shared cell and tag set names, descriptions, unit labels, raster file names and paths) | `ff fd` → UTF-16LE; `ff fe 01 00` → marked 8-bit text; `ff fe` + anything else → UTF-16LE after a byte-order mark; else 8-bit. UTF-16 stops at the first NUL unit, an odd trailing byte is ignored |
+| V8 text payloads (17) and text tag values (37) | `ff fd` → UTF-16LE; `ff fe 01 00` → marked 8-bit; else 8-bit (no byte-order-mark rule: none was seen) |
+| UTF-16 fields without a marker: model index names and descriptions, font table names | UTF-16LE; a leading `ff fe` byte-order mark is dropped |
+| Tag set definition strings (type 39 / V7 66 body) | `ff fd` → UTF-16LE to the NUL unit; else NUL-terminated 8-bit (unchanged) |
+| V7 text | `ff fd` → 16-bit units as GDAL dgnlib reads them; else 8-bit (unchanged) |
+
+`ff fe 01 00` keeps its meaning in string linkages too: ezdgn documents it on MicroStation
+CONNECT unit labels and cell names. Read as UTF-16 after a byte-order mark it would start
+with U+0001, a control character no name holds, so the rule cannot misread a real name.
+Evidence for the byte-order-mark form comes from the issue only: names came out as
+`"ÿþ"` + the low bytes up to the first ASCII character — the 8-bit path stops at the first
+NUL byte, and the level-name deduplication appends ` (id)` to names that collapse to the
+same text, which matches `"ÿþ- (7)"`. Neither the public nor the private corpus stores one: 0 of 542,525 private
+string linkages start with `ff fe` (4,277 `ff fd`, the rest plain), and no layer or model
+name starts with `ÿþ` or U+FEFF, before or after the change. The writer stores new names
+as `ff fd` UTF-16 (raster paths 8-bit when ASCII) and keeps seed dictionary records byte for
+byte, so a byte-order-marked name read back from either decodes to the same text. 8-bit text is decoded with
 the element's `0x80D4` code page when present, else `ReadOptions::fallback_codepage`
 (default windows-1252). No UTF-8 sniffing. The private sample stores non-ASCII tag values
 as 8-bit text without any code page information in the file, so callers must pass the
@@ -547,7 +638,9 @@ characters), and tag set definition strings are NUL-terminated.
 7. **V7 tag targets**: not attached. GDAL dgnlib reads only the set number (68), tag number
    (72), type (74), length (150) and value (154) of a tag element and has no reader or
    writer code for the tag-to-element association; no public V7 sample contains tags.
-8. **Hidden flag** `0x0080` on tags (TreeText) is inferred from one file.
+8. **Hidden flag** `0x0080`: on tags inferred from one file (TreeText); on other graphics
+   taken from issue #25 (not observed in any corpus file). V7's bit `0x0080` stays
+   uninterpreted.
 9. **Text length estimate**: V7 rotated text and V8 text without a stored length use
    `characters × character width`, which is exact only for fixed-pitch fonts.
 10. **Raster extent** (resolved in 0.3.1): `0x108`/`0x110` hold the edge lengths along
@@ -555,6 +648,11 @@ characters), and tag set definition strings are NUL-terminated.
     translation, which matched only exactly unrotated frames; 1,635 of the 1,742 frames
     of the private 2D files then fell outside their range or could not be solved. No
     public sample contains a raster frame.
+11. **Complex counts**: the over-declared chain/shape counts behind issue #27 were not
+    observed (every corpus chain/shape count is exact); the closing rule is an inference
+    from the report and GDAL's reader, see "Mapping decisions".
+12. **Byte-order-marked names** (issue #26): no corpus file stores one; the precedence in
+    "Strings" rests on the report.
 
 ## Seed-based V8 writer
 
@@ -720,11 +818,18 @@ Standalone type-37 tags are written without an invented owner; their values and
 positions are retained without creating a dangling dependency. An attribute with
 `display` is written as a displayed tag in the layout of "Displayed tags": origin at
 the owner's first vertex, offset to `position`, size, font (`display.style` resolved
-by name like text styles, or `dgn.font_number`), justification and quaternion; its range
+by name like text styles, or `dgn.font_number`), justification and orientation at `0x100`
+(a 3D seed: quaternion; a 2D seed: the angle in the first double, zeros after it, as 2D
+text — issue #29; before, 2D seeds got a quaternion that the reader then lost); its range
 uses `dgn.text_length` when given, else characters × width. `Attribute::layer` places the
 tag element on its own level, and the attribute's `dgn.color_index`, `dgn.weight`,
 `dgn.style`, `dgn.graphic_group`, `dgn.properties` (`0x0600` bits) and `dgn.type_flags`
-(`0x00C0` bits) props override the owner's. Owner dependencies use MicroStation's
+(`0x00C0` bits) props override the owner's. Without a `dgn.color_index` / `dgn.weight` of
+its own, a typed `Attribute::color` / `lineweight` is used instead of the owner's and is
+resolved exactly like an entity's (color matched against the seed palette, failing when it
+is absent; a millimetre lineweight needs a native index); without either, the owner's
+symbology is inherited as before. The tag's hidden bit `0x0080` comes from
+`Attribute::invisible` only, no longer from a hidden owner. Owner dependencies use MicroStation's
 56-byte root type 9 form. Every entity likewise reproduces `dgn.graphic_group` and the
 `0x0600` / `0x00C0` flag bits the reader records.
 Strings default to UTF-16; `codepage="windows-1254"` selects explicit legacy

@@ -98,6 +98,17 @@
       "description": "Non-graphic data attached to an entity (DWG ATTRIB, DGN tag, item-type property).",
       "type": "object",
       "properties": {
+        "color": {
+          "description": "Color of the attribute's own record when the format stores one that differs from\nthe owning entity's (a DGN tag element has its own symbology; the DGN reader\nresolves it through the file's color table as it does for entities). `None` uses\nthe owning entity's color.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Color"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "display": {
           "description": "How the value text is drawn at `position`; `None` when unknown or not drawn.",
           "anyOf": [
@@ -118,6 +129,17 @@
           "type": [
             "string",
             "null"
+          ]
+        },
+        "lineweight": {
+          "description": "Lineweight of the attribute's own record when the format stores one that differs\nfrom the owning entity's. `None` uses the owning entity's lineweight.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Lineweight"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "position": {

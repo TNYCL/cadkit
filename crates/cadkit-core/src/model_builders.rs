@@ -234,6 +234,8 @@ setters!(Attribute {
     plain with_invisible(invisible: bool),
     some_into with_layer(layer: String),
     some with_display(display: AttributeDisplay),
+    some with_color(color: Color),
+    some with_lineweight(lineweight: Lineweight),
     plain with_props(props: Props),
     prop with_prop(props: Value),
 });

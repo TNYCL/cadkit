@@ -462,7 +462,7 @@ impl Decoder<'_> {
                 let number = le::u32_at(self.b, 0x28).ok_or_else(short)?;
                 let n = usize::from(le::u16_at(self.b, 0x2c).unwrap_or(0));
                 let name = le::bytes(self.whole, 0x2e, n)
-                    .map(text::decode_utf16)
+                    .map(text::decode_utf16_name)
                     .unwrap_or_default();
                 Ok(ElementData::Font { number, name })
             }

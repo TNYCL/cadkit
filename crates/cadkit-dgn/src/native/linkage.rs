@@ -174,7 +174,7 @@ fn decode(id: u16, b: &[u8], v8: bool, enc: TextDecoder) -> LinkageData {
             // Some writers declare the length without the terminator; never read past the linkage.
             let payload = b.get(12..).unwrap_or(&[]);
             let payload = payload.get(..len.min(payload.len())).unwrap_or(&[]);
-            let (text, encoding) = text::decode_dgn_string(payload, enc);
+            let (text, encoding) = text::decode_linkage_string(payload, enc);
             LinkageData::String {
                 string_id,
                 text,

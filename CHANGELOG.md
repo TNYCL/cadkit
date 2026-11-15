@@ -6,7 +6,53 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `Attribute::color` and `Attribute::lineweight` (optional, with `with_color` /
+  `with_lineweight`): the attribute record's own symbology when it differs from the
+  owning entity's; `None` means the owner's. The DGN reader resolves a tag element's
+  color through the file color table (or the default palette) and its weight as it does
+  for entities, keeping `dgn.color_index` / `dgn.weight`; the SVG renderer draws a
+  displayed attribute in its own color; the DGN writer uses them when the attribute has
+  no explicit `dgn.color_index` / `dgn.weight` (the explicit index still wins; a typed
+  color must exist in the seed palette, as for entities). Both fields are omitted from
+  JSON when unset, so `schema_version` stays 1 and older JSON reads unchanged
+  (#30).
+- DGN type 11 curves carry their end conditions as `dgn.curve_start_tangent` /
+  `dgn.curve_end_tangent` (GDAL dgnlib's slope at the first and last fit points, not
+  normalised); the DXF writer emits them, normalised, as SPLINE groups 12/13 of fit-point
+  splines (#28).
+- `cadkit_dgn::native::TagData::display_rotation` interprets the orientation doubles of
+  a tag element by its 3D flag.
+- Warning `dgn.complex_count`: a complex chain or shape declared more components than it
+  stores and was closed by the next chain or shape header.
+
+### Changed
+
+- **DGN flat ellipses and arcs** (smaller semi-axis at most 1e-9 of the larger one) are
+  read as `Line` (the segment the sweep covers along the non-zero axis) or `Point` (both
+  axes zero) instead of `Ellipse { ratio: 0 }`, which broke the documented `(0, 1]`
+  range. The element data stays in `dgn.degenerate_ellipse`, `dgn.primary_axis`,
+  `dgn.secondary_axis`, `dgn.center`, `dgn.start_angle`, `dgn.sweep_angle` and
+  `dgn.rotation` / `dgn.quaternion`; the DGN writer writes such an entity back as a line
+  (#24).
+- **DGN V8 graphic elements with property bit `0x0080`** (hidden) are read with
+  `Entity::visible = false` instead of `true`; the raw word stays in `dgn.properties`.
+  V7 elements are unchanged. Written tags take their hidden bit from
+  `Attribute::invisible` only, so a displayed tag of a hidden entity stays displayed (#25).
+- A complex chain or shape header that follows an unfinished chain or shape closes it
+  instead of becoming its component, so chains in cells no longer nest into each other
+  when a writer declares more components than it stores (#27).
+
 ### Fixed
+
+- DGN V8 names stored as UTF-16LE after an `ff fe` byte-order mark (string linkages:
+  level, model, cell and tag set names, descriptions, unit labels; UTF-16 model index and
+  font names) are decoded as UTF-16 instead of byte-wise `"ÿþ…"` text cut at the first
+  NUL byte. `ff fe 01 00` keeps its meaning (8-bit text follows) (#26).
+- DGN 2D tag elements store their display rotation as an angle at `0x100`; it was read
+  as a quaternion, so `[π, 0, 0, 0]` came out unrotated. 3D tags keep the quaternion, and
+  the writer now stores an angle for tags written into a 2D seed (#29).
 
 - `write_v8` on a version 4 seed (4096-byte sectors) no longer corrupts the FAT. The
   directory rebalancing added in 0.3.6 placed sector `n` at `512 + n * 4096` instead of

@@ -1497,9 +1497,13 @@ impl State<'_> {
         }
         f64_at(b, 0xf0, display.width * uor / 0.006)?;
         f64_at(b, 0xf8, display.height * uor / 0.006)?;
-        // Unrotated tags store (-1, 0, 0, 0); otherwise the text convention (w, 0, 0, z)
-        // with z = sin(-θ/2), see native::element::Rotation::matrix.
-        let q = if display.rotation == 0.0 {
+        // A 2D tag stores its angle in the first double, as 2D text does (issue #29;
+        // MicroStation's unrotated 2D tags hold zeros). A 3D tag stores a quaternion:
+        // unrotated (-1, 0, 0, 0), otherwise the text convention (w, 0, 0, z) with
+        // z = sin(-θ/2), see native::element::Rotation::matrix.
+        let q = if !self.model.is_3d {
+            [display.rotation, 0.0, 0.0, 0.0]
+        } else if display.rotation == 0.0 {
             [-1.0, 0.0, 0.0, 0.0]
         } else {
             let half = display.rotation / 2.0;
@@ -1571,18 +1575,27 @@ fn value_chars(v: &Value) -> usize {
     .max(1)
 }
 
-/// Symbology of a tag element: the owner's, with the attribute's own DGN values first.
+/// Symbology of a tag element: the attribute's own DGN indexes first, then its typed
+/// `color` / `lineweight` (resolved like an entity's: seed palette, `dgn.weight` rules),
+/// then the owner's indexes and values.
 fn attribute_symbology(owner: &Entity, a: &Attribute) -> Entity {
     let mut s = Entity::new(EntityKind::Point {
         position: Point3::default(),
     });
     s.layer = a.layer.clone().or_else(|| owner.layer.clone());
-    s.color = owner.color;
+    s.color = a.color.unwrap_or(owner.color);
     s.linetype = owner.linetype.clone();
-    s.lineweight = owner.lineweight;
-    s.visible = owner.visible;
-    for key in ["dgn.color_index", "dgn.weight", "dgn.style"] {
-        if let Some(v) = a.props.get(key).or_else(|| owner.props.get(key)) {
+    s.lineweight = a.lineweight.unwrap_or(owner.lineweight);
+    // The tag's hidden bit is the attribute's own (`a.invisible`); a hidden owner does not
+    // hide a displayed tag of it.
+    s.visible = true;
+    for (key, typed) in [
+        ("dgn.color_index", a.color.is_some()),
+        ("dgn.weight", a.lineweight.is_some()),
+        ("dgn.style", false),
+    ] {
+        let inherited = if typed { None } else { owner.props.get(key) };
+        if let Some(v) = a.props.get(key).or(inherited) {
             s.props.insert(key.into(), v.clone());
         }
     }
