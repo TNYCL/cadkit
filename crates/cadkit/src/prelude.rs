@@ -22,7 +22,8 @@ pub use cadkit_core::{
 #[cfg(feature = "dgn")]
 pub use cadkit_dgn::{
     DimensionPolicy as DgnDimensionPolicy, SeedPrepareOptions as DgnSeedPrepareOptions,
-    V8Seed as DgnV8Seed, WriteOptions as DgnWriteOptions,
+    StripSeedOptions as DgnStripSeedOptions, StripSeedReport as DgnStripSeedReport,
+    StrippedSeed as DgnStrippedSeed, V8Seed as DgnV8Seed, WriteOptions as DgnWriteOptions,
 };
 
 #[cfg(feature = "dxf")]

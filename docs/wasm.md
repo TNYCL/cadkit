@@ -55,6 +55,7 @@ doc.toSvg({ model: 0, widthPx: 1600, strokePx: 1, background: "#fff", text: true
 doc.toSvgBounded({ model: 0, maxOutputBytes: 16 * 1024 * 1024, maxWork: 2_000_000, images: false })
 doc.toDxf("r2018")   // "r12" | "r2000" | "r2004" | "r2007" | "r2010" | "r2013" | "r2018"
 doc.toDgn(seedBytes, { clearSeedModel: true })   // Uint8Array
+stripDgnSeed(templateBytes, { modelName: "Model", timestampMs: 1.7e12 }) // {seed: Uint8Array, report}
 doc.toCityGml("urn:ogc:def:crs:EPSG::4979", 1)                     // Uint8Array (UTF-8 XML)
 doc.toCityGmlWithReport("urn:ogc:def:crs:EPSG::4979", 1, false)    // JSON string: {xml, report}
 doc.pickEntity(0, 10, 5, 0.5) // closest visible entity summary or null; world XY coordinates
@@ -141,6 +142,15 @@ bytes as `Uint8Array`; `toCityGmlWithReport(srsName, lod, metadataOnly)` returns
 JSON string `{"xml": ..., "report": ...}` (`metadataOnly: false` rejects
 unsupported geometry; `true` retains unsupported entities as JSON metadata). DGN
 options use Rust `dgn::WriteOptions` JSON, including `clear_seed_model`.
+
+`stripDgnSeed(seed, options?, readOptions?)` copies a DGN V8 seed without its model's
+drawing content and without the document properties that name people or organisations and
+returns `{ seed: Uint8Array, report }`. `options` follows Rust `dgn::StripSeedOptions`
+(object or JSON string, camelCase accepted: `keepControls`, `keepRasterTemplate`,
+`keepCellDefinitions`, `modelName`, `timestampMs`, `application`); `readOptions` sets the read
+limits as for `read`. The report (`dgn::StripSeedReport`) counts what was removed and what
+remains; names in the kept tables remain, so the result is not anonymous. See
+[obtaining a seed](CADKIT_INTEGRATION.md#obtaining-a-seed).
 
 `readCityGml(bytes, optionsJson?)` returns a native `CityGmlDocument` with
 `toGml(optionsJson?)`, `toJsonString()`, static `fromJsonString(text)`,

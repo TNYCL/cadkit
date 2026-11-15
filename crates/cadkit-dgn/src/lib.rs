@@ -14,8 +14,8 @@ pub use native::structure::{StructureReport, check_structure};
 pub mod writer;
 #[cfg(feature = "write")]
 pub use writer::{
-    DimensionPolicy, SeedPrepareOptions, V8Seed, WriteOptions, repack_v8, seed_has_raster_template,
-    write_v8, write_v8_with_seed,
+    DimensionPolicy, SeedPrepareOptions, StripSeedOptions, StripSeedReport, StrippedSeed, V8Seed,
+    WriteOptions, repack_v8, seed_has_raster_template, strip_seed_v8, write_v8, write_v8_with_seed,
 };
 pub mod palette;
 pub mod symbology;

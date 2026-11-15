@@ -752,6 +752,65 @@ fn read(
         .map_err(map_err)
 }
 
+/// Copies a DGN V8 seed without its model's drawing content and without the document
+/// properties that name people or organisations; returns `(seed_bytes, report)`. `seed` is a
+/// `V8Seed` or bytes-like. Keyword options follow the Rust `dgn::StripSeedOptions` (`None`
+/// keeps a default); the report counts what was removed and what remains. Names in the kept
+/// tables remain: review them before handing the seed on. The result is not anonymous.
+#[pyfunction]
+#[pyo3(signature = (seed, *, keep_controls=None, keep_raster_template=None, keep_cell_definitions=None, model_name=None, timestamp_ms=None, application=None, codepage=None, max_input_bytes=None, max_decompressed_bytes=None, max_objects=None, max_depth=None))]
+#[allow(clippy::too_many_arguments)]
+fn strip_dgn_seed<'py>(
+    py: Python<'py>,
+    seed: &Bound<'py, PyAny>,
+    keep_controls: Option<bool>,
+    keep_raster_template: Option<bool>,
+    keep_cell_definitions: Option<bool>,
+    model_name: Option<String>,
+    timestamp_ms: Option<f64>,
+    application: Option<String>,
+    codepage: Option<String>,
+    max_input_bytes: Option<u64>,
+    max_decompressed_bytes: Option<u64>,
+    max_objects: Option<u64>,
+    max_depth: Option<u32>,
+) -> PyResult<(Bound<'py, PyBytes>, Bound<'py, PyAny>)> {
+    let bytes = if let Ok(parsed) = seed.cast::<V8Seed>() {
+        parsed.get().inner.as_bytes().to_vec()
+    } else if let Some(bytes) = extract_buffer_bytes(py, seed) {
+        bytes?
+    } else {
+        return Err(PyTypeError::new_err(
+            "seed must be a V8Seed, bytes, bytearray, or memoryview",
+        ));
+    };
+    let defaults = cadkit::dgn::StripSeedOptions::default();
+    let mut options = cadkit::dgn::StripSeedOptions::new()
+        .with_keep_controls(keep_controls.unwrap_or(defaults.keep_controls))
+        .with_keep_raster_template(keep_raster_template.unwrap_or(defaults.keep_raster_template))
+        .with_keep_cell_definitions(keep_cell_definitions.unwrap_or(defaults.keep_cell_definitions))
+        .with_model_name(model_name)
+        .with_timestamp_ms(timestamp_ms.unwrap_or(defaults.timestamp_ms));
+    if let Some(name) = application {
+        options = options.with_application(name);
+    }
+    let read = build_read_options(
+        false,
+        codepage,
+        max_input_bytes,
+        max_decompressed_bytes,
+        max_objects,
+        max_depth,
+    );
+    let stripped = py
+        .detach(|| cadkit::strip_dgn_seed(&bytes, &options, &read))
+        .map_err(map_err)?;
+    Ok((
+        PyBytes::new(py, &stripped.bytes),
+        to_py(py, &stripped.report)?,
+    ))
+}
+
 /// Detects the format of `data` from its header (`"dwg"`, `"dxf"`, `"dgn_v7"`, `"dgn_v8"`, or `"city_gml"`), or `None` when unrecognized.
 #[pyfunction]
 fn detect(py: Python<'_>, data: &[u8]) -> PyResult<Option<String>> {
@@ -769,6 +828,7 @@ fn _cadkit(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(read, m)?)?;
     m.add_function(wrap_pyfunction!(detect, m)?)?;
     m.add_function(wrap_pyfunction!(read_citygml, m)?)?;
+    m.add_function(wrap_pyfunction!(strip_dgn_seed, m)?)?;
     m.add_class::<CityGmlDocument>()?;
     m.add("CadkitError", py.get_type::<CadkitError>())?;
     m.add("UnknownFormatError", py.get_type::<UnknownFormatError>())?;

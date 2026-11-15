@@ -49,6 +49,31 @@ JSON options accept `preserve_seed_rasters` without a separate C ABI function.
 Units, dimension, palette, and font tables must match the seed. A production seed
 should be an approved blank template rather than an arbitrary client drawing.
 
+### Obtaining a seed
+
+cadkit ships no seed. Make one from a drawing whose tables you are allowed to hand on (your
+organisation's own template, a drawing you produced): `dgn::strip_seed_v8`
+(`cadkit::strip_dgn_seed`, `cadkit strip-seed in.dgn seed.dgn --report`, Python
+`strip_dgn_seed`, WASM `stripDgnSeed`, C `cadkit_dgn_strip_seed`) removes the model's
+graphic records, by default its control records and raster attachments, and every property
+set (author, last author, company, manager, title, comments, thumbnail and user-defined
+sets), writes minimal property sets and normalised times, and rebuilds the container so no
+removed byte survives in free space. It keeps what a seed is for byte for byte: levels,
+fonts, colour table, tag sets, text styles, views and settings records, cell definitions
+(unless `keep_cell_definitions` is false), units, and streams cadkit does not decode.
+
+The result is not anonymous. Level names and descriptions, tag set and tag names, cell
+names, font and style names, the model name (unless `model_name` replaces it) and
+description, kept control records, kept raster file paths and undecoded streams remain.
+`StripSeedReport` counts them (`named_levels`, `tag_sets`, `cell_definitions`,
+`model_name_from_seed`, `model_description`, `kept_control_records`,
+`raster_file_references`, `unknown_streams`); review them, for example with `cadkit layers`
+and `cadkit blocks`, before handing the seed to anyone. A seed made from a client drawing
+carries that client's level and tag names. Stripping is deterministic for equal input and
+options (`timestamp_ms` fixes the stored times) and idempotent. The stripped seed is checked
+locally (`check_structure`, `V8Seed::parse`, `write_v8`); it has not been opened in another
+application, so confirm acceptance in the target software before relying on it.
+
 When opening and rewriting an existing DGN, passing its original bytes as the
 seed preserves unchanged raster attachments (`preserve_seed_rasters`, enabled by
 default). New raster attachments (`Image` entities without an `id`, with `path`

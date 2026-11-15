@@ -14,7 +14,9 @@ levels, font names and entries (`font_entries`, `font_number`) and timestamp;
 `palette::exact_index` / `nearest_index` match colors the way the writer does, and
 `Symbology` provides typed access to DGN property keys. `check_structure` reports the
 compound file directory and pages of any V8 file (sibling trees, free slots, page headers,
-record times) with stable warning codes; it needs no `write` feature.
+record times) with stable warning codes; it needs no `write` feature. `strip_seed_v8` copies a
+seed without its model's drawing content and identifying document properties, keeping its
+tables byte for byte and reporting the names that remain (the result is not anonymous).
 The `write` Cargo feature is enabled by default; disable default features for reading only.
 
 There is no DGN V7 writer. V8 output covers the documented geometry/tag/raster subset;

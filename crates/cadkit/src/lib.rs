@@ -393,6 +393,20 @@ pub fn to_dgn(doc: &Document, seed: &[u8], options: &dgn::WriteOptions) -> Resul
     dgn::write_v8(doc, seed, options)
 }
 
+/// Copies a single-model DGN V8 `seed` without the drawing content of its model and without
+/// the document properties that name people or organisations, for use as the seed of
+/// [`to_dgn`]; see [`dgn::strip_seed_v8`]. Names in the kept tables (levels, fonts, tag
+/// sets, cell definitions) remain and are counted in the report: review them before handing
+/// the seed on. The result is not anonymous.
+#[cfg(feature = "dgn")]
+pub fn strip_dgn_seed(
+    seed: &[u8],
+    options: &dgn::StripSeedOptions,
+    read: &ReadOptions,
+) -> Result<dgn::StrippedSeed> {
+    dgn::strip_seed_v8(seed, options, read)
+}
+
 /// Writes a single-model neutral document to DGN V8 using a pre-parsed [`dgn::V8Seed`].
 #[cfg(feature = "dgn")]
 pub fn to_dgn_with_seed(

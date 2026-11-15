@@ -49,6 +49,31 @@ All notable changes are recorded here. The format follows
 - `V8Seed::font_entries` (the seed's font table in stored order, repeated names included)
   and `V8Seed::font_number` (exact name, then trimmed ASCII case-insensitive; absent and
   ambiguous names are distinct `Unsupported` errors).
+- `cadkit_dgn::strip_seed_v8` (facade `cadkit::strip_dgn_seed`) copies a single-model DGN V8
+  seed without the drawing content of its model and without the document properties that
+  name people or organisations, for use as the seed of `write_v8`: graphic records and
+  their XAttributes go, so do by default the model's control records (model settings,
+  model-level tag sets, raster groups) and every property set stream, replaced by a
+  `\u{5}SummaryInformation` with code page, application and times only and a
+  `\u{5}DocumentSummaryInformation` with the code page only. The dictionary (levels, fonts,
+  colour table, tag sets, text styles, views, settings, cell definitions), units and
+  undecoded streams stay byte for byte; the file header and model times are normalised from
+  `StripSeedOptions::timestamp_ms` and the container is built anew, so no byte of a removed
+  stream stays in free space. `StripSeedOptions` (`keep_controls`, `keep_raster_template`,
+  `keep_cell_definitions`, `model_name`, `timestamp_ms`, `application`; JSON with
+  defaults) and the returned `StrippedSeed` / `StripSeedReport`, which counts what was
+  removed and what remains that may identify the source (named levels, tag sets, cell
+  definitions, model name and description, kept controls, raster file references,
+  undecoded streams). The result is not anonymous: names in the kept tables remain and must
+  be reviewed. Equal input and options give equal bytes; stripping a result again changes
+  nothing. Bindings: CLI `cadkit strip-seed in.dgn out.dgn [--keep-controls]
+  [--keep-raster-template] [--drop-cell-definitions] [--model-name NAME] [--timestamp-ms MS]
+  [--application NAME] [--report]` (refuses to overwrite its input), Python
+  `cadkit.strip_dgn_seed(seed, **options) -> (bytes, dict)`, WASM
+  `stripDgnSeed(seed, options?, readOptions?) -> { seed, report }`, C
+  `cadkit_dgn_strip_seed` (seed bytes via `cadkit_bytes_free`, report JSON via
+  `cadkit_string_free`) and C++ `cadkit::strip_dgn_seed`. No stripped seed has been opened
+  in another application.
 
 ### Changed
 

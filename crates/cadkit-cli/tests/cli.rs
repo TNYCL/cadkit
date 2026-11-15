@@ -502,6 +502,91 @@ fn completions_for_all_shells() {
 }
 
 #[test]
+fn strip_seed_writes_a_clean_seed_and_reports_what_remains() {
+    let dir = temp_dir("strip-seed");
+    let dxf = write_dxf(&dir);
+    let dxf = dxf.to_str().expect("dxf path");
+    let out_path = dir.join("stripped.dgn");
+    let out_path = out_path.to_str().expect("output path");
+    // Not a DGN file: a read error.
+    assert_eq!(
+        cadkit(&["strip-seed", dxf, out_path]).status.code(),
+        Some(1)
+    );
+    // The input is never overwritten, also through another spelling of its path.
+    assert_eq!(cadkit(&["strip-seed", dxf, dxf]).status.code(), Some(2));
+    let other_spelling = dir.join(".").join("synthetic.dxf");
+    if Path::new(dxf).ends_with("synthetic.dxf") {
+        let out = cadkit(&["strip-seed", dxf, other_spelling.to_str().expect("path")]);
+        assert_eq!(out.status.code(), Some(2));
+    }
+    assert_eq!(
+        cadkit(&["strip-seed", dxf, "-", "--report"]).status.code(),
+        Some(2)
+    );
+
+    let sample =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/public/gdal/test_dgnv8.dgn");
+    if !sample.exists() {
+        eprintln!(
+            "strip_seed_writes_a_clean_seed_and_reports_what_remains: public sample absent, skipped"
+        );
+        return;
+    }
+    let sample = sample.to_str().expect("sample path");
+    let out = cadkit(&[
+        "strip-seed",
+        sample,
+        out_path,
+        "--report",
+        "--model-name",
+        "Model",
+        "--timestamp-ms",
+        "1700000000000",
+    ]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("JSON report");
+    assert_eq!(report["removed_graphic_records"], 58);
+    assert_eq!(report["cell_definitions"], 1);
+    assert_eq!(report["model_name_from_seed"], false);
+    assert_eq!(report["timestamp_ms"], 1_700_000_000_000.0);
+    let out = cadkit(&["check-dgn", out_path]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    // Without --report nothing is printed; the bytes are the same for the same options.
+    let again = dir.join("again.dgn");
+    let again = again.to_str().expect("output path");
+    let out = cadkit(&[
+        "strip-seed",
+        sample,
+        again,
+        "--model-name",
+        "Model",
+        "--timestamp-ms",
+        "1700000000000",
+    ]);
+    assert!(out.status.success() && out.stdout.is_empty());
+    assert_eq!(
+        std::fs::read(again).expect("again"),
+        std::fs::read(out_path).expect("stripped")
+    );
+    let out = cadkit(&[
+        "strip-seed",
+        sample,
+        again,
+        "--drop-cell-definitions",
+        "--report",
+    ]);
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("JSON report");
+    assert_eq!(report["removed_cell_definitions"], 1);
+    assert_eq!(
+        cadkit(&["strip-seed", sample, again, "--model-name", ""])
+            .status
+            .code(),
+        Some(1)
+    );
+}
+
+#[test]
 fn check_dgn_prints_the_structure_report() {
     let dir = temp_dir("check-dgn");
     // Not a DGN file: a read error, no report.

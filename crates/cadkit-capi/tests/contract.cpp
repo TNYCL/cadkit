@@ -18,4 +18,9 @@ int main() {
     require(cadkit::Document::read_bytes(encoded).info().entity_count == 1);
     try { original.convert_units("bad-unit"); require(false); }
     catch (const cadkit::Error& e) { require(e.status() == CADKIT_INVALID_ARGUMENT); }
+    // A DXF file is no DGN seed; malformed options are an argument error before any read.
+    try { cadkit::strip_dgn_seed(bytes); require(false); }
+    catch (const cadkit::Error& e) { require(e.status() != CADKIT_OK); }
+    try { cadkit::strip_dgn_seed(bytes, "{not json"); require(false); }
+    catch (const cadkit::Error& e) { require(e.status() == CADKIT_INVALID_ARGUMENT); }
 }

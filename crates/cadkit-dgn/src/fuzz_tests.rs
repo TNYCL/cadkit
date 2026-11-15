@@ -189,6 +189,67 @@ fn mutated_inflated_streams_do_not_panic() {
     }
 }
 
+/// Truncated and mutated seeds strip ([`crate::strip_seed_v8`]) to Ok or Err, never a panic;
+/// an Ok result is a seed the writer accepts and the structure check reads.
+#[cfg(feature = "write")]
+#[test]
+fn mutated_seeds_strip_without_panicking() {
+    let strip = |bytes: &[u8]| {
+        let options =
+            crate::StripSeedOptions::new().with_keep_controls(bytes.len().is_multiple_of(2));
+        if let Ok(out) = crate::strip_seed_v8(bytes, &options, &options_for_strip()) {
+            assert!(crate::V8Seed::parse(&out.bytes, &options_for_strip()).is_ok());
+            assert!(crate::check_structure(&out.bytes, &options_for_strip()).is_ok());
+        }
+    };
+    let mut samples: Vec<(Vec<u8>, usize)> = [
+        "public/gdal/test_dgnv8.dgn",
+        "public/safe/TreeTextNodeLabelsWithTags.dgn",
+    ]
+    .into_iter()
+    .filter_map(corpus)
+    .map(|b| (b, 40))
+    .collect();
+    samples.extend(private_v8().into_iter().take(3).map(|b| (b, 8)));
+    for (bytes, rounds) in samples {
+        for n in [
+            0,
+            8,
+            512,
+            bytes.len() / 3,
+            bytes.len() / 2,
+            bytes.len().saturating_sub(1),
+        ] {
+            strip(&bytes[..n.min(bytes.len())]);
+        }
+        let mut rng = Rng(0x9E37_79B9_7F4A_7C15 ^ bytes.len() as u64);
+        for round in 0..rounds {
+            let mutated = repack(&bytes, |_, data| {
+                if data.is_empty() || rng.below(3) == 0 {
+                    return;
+                }
+                if round % 2 == 0 {
+                    for _ in 0..1 + rng.below(8) {
+                        let at = rng.below(data.len());
+                        data[at] ^= 1 << rng.below(8);
+                    }
+                } else {
+                    let keep = rng.below(data.len());
+                    data.truncate(keep);
+                }
+            });
+            strip(&mutated);
+        }
+    }
+}
+
+#[cfg(feature = "write")]
+fn options_for_strip() -> ReadOptions {
+    let mut o = options();
+    o.limits.max_objects = 200_000;
+    o
+}
+
 #[test]
 fn mutated_v7_records_do_not_panic() {
     let Some(bytes) = corpus("public/gdal/smalltest.dgn") else {

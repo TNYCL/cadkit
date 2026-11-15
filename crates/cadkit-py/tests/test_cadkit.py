@@ -237,6 +237,32 @@ def test_v8seed_public_roundtrip(dxf_doc):
     assert cadkit.read(encoded).format == "dgn_v8"
 
 
+def test_strip_dgn_seed_public_sample():
+    path = REPO / "corpus/public/gdal/test_dgnv8.dgn"
+    if not path.exists():
+        pytest.skip("public seed missing")
+    with pytest.raises(cadkit.CadkitError):
+        cadkit.strip_dgn_seed(b"not a seed")
+    with pytest.raises(TypeError):
+        cadkit.strip_dgn_seed(42)
+    seed, report = cadkit.strip_dgn_seed(path.read_bytes(), model_name="Model", timestamp_ms=1.7e12)
+    assert isinstance(seed, bytes)
+    assert report["removed_graphic_records"] == 58
+    assert report["model_name_from_seed"] is False
+    assert report["timestamp_ms"] == 1.7e12
+    assert 0x11 in report["removed_summary_properties"]
+    stripped = cadkit.V8Seed(seed)
+    assert not stripped.is_nonempty
+    again, _ = cadkit.strip_dgn_seed(stripped, model_name="Model", timestamp_ms=1.7e12)
+    assert again == seed
+    doc = cadkit.read(seed)
+    assert doc.application == "cadkit"
+    _, dropped = cadkit.strip_dgn_seed(path.read_bytes(), keep_cell_definitions=False)
+    assert dropped["removed_cell_definitions"] == 1
+    with pytest.raises(cadkit.InvalidDataError):
+        cadkit.strip_dgn_seed(path.read_bytes(), model_name="")
+
+
 def test_legacy_dxf_bytes_preserve_turkish_text():
     drawing = "0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1021\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n0\nTEXT\n10\n0\n20\n0\n40\n1\n1\nŞğİı\n0\nENDSEC\n0\nEOF\n"
     encoded = cadkit.read(drawing.encode()).to_dxf_bytes("r2000", "DOS857")

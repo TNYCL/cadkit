@@ -1,4 +1,4 @@
-//! Resource-bounded fuzzing for DGN V8 reading, writing, and CFB repacking.
+//! Resource-bounded fuzzing for DGN V8 reading, writing, seed stripping and CFB repacking.
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 fuzz_target!(|data: &[u8]| {
@@ -15,5 +15,12 @@ fuzz_target!(|data: &[u8]| {
             .with_clear_seed_model(true);
         let _ = cadkit_dgn::write_v8(&doc, data, &write);
         let _ = cadkit_dgn::repack_v8(data, &options);
+        let strip = cadkit_dgn::StripSeedOptions::new()
+            .with_keep_controls(data.len().is_multiple_of(2))
+            .with_keep_raster_template(data.len().is_multiple_of(3));
+        if let Ok(stripped) = cadkit_dgn::strip_seed_v8(data, &strip, &options) {
+            // A stripped seed is empty, so the document goes in without clearing it.
+            let _ = cadkit_dgn::write_v8(&doc, &stripped.bytes, &write.with_clear_seed_model(false));
+        }
     }
 });

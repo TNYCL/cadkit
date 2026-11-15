@@ -123,7 +123,7 @@ named `Dgn~H`; other OLE files (`.doc`, `.xls`, `.msg`) are rejected.
 | `Dgn-Md/#NNNNNN/Dgn^C/$n` | control element pages | page |
 | `Dgn-Md/#NNNNNN/Dgn^GA/$n`, `Dgn^CA/$n` | auxiliary (XAttribute) pages; `^AH` = 4-byte counter | page |
 | `Dgn^Nm/$n`, `Dgn^NmA/$n` | file-level ("non-model") elements: tables, tag sets, shared cell definitions | page |
-| `\u0005SummaryInformation` | OLE property set: PID 1 code page (1200 observed), PID `0x12` application (VT_LPWSTR), PID `0x80000000` locale | — |
+| `\u0005SummaryInformation` | OLE property set: PID 1 code page (1200 observed), PID `0x12` application (VT_LPWSTR), PID `0x80000000` locale; see "Property sets" under "Seed stripping" | — |
 | `.Embedded/.Index`, `Oda~SH`, `DgnTk`, other `\u0005…` | not decoded | — |
 
 `$n` page numbers sort numerically (`$10` after `$9`). `#NNNNNN` is the decimal storage
@@ -407,7 +407,8 @@ stream end (found by scanning, as ezdgn does).
 | Offset | Type | Meaning | Evidence |
 |---|---|---|---|
 | `0x00` | u32 | type word; `0x00800000` set = 2D model. Observed: `0x00400042` (556 private files, 3D; header element 892 or 916 bytes), `0x00800042` (11 private 2D files, 724 bytes; both Safe files, 576 bytes), `0x00000042` (test_dgnv8, ODA, 3D, 616 bytes). `0x00400000` appears only on 3D MicroStation models; its meaning is unknown | Safe files 2D, test_dgnv8/private 3D |
-| `0x18` | f64 | timestamp (as elements) | |
+| `0x18` | f64 | timestamp (as elements): zero in all 567 private files, a time in the 3 public ones | |
+| `0x88` | f64 | model time (inferred: a plausible time in 570 of 570 files, equal to `Dgn~H` `0x130` in 529; "Seed stripping") | |
 | `0x48`, `0x4C` | u32 | unit flags (`0x11` in all samples) | |
 | `0x50`, `0x58` | f64 | master unit numerator / denominator (units per meter; m = 1/1) | m in all samples |
 | `0x60`, `0x68` | f64 | sub unit numerator / denominator (mm = 1000/1) | test_dgnv8 (mm), Safe (m = 1/1) |
@@ -1091,6 +1092,115 @@ themselves also `dgn.model_page_counter`; current repacks and writes of all thre
 writes into 274 private plan seeds, report no warning (`tests/structure.rs`,
 `tests/private_dictionary.rs`). A clean report says the container is consistent; it is
 not evidence that an external application accepts the file.
+
+### Seed stripping
+
+`strip_seed_v8(seed, &StripSeedOptions, &ReadOptions) -> StrippedSeed` (crate root, facade
+`cadkit::strip_dgn_seed`, CLI `cadkit strip-seed`, Python `strip_dgn_seed`, WASM
+`stripDgnSeed`, C `cadkit_dgn_strip_seed`) copies a seed without the drawing content of its
+model and without the document properties that name people or organisations. It does not
+make a seed anonymous: the names in the kept tables remain, and `StripSeedReport` counts
+them for the caller to review. Nothing here was opened in another application.
+
+Steps, each through code the writer already uses:
+
+1. `V8Seed::parse`: a seed the writer rejects (several models, an undecodable page, a file
+   header that is not 1,576 bytes) is rejected with the same error.
+2. With `keep_cell_definitions = false`, every shared cell definition (a type 34 record
+   outside a complex element and the components after it, also across a page boundary)
+   leaves the dictionary; changed pages are rewritten in the writer's page form ("Dictionary
+   pages") and the XAttributes of the removed records go with them.
+3. The writer writes an empty document of the seed's units and dimension into the seed
+   (`clear_seed_model`, `preserve_seed_controls = keep_controls`). The model keeps one empty
+   graphic page `Dgn^G/$1` (header only); extents are 0; the model header prefix's page
+   counter is the number of pages holding records; `Dgn~H` `0x128` keeps the seed's id
+   high-water mark (at least every kept id). With `keep_raster_template`, the seed's
+   raster attachments are passed as unchanged `Image` entities (tags dropped), which the
+   writer keeps byte for byte; it keeps a seed's attachments only all together.
+4. The dictionary streams (`Dgn^Nm/*`, `Dgn^NmA/*`) are restored from the seed (after step
+   2). The writer repairs some tables when it writes into a seed (a second level table,
+   repeated level codes, "Second level table"); the empty write changed 320 dictionary pages
+   of the private corpus that way. The stripped seed keeps the original pages, and the
+   repairs happen when it is used, as for any seed.
+5. Times (below), the property sets (below) and, with `model_name`, the model name are
+   replaced.
+6. The container is built anew from the remaining streams (`writer/container.rs` `build`):
+   the same slot order, top-down red-black trees and free slots as the seed-based rewrite
+   (a test compares both layouts on the three public V8 samples), CLSIDs null, state bits 0.
+   Only the given streams are written, so no byte of a removed stream reaches a free sector
+   or a free directory slot (the synthetic tests search the output for marker bytes of the
+   removed property sets). Storages left without streams (the emptied `Dgn^C`, `Dgn^GA`,
+   `Dgn^CA`) are dropped; test_dgnv8 (ODA) has no `Dgn^C` storage either.
+
+The result is accepted by `V8Seed::parse` as an empty seed, reports no warning in
+`check_structure`, and stripping it again with the same options returns the same bytes.
+
+| Part | Default | Option | Evidence / reason |
+|---|---|---|---|
+| Graphic records and their XAttributes | removed | `keep_raster_template` keeps the raster frames (94) and their XAttribute 170 | drawing content |
+| Control records 66 (level 20) | removed | `keep_controls` | 1,594 records in 567 of 567 private files, 1 in TreeText and Water; not decoded (model settings; the research pass saw coordinate-system-like content), not needed by the writer, may describe a location |
+| Control records 100 with 99 components | removed | `keep_controls` | 350 + 2,800 records in 263 private files; not decoded |
+| Control records 39 (tag set definitions in the model) | removed | `keep_controls` | 274 private files; the writer resolves tag sets in the dictionary only, and the dictionary's tag sets are kept |
+| Raster control groups 90, 91 × 5, 92, 93 × 2 | removed | `keep_raster_template` (not `keep_controls`) | 2,457 groups in 339 private files; they reference the removed frames and hold file names and `file://` paths |
+| Shared cell definitions (34) | kept | `keep_cell_definitions = false` removes them | test_dgnv8 holds 1; no private file holds one |
+| Level, font, colour, text style and other type 96 tables, tag sets (39), views (97/98/99), settings (9), dictionary type 66 and 107 records | kept byte for byte | — | what a seed is for; 567 of 567 private dictionaries and the 3 public ones compare equal |
+| Units, global origin, UOR, 2D/3D flag, every other model header field | kept | — | the model header element is kept except the fields below |
+| `Dgn~S`, `Dgn~Mf`, `Oda~SH`, `DgnTk`, other undecoded streams | kept byte for byte | — | not decoded; counted as `unknown_streams` (2 per private file, 3 per public file) |
+| Model index entry | kept, renamed with `model_name` | — | the entry's tail after name and description (26–94 bytes in every private file, none in the public ones) is not decoded and kept |
+
+#### Times
+
+`timestamp_ms` 0 takes the seed's file header time; a positive value below the newest time
+of a kept record is raised to it. The time is written to:
+
+| Field | Evidence |
+|---|---|
+| `Dgn~H` `f64` at `0x130` (file save time) | a plausible millisecond time in 570 of 570 V8 files, never older than a record of the file (570 of 570) |
+| model header `f64` at `0x88` (model time) | a plausible time in 570 of 570 files, equal to `Dgn~H` `0x130` in 529 and not older than a record in 568 |
+| model header `f64` at `0x18`, model index entry `+8` | the element time: zero in 567 of 567 private files (left zero), a time in the 3 public files (replaced); the index entry's `+8` equals it in 557 of 570 files and follows it only where it was equal |
+| compound file root and storages (FILETIME) | [MS-CFB] 2.6.1; stream entries keep zero times as MS-CFB requires. The `cfb` crate reads a stream entry's times as zero (its strict mode rejects others), so the seed-based rewrite writes them zero as well, although the observed MicroStation files store a time on every entry |
+| `\u{5}SummaryInformation` creation and last-save time | [MS-OLEPS] `PIDSI_CREATE_DTM` / `PIDSI_LASTSAVE_DTM`; omitted when there is no time |
+
+Records kept from the seed (dictionary, kept controls) keep their own times.
+
+#### Property sets
+
+Every observed V8 file has `\u{5}SummaryInformation` and `\u{5}DocumentSummaryInformation`
+([MS-OLEPS]): byte order `0xFFFE`, version 0, system identifier `0x00020005`, null CLSID,
+code page 1200, the application name as `VT_LPWSTR` (3 public files). The private files
+also hold author (`0x04`) and last author (`0x08`) in 567 of 567, a thumbnail (`0x11`) in
+449, title, subject, keywords, comments and template (`0x02`–`0x07`) in 274, company
+(`0x0F`) in 567 and manager (`0x0E`) in 274; 326 carry a third, user-defined property set
+stream. Each public sample names a person or a company and holds a thumbnail.
+
+Stripping removes every property set stream and writes `\u{5}SummaryInformation` with the
+code page, the application (`"cadkit"` by default; empty leaves it out) and the two times,
+and `\u{5}DocumentSummaryInformation` with the code page only (`writer/oleps.rs`; layout in
+its module comment). The locale property (`0x80000000`, in every observed file) is not
+written. The reader reads the code page and the application back.
+
+#### Corpus results
+
+Public (`tests/strip_seed.rs`; sizes in bytes): test_dgnv8 27,648 → 7,680 (58 graphic
+records removed; 1 level, 1 font, 1 cell definition kept), TreeText 847,360 → 8,192 (33,335
+graphic and 1 control record removed), Water 3,840,000 → 11,264 (66,053 graphic records,
+66,053 XAttributes and 1 control record removed). All three: clean `check_structure`, the
+dictionary byte for byte, idempotent, and `write_v8` writes into the result without
+`clear_seed_model`.
+
+Private (567 V8 files, counts only): 567 strip, none is rejected; 1,339,778 graphic records
+(195–13,660 per file), 27,131 control records, 2,031 XAttributes and 1,460 property set
+streams removed; 1,336,990 dictionary records with 205,849 named levels (151–1,273 per
+file), 6,208 tag sets and 1,701 fonts, 2 undecoded streams per file and 274 model
+descriptions remain; 115,195,778 → 41,892,864 bytes (62,464–95,232 per file). Every result has a clean `check_structure` and the seed's
+dictionary byte for byte; every 16th is checked for idempotence, a `write_v8` into it and
+the `keep_controls` / `keep_raster_template` variants (a run of the CLI over every 8th file
+kept 176 attachments).
+
+Open: which removed parts a receiving application needs (the model settings records 66 and
+100, the locale property, the dropped empty storages) is unknown until a stripped seed is
+opened, filled and saved there; the contents of `Dgn~S`, `Dgn~Mf`, the model index entry
+tail and the undecoded tables are kept unread and may identify the source.
 
 ### Evidence and acceptance boundary
 

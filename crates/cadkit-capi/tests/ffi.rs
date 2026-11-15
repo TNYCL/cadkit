@@ -393,6 +393,114 @@ fn citygml_native_json_and_binary_dgn_ownership() {
 }
 
 #[test]
+fn dgn_seed_strip_returns_owned_bytes_and_report() {
+    let mut data = ptr::null_mut();
+    let mut len = 0usize;
+    let mut report = ptr::null_mut();
+    let garbage = b"not a seed";
+    // SAFETY: Valid slices, C string literals and out-pointers; NULL where the contract allows it.
+    unsafe {
+        assert_eq!(
+            cadkit_dgn_strip_seed(
+                garbage.as_ptr(),
+                garbage.len(),
+                ptr::null(),
+                ptr::null(),
+                ptr::null_mut(),
+                &mut len,
+                &mut report
+            ),
+            cadkit_status::NullPointer
+        );
+        assert!(report.is_null());
+        assert_eq!(
+            cadkit_dgn_strip_seed(
+                ptr::null(),
+                0,
+                ptr::null(),
+                ptr::null(),
+                &mut data,
+                &mut len,
+                &mut report
+            ),
+            cadkit_status::InvalidArgument
+        );
+        assert_eq!(
+            cadkit_dgn_strip_seed(
+                garbage.as_ptr(),
+                garbage.len(),
+                c"{not json".as_ptr(),
+                ptr::null(),
+                &mut data,
+                &mut len,
+                &mut report
+            ),
+            cadkit_status::InvalidArgument
+        );
+        assert_ne!(
+            cadkit_dgn_strip_seed(
+                garbage.as_ptr(),
+                garbage.len(),
+                ptr::null(),
+                ptr::null(),
+                &mut data,
+                &mut len,
+                &mut report
+            ),
+            cadkit_status::Ok
+        );
+        assert!(data.is_null() && report.is_null() && len == 0);
+    }
+    let seed_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../corpus/public/gdal/test_dgnv8.dgn");
+    let Ok(seed) = std::fs::read(seed_path) else {
+        return;
+    };
+    // SAFETY: `seed` is a live slice, the options are valid C strings, and the out-pointers are valid.
+    unsafe {
+        assert_eq!(
+            cadkit_dgn_strip_seed(
+                seed.as_ptr(),
+                seed.len(),
+                c"{\"model_name\":\"Model\",\"timestamp_ms\":1.7e12}".as_ptr(),
+                ptr::null(),
+                &mut data,
+                &mut len,
+                &mut report
+            ),
+            cadkit_status::Ok,
+            "{}",
+            msg()
+        );
+        let json: serde_json::Value = serde_json::from_str(&take(report)).unwrap();
+        assert_eq!(json["removed_graphic_records"], 58);
+        assert_eq!(json["model_name_from_seed"], false);
+        let stripped = std::slice::from_raw_parts(data, len).to_vec();
+        let doc = read(&stripped).unwrap();
+        cadkit_document_free(doc);
+        cadkit_bytes_free(data);
+        cadkit_bytes_free(data);
+        // Read limits apply.
+        let mut options = std::mem::zeroed::<cadkit_options>();
+        cadkit_options_init(&mut options);
+        options.max_input_bytes = 64;
+        assert_eq!(
+            cadkit_dgn_strip_seed(
+                seed.as_ptr(),
+                seed.len(),
+                ptr::null(),
+                &options,
+                &mut data,
+                &mut len,
+                &mut report
+            ),
+            cadkit_status::LimitExceeded
+        );
+        assert!(data.is_null() && report.is_null());
+    }
+}
+
+#[test]
 fn citygml_export_report_ownership_and_invalid_arguments() {
     let doc = read(MINIMAL_DXF.as_bytes()).unwrap();
     let mut out = ptr::null_mut();

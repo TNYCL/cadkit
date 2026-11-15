@@ -88,6 +88,21 @@ inline std::string take(char* raw) {
     return owned ? std::string(owned.get()) : std::string();
 }
 
+/// C read options for `o`; the code page pointer is valid while `o` is alive.
+inline cadkit_options read_options(const ReadOptions& o) {
+    cadkit_options c;
+    cadkit_options_init(&c);
+    c.max_input_bytes = o.max_input_bytes;
+    c.max_decompressed_bytes = o.max_decompressed_bytes;
+    c.max_objects = o.max_objects;
+    c.max_depth = o.max_depth;
+    c.max_string_bytes = o.max_string_bytes;
+    c.max_vertices = o.max_vertices;
+    c.keep_raw = o.keep_raw ? 1 : 0;
+    c.fallback_codepage = o.fallback_codepage.empty() ? nullptr : o.fallback_codepage.c_str();
+    return c;
+}
+
 }  // namespace detail
 
 /// Move-only owner of a cadkit_document.
@@ -257,23 +272,41 @@ private:
         }
     }
 
-    static cadkit_options convert(const ReadOptions& o) {
-        cadkit_options c;
-        cadkit_options_init(&c);
-        c.max_input_bytes = o.max_input_bytes;
-        c.max_decompressed_bytes = o.max_decompressed_bytes;
-        c.max_objects = o.max_objects;
-        c.max_depth = o.max_depth;
-        c.max_string_bytes = o.max_string_bytes;
-        c.max_vertices = o.max_vertices;
-        c.keep_raw = o.keep_raw ? 1 : 0;
-        // The pointer is only read during the read call, while `o` is alive.
-        c.fallback_codepage = o.fallback_codepage.empty() ? nullptr : o.fallback_codepage.c_str();
-        return c;
-    }
+    // The code page pointer is only read during the read call, while `o` is alive.
+    static cadkit_options convert(const ReadOptions& o) { return detail::read_options(o); }
 
     cadkit_document* handle_ = nullptr;
 };
+
+/// A DGN V8 seed from strip_dgn_seed with its dgn::StripSeedReport as JSON.
+struct StrippedDgnSeed {
+    std::vector<std::uint8_t> seed;
+    std::string report_json;
+};
+
+/// Copies a DGN V8 seed without its model's drawing content and without the document
+/// properties that name people or organisations; `options_json` follows dgn::StripSeedOptions.
+/// Names in the kept tables remain (the report counts them); the result is not anonymous.
+/// Throws cadkit::Error.
+inline StrippedDgnSeed strip_dgn_seed(const std::vector<std::uint8_t>& seed,
+                                      const std::string& options_json = "{}",
+                                      const ReadOptions& options = {}) {
+    cadkit_options c = detail::read_options(options);
+    std::uint8_t* out = nullptr;
+    std::size_t len = 0;
+    char* report = nullptr;
+    detail::check(cadkit_dgn_strip_seed(seed.data(), seed.size(), options_json.c_str(), &c, &out,
+                                        &len, &report));
+    auto deleter = [](std::uint8_t* p) { cadkit_bytes_free(p); };
+    std::unique_ptr<std::uint8_t, decltype(deleter)> owned(out, deleter);
+    detail::OwnedString owned_report(report);
+    StrippedDgnSeed result;
+    result.report_json = std::string(owned_report.get());
+    if (len != 0) {
+        result.seed.assign(out, out + len);
+    }
+    return result;
+}
 
 }  // namespace cadkit
 

@@ -96,3 +96,19 @@ class V8Seed:
     def has_raster_template(self) -> bool: ...
     def to_bytes(self) -> bytes: ...
     def prepare_document(self, doc: Document, options_json: Optional[str] = None) -> Document: ...
+
+def strip_dgn_seed(
+    seed: Union[bytes, bytearray, memoryview, V8Seed],
+    *,
+    keep_controls: Optional[bool] = None,
+    keep_raster_template: Optional[bool] = None,
+    keep_cell_definitions: Optional[bool] = None,
+    model_name: Optional[str] = None,
+    timestamp_ms: Optional[float] = None,
+    application: Optional[str] = None,
+    codepage: Optional[str] = None,
+    max_input_bytes: Optional[int] = None,
+    max_decompressed_bytes: Optional[int] = None,
+    max_objects: Optional[int] = None,
+    max_depth: Optional[int] = None,
+) -> tuple[bytes, Dict[str, Any]]: ...

@@ -3,15 +3,18 @@
 mod container;
 mod encode;
 mod named;
+mod oleps;
 mod polyline;
 mod raster;
 mod raster_builtin;
 mod raster_template;
 mod seed_prepare;
+mod strip;
 mod tables;
 mod text;
 
 pub use seed_prepare::{DimensionPolicy, SeedPrepareOptions, V8Seed};
+pub use strip::{StripSeedOptions, StripSeedReport, StrippedSeed, strip_seed_v8};
 
 #[cfg(test)]
 use crate::native::v8::RawElement;

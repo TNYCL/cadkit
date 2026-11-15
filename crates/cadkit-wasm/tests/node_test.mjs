@@ -297,6 +297,33 @@ test("DGN export from neutral JSON", (t) => {
   }
 });
 
+test("stripDgnSeed returns a seed and its report", (t) => {
+  const seedPath = path.join(here, "../../../corpus/public/gdal/test_dgnv8.dgn");
+  if (!existsSync(seedPath)) return t.skip("public seed missing");
+  const seed = readFileSync(seedPath);
+  assert.equal(thrown(() => wasm.stripDgnSeed(new TextEncoder().encode("garbage")))?.kind !== undefined, true);
+  assert.equal(thrown(() => wasm.stripDgnSeed(seed, { modelName: "" }))?.kind, "invalid");
+  assert.equal(thrown(() => wasm.stripDgnSeed(seed, 42))?.kind, "bad_argument");
+  const result = wasm.stripDgnSeed(seed, { modelName: "Model", timestampMs: 1.7e12 });
+  assert.ok(result.seed instanceof Uint8Array);
+  assert.equal(result.report.removed_graphic_records, 58);
+  assert.equal(result.report.model_name_from_seed, false);
+  assert.equal(result.report.timestamp_ms, 1.7e12);
+  const fromJson = wasm.stripDgnSeed(seed, JSON.stringify({ model_name: "Model", timestamp_ms: 1.7e12 }));
+  assert.deepEqual(fromJson.seed, result.seed);
+  assert.deepEqual(wasm.stripDgnSeed(result.seed, { modelName: "Model", timestampMs: 1.7e12 }).seed, result.seed);
+  const doc = wasm.read(result.seed);
+  try {
+    assert.equal(doc.info().application, "cadkit");
+    assert.equal(doc.toJSON().models[0].entities.length, 0);
+  } finally {
+    doc.free();
+  }
+  const dropped = wasm.stripDgnSeed(seed, { keepCellDefinitions: false }, { maxInputBytes: 1 << 20 });
+  assert.equal(dropped.report.removed_cell_definitions, 1);
+  assert.equal(thrown(() => wasm.stripDgnSeed(seed, null, { maxInputBytes: 16 }))?.kind, "limit_exceeded");
+});
+
 test("inspect, pickEntity, convertUnits, explodeInserts, toDxfBytes and includeHiddenLayers", () => {
   const bytes = new TextEncoder().encode(DXF);
   const summary = wasm.inspect(bytes);
