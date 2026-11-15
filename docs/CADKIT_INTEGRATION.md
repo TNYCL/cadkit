@@ -51,7 +51,10 @@ should be an approved blank template rather than an arbitrary client drawing.
 
 ### Obtaining a seed
 
-cadkit ships no seed. Make one from a drawing whose tables you are allowed to hand on (your
+cadkit ships no seed: the file header and model header streams every seed needs hold
+undecoded fields whose values differ between the writers of the public samples, so a
+built-in seed would have to copy a vendor template's values or guess them
+([format notes](dgn/FORMAT_NOTES.md#built-in-blank-seed-not-built)). Make one from a drawing whose tables you are allowed to hand on (your
 organisation's own template, a drawing you produced): `dgn::strip_seed_v8`
 (`cadkit::strip_dgn_seed`, `cadkit strip-seed in.dgn seed.dgn --report`, Python
 `strip_dgn_seed`, WASM `stripDgnSeed`, C `cadkit_dgn_strip_seed`) removes the model's

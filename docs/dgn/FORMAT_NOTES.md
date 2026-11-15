@@ -803,6 +803,17 @@ characters), and tag set definition strings are NUL-terminated.
 16. **Property bits** `0x0200`, `0x0400`, `0x1000`, `0x4000`: kept raw, meaning unknown
     (counts under "Property word"). Settled by: files saved before and after the
     corresponding edit (new / modified element, fill, …).
+17. **File header and model header fields that differ between writers**: nine `Dgn~H`
+    dwords (`0x110`, `0x118`, `0x138`, `0x13C`, `0x140`, `0x308`, `0x310`, `0x314`,
+    `0x388`), the model header prefix dwords `+4` / `+8` (open question 14), the model header
+    fields `u32 0x20`, `u32 0x44`, `f64 0xF8`, `0x120`, `0x140`, `0x160`, `0x1C8`, `0x1D8`
+    and type word bit `0x00400000` hold different values in test_dgnv8, TreeText and Water
+    (table under "Built-in blank seed"). `0x138` and `0x140` take 72 and 52 values in the
+    private corpus and match none of the record and page counts tried (tables, levels, views,
+    tag sets, dictionary and auxiliary pages and their counters). The writer copies them from
+    the seed; a seed cadkit would make itself needs their meaning first. Settled by: files
+    saved by one application with one setting changed at a time, or a public description of
+    the fields.
 
 ## Seed-based V8 writer
 
@@ -1201,6 +1212,88 @@ Open: which removed parts a receiving application needs (the model settings reco
 100, the locale property, the dropped empty storages) is unknown until a stripped seed is
 opened, filled and saved there; the contents of `Dgn~S`, `Dgn~Mf`, the model index entry
 tail and the undecoded tables are kept unread and may identify the source.
+
+### Built-in blank seed (not built)
+
+A seed shipped with cadkit, used when the caller has none, may hold only fields cadkit decodes
+and can set from their documented meaning, and byte blocks shown to be format constants: equal
+in the public V8 samples of both writer families, test_dgnv8 (ODA Teigha DGN 4.02, 3D) and the
+MicroStation files TreeText (8.11) and Water (8.1), both 2D, with the private corpus as
+corroborating counts only. Bytes of third-party default templates (whose licence is undecided)
+are not embedded, and undecoded fields that differ between the writers are neither embedded,
+zero-filled nor guessed (maintainer decision, Unreleased).
+
+Under these rules no blank seed can be built today, and cadkit ships none: `Dgn~H` and
+`Dgn~Mh`, which every seed needs (`V8Seed::parse` requires both), hold undecoded fields whose
+values differ between the public writers. `write_v8` still takes a caller seed;
+[`strip_seed_v8`](#seed-stripping) prepares one from the caller's own file. The comparison is
+`tests/blank_seed_evidence.rs` (own hex analysis; nothing of the samples is copied into the
+sources).
+
+Format constants (equal in the three public samples; private counts over 567 V8 files):
+
+| Stream | Offset, length | Content | Private |
+|---|---|---|---|
+| `Dgn~H` stream prefix | `0x00`, `0x14` bytes | `01 00 04 00`, then 16 zero bytes | 567 of 567 equal |
+| `Dgn~H` inflated (1,576 bytes) | 381 of its 394 dwords: all but the 4 decoded ones (`0x128` id high-water mark, `0x130` save time) and the 9 below | `u32` 8 at `0x114`, `u32` 2 at `0x11C`, the other 379 dwords zero | 567 of 567 equal |
+| `Dgn~S` | 208 bytes | every byte `0xFF` | 276 of 567 (the others differ) |
+| `Dgn~Mf` inflated | 276 bytes | `10 01`, then 274 zero bytes | 567 of 567 equal |
+| `Dgn~Mh` stream prefix | `0x1004` bytes, all dwords but the first three | zero (dword 0 is the page counter, "Model header") | 567 of 567 |
+| `Dgn~Mh` element, fixed part | `0x1F0` bytes (attribute offset `0xF8` words in all three) | of its 124 dwords, 24 belong to decoded fields (type word, length, id, element time, sub unit numerator, model time, extents, UOR per master) and 8 to the differing fields below; the other 92 are equal | 91 of the 92 equal in 567 of 567; `u32` `0x38` (0 in the public samples) in 25 |
+
+Undecoded fields that differ between the public writers:
+
+| Stream | Field | test_dgnv8 (ODA) | TreeText (MS 8.11) | Water (MS 8.1) | Private (567) |
+|---|---|---|---|---|---|
+| `Dgn~H` | `u32 0x110` | 0 | 0 | 1 | as Water in 567 |
+| `Dgn~H` | `u32 0x118` | 5 | `0x67` | 5 | one value in 567, none of the public ones; equal to the model header prefix `+8` |
+| `Dgn~H` | `u32 0x138` | 0 | 1 | 1 | 72 distinct values; as the MicroStation files in 293 |
+| `Dgn~H` | `u32 0x13C` | 3 | 0 | 0 | 2 distinct values, neither public one |
+| `Dgn~H` | `u32 0x140` | 0 | 6 | 4 | 52 distinct values |
+| `Dgn~H` | `u32 0x308` | 0 | 2 | 3 | as TreeText in 565 |
+| `Dgn~H` | `u32 0x310` | 0 | 1 | 1 | as the MicroStation files in 537, as ODA in 30 |
+| `Dgn~H` | `u32 0x314` | 2 | 0 | 0 | as the MicroStation files in 567 |
+| `Dgn~H` | `u32 0x388` | 0 | 1 | 0 | as TreeText in 567 |
+| `Dgn~Mh` prefix | `u32 +4`, `u32 +8` | 0, 0 | 8, `0x67` | 0, 0 | equal to `Dgn~H` `0x114` / `0x118` in 567 |
+| `Dgn~Mh` element | `u32 0x20` | 4 | 6 | 4 | as TreeText in 567 |
+| `Dgn~Mh` element | `u32 0x44` | 1 | 0 | 1 | as ODA and Water in 567 |
+| `Dgn~Mh` element | `f64 0xF8` | 1e7 | 0 | 0 | as the MicroStation files in 567 |
+| `Dgn~Mh` element | `f64 0x120`, `0x140`, `0x160` | 0 | 1.0 | 1.0 | as the MicroStation files in 567 |
+| `Dgn~Mh` element | `f64 0x1C8` | 0 | 1.0 | 0 | as TreeText in 567 |
+| `Dgn~Mh` element | `f64 0x1D8` | 0 | −1000 | 0 | 0 in 556, −1000 in 11 |
+
+The type word of a 3D model is not settled either: bit `0x00400000` (meaning unknown, "Model
+header") is clear in the three public samples and set on every private 3D model (556), and no
+public MicroStation sample is 3D. The model index entry (`Dgn~Mix`, "Model index") differs at
+`+0x00` (`0x00010000` in test_dgnv8 and Water, 0 in TreeText) and `+0x1C` (non-zero in TreeText
+only), and private entries carry a 26–94-byte tail the public ones lack. No allowed source
+decodes these fields (ezdgn's V8 notes list no `Dgn~H` layout and, for the model header, only
+the fields cadkit already reads).
+
+What the remaining parts would take: the compound file (`writer/container.rs` `build`), the
+`[MS-OLEPS]` property sets (`writer/oleps.rs`), an empty graphic page, the page counter and a
+level table could be produced from decoded meaning; the dictionary records a vendor template
+carries are template content and would be absent. Records the public samples carry (sizes in
+bytes):
+
+| Record | test_dgnv8 | TreeText | Water |
+|---|---|---|---|
+| type 9 settings | 10,344 | 10,344 | 10,344 |
+| type 97 view group | 216 | 264 | 264 |
+| type 98 views (8) | 2,432 | 2,432 | 2,432 |
+| type 99 (8) | 480 | 672 | 482 |
+| table 4 header and entries | 1,768 | 1,280 + 144 | 1,288 + 72 |
+| tables 3, 5, 6, 7, 19 headers and entries | — | 40; 64 + 792; 48 + 408; 40 + 224; 48 + 144 | —; 64 + 792; 48 + 400; 40 + 5,152; — |
+| font table (table 2) | 40 + 56 | — | — |
+| dictionary type 66 records | — | 1,404 (level 26), 1,120 (level 20) | — |
+| model control 66 (level 20) | — | 2,404 | 1,532 |
+| type 5 colour table | — | — | — (868 in every private file) |
+| `Oda~SH` / `DgnTk` | 16 / — | — / 64 | 16 / — |
+
+Level entries differ in layout between the writers (ODA 136 bytes, the two MicroStation files 128
+bytes each), so no level record is a format constant either. Settled by: the meaning of the
+fields above (open question 17), or a maintainer decision to embed values from a source whose
+licence is settled.
 
 ### Evidence and acceptance boundary
 

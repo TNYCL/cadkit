@@ -81,6 +81,13 @@ Private client drawings in `corpus/private/` are used only for local, structural
   variation between attachments, cross ids, XAttribute 170 framing). New
   attachments copy a seed attachment and rewrite only the fields that analysis
   identified; tests use invented records. No external implementation was consulted.
+- The blank seed analysis (`docs/dgn/FORMAT_NOTES.md`, "Built-in blank seed";
+  `tests/blank_seed_evidence.rs`) is own byte comparison of the public GDAL `test_dgnv8.dgn`
+  (ODA-written) and the two Safe Software samples (MicroStation-written), with structural
+  counts over the private corpus (equal / not equal, distinct-value counts; no names, values
+  or coordinates copied); ezdgn's V8 notes (MIT) were checked and decode none of the differing
+  fields. Nothing was embedded: no bytes of a third-party template or of any sample are in the
+  sources, and no built-in seed exists.
 - `cadkit-core` writer preflight (`validate_limits`) validates object, vertex, nesting, string, finite-float, and byte budgets directly on the in-memory `Document` AST without extra dependencies.
 - DGN V8 type-17 range writing uses own byte inspection of the existing public
   GDAL and Safe Software samples: low slots are absolute UOR bounds and high
