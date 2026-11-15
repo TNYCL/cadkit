@@ -137,3 +137,49 @@ fn water_mains_line_strings() {
     assert!(m.entities.iter().all(|e| e.layer.is_some()));
     assert!(doc.warnings.is_empty(), "{:?}", doc.warnings);
 }
+
+/// The public V8 samples written back into themselves give the same bytes with and without
+/// the layer data the reader takes from 240-byte level entries (their entries are 104 bytes,
+/// so the reader adds none; the check guards the writer's use of it).
+#[cfg(feature = "write")]
+#[test]
+fn write_back_ignores_level_colors() {
+    let options = cadkit_dgn::WriteOptions::default()
+        .with_clear_seed_model(true)
+        .with_timestamp_ms(1.7e12);
+    for rel in [
+        "public/gdal/test_dgnv8.dgn",
+        "public/safe/TreeTextNodeLabelsWithTags.dgn",
+        "public/safe/Water_distribution_mains.dgn",
+    ] {
+        let Some(bytes) = corpus(rel) else {
+            continue;
+        };
+        let doc = cadkit_dgn::read(&bytes, &ReadOptions::default()).unwrap();
+        assert!(
+            doc.layers
+                .iter()
+                .all(|l| l.color == cadkit_core::Color::ByLayer
+                    && !l.props.contains_key("dgn.color_index"))
+        );
+        let mut without = doc.clone();
+        for l in &mut without.layers {
+            l.color = cadkit_core::Color::ByLayer;
+            for key in [
+                "dgn.color_index",
+                "dgn.level_weight_raw",
+                "dgn.level_style_raw",
+            ] {
+                l.props.remove(key);
+            }
+        }
+        match (
+            cadkit_dgn::write_v8(&doc, &bytes, &options),
+            cadkit_dgn::write_v8(&without, &bytes, &options),
+        ) {
+            (Ok(a), Ok(b)) => assert!(a == b, "{rel}"),
+            (Err(a), Err(b)) => assert_eq!(a.to_string(), b.to_string()),
+            _ => panic!("{rel}: level colors changed whether a write-back succeeds"),
+        }
+    }
+}

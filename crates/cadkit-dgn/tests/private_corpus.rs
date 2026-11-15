@@ -419,3 +419,168 @@ fn private_seed_without_rasters_takes_the_builtin_group() {
         assert_eq!(images[0].props.get(key), image.props.get(key));
     }
 }
+
+/// Level colors and text lengths on the private corpus (Unreleased; FORMAT_NOTES, "Level
+/// entry symbology" and "Mapping decisions"). Structural counts only: every layer read from a
+/// 240-byte entry has a palette color and its raw fields, every by-level element stays
+/// `ByLayer` with the sentinel, and every stored text length that the range rule could have
+/// derived equals the range width within 1e-3.
+#[test]
+fn private_level_colors_and_text_lengths() {
+    use cadkit_dgn::native::ElementData;
+    use cadkit_dgn::native::decode_v8;
+    let read = ReadOptions::default();
+    let (mut layers, mut colored, mut nonzero, mut by_level, mut on_colored) = (0, 0, 0, 0, 0);
+    let (mut texts, mut from_range, mut estimated, mut checked) = (0, 0, 0, 0);
+    for path in common::private_dgn_paths() {
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        let doc = cadkit_dgn::read(&bytes, &read).unwrap();
+        for l in &doc.layers {
+            layers += 1;
+            let index = l.props.get("dgn.color_index");
+            assert_eq!(index.is_some(), l.color != cadkit_core::Color::ByLayer);
+            assert_eq!(
+                index.is_some(),
+                l.props.contains_key("dgn.level_weight_raw")
+            );
+            assert_eq!(index.is_some(), l.props.contains_key("dgn.level_style_raw"));
+            assert!(l.lineweight == cadkit_core::Lineweight::default() && l.linetype.is_none());
+            if let Some(Value::Int(i)) = index {
+                assert!((0..=255).contains(i));
+                colored += 1;
+                nonzero += usize::from(*i != 0);
+            }
+        }
+        for m in &doc.models {
+            let mut all = Vec::new();
+            for e in &m.entities {
+                common::walk(e, &mut all);
+            }
+            for e in all {
+                if prop_int(e, "dgn.color_index") == Some(0xffff_ffff) {
+                    by_level += 1;
+                    assert_eq!(e.color, cadkit_core::Color::ByLayer);
+                    let layer = doc
+                        .layers
+                        .iter()
+                        .find(|l| e.layer.as_deref() == Some(&l.name));
+                    on_colored += usize::from(layer.is_some_and(|l| {
+                        matches!(l.props.get("dgn.color_index"), Some(Value::Int(i)) if *i != 0)
+                    }));
+                }
+                if let EntityKind::Text { value, .. } = &e.kind {
+                    texts += 1;
+                    if e.props.get("dgn.text_length_source") == Some(&Value::Text("range".into())) {
+                        from_range += 1;
+                        assert!(!value.is_empty());
+                    }
+                    estimated += usize::from(e.props.contains_key("dgn.text_length_estimated"));
+                }
+            }
+        }
+        // The evidence for the range rule: where a text stores its length and meets the
+        // rule's conditions, the range width equals the stored length.
+        let native = cadkit_dgn::native::v8::read(&bytes, &read).unwrap();
+        for model in &native.models {
+            for raw in model.graphic_pages.iter().flat_map(|p| &p.elements) {
+                if raw.type_code() != 17 {
+                    continue;
+                }
+                let el = decode_v8::decode(raw, encoding_rs::WINDOWS_1252, &read.limits);
+                let (ElementData::Text(t), Some([lo, hi])) = (&el.data, el.header.range) else {
+                    continue;
+                };
+                let identity = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
+                let unrotated = t
+                    .rotation
+                    .matrix()
+                    .iter()
+                    .zip(identity)
+                    .all(|(a, b)| (a - b).abs() <= 1e-9);
+                let stored = raw
+                    .bytes
+                    .get(0x80..0x88)
+                    .map(|b| f64::from_le_bytes(b.try_into().unwrap()));
+                if let Some(l) = stored.filter(|l| *l > 0.0)
+                    && el.header.properties & 0x1000 == 0
+                    && unrotated
+                    && (lo[0] - t.origin[0]).abs() <= 1.0
+                    && hi[0] > lo[0]
+                    && !t.text.is_empty()
+                {
+                    checked += 1;
+                    assert!(((hi[0] - lo[0]) - l).abs() <= 1e-3 * l);
+                }
+            }
+        }
+    }
+    if layers > 0 {
+        eprintln!(
+            "level colors: {layers} layers, {colored} with a color index ({nonzero} nonzero); \
+             {by_level} by-level elements, {on_colored} on a nonzero level color; texts: \
+             {texts}, {from_range} range-derived, {estimated} estimated, {checked} stored \
+             lengths equal to the range width"
+        );
+        assert!(colored > 0 && checked > 0);
+    }
+}
+
+/// Writing a private file back into itself gives the same bytes with and without the layer
+/// data read from 240-byte level entries (color, `dgn.color_index`, raw weight and style):
+/// the level colors do not change what an unchanged document writes. Checked on the files
+/// whose levels carry a nonzero color index.
+#[cfg(feature = "write")]
+#[test]
+fn private_write_back_ignores_level_colors() {
+    let read = ReadOptions::default();
+    let options = cadkit_dgn::WriteOptions::default()
+        .with_clear_seed_model(true)
+        .with_timestamp_ms(1.7e12);
+    let (mut files, mut written, mut failed) = (0usize, 0usize, 0usize);
+    for path in common::private_dgn_paths() {
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        let doc = cadkit_dgn::read(&bytes, &read).unwrap();
+        if !doc
+            .layers
+            .iter()
+            .any(|l| matches!(l.props.get("dgn.color_index"), Some(Value::Int(i)) if *i != 0))
+        {
+            continue;
+        }
+        files += 1;
+        let mut without = doc.clone();
+        for l in &mut without.layers {
+            l.color = cadkit_core::Color::ByLayer;
+            for key in [
+                "dgn.color_index",
+                "dgn.level_weight_raw",
+                "dgn.level_style_raw",
+            ] {
+                l.props.remove(key);
+            }
+        }
+        match (
+            cadkit_dgn::write_v8(&doc, &bytes, &options),
+            cadkit_dgn::write_v8(&without, &bytes, &options),
+        ) {
+            (Ok(a), Ok(b)) => {
+                written += 1;
+                assert!(a == b, "level colors changed a write-back");
+            }
+            (Err(a), Err(b)) => {
+                failed += 1;
+                assert_eq!(a.to_string(), b.to_string());
+            }
+            _ => panic!("level colors changed whether a write-back succeeds"),
+        }
+    }
+    if files > 0 {
+        eprintln!(
+            "write-back with level colors: {files} files, {written} equal, {failed} fail alike"
+        );
+    }
+}

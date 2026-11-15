@@ -239,6 +239,107 @@ fn rotated_and_tilted_text_range_encloses_its_measured_rectangle() {
     }
 }
 
+/// A centred text whose record stores no length (`0x80` zero) but whose range starts at its
+/// origin reads its length from the range (`dgn.text_length_source` = "range"); written back,
+/// the record stores that length, and anchor, origin and length read back unchanged.
+#[test]
+fn range_derived_text_length_keeps_the_anchor_through_a_round_trip() {
+    for three in [false, true] {
+        let mut source = text_entity(7, Vec3::Z, three);
+        if let EntityKind::Text { rotation, .. } = &mut source.kind {
+            *rotation = 0.;
+        }
+        let written = write_v8(
+            &document(three, vec![source]),
+            &seed(three),
+            &WriteOptions::default(),
+        )
+        .unwrap();
+        // Clear the stored length and narrow the range to 9 drawing units (1000 UOR each).
+        let native = v8::read(&written, &ReadOptions::default()).unwrap();
+        let records: Vec<Vec<u8>> = native.models[0].graphic_pages[0]
+            .elements
+            .iter()
+            .map(|r| {
+                let mut b = r.bytes.clone();
+                if r.type_code() == 17 {
+                    assert_eq!(le::i64_at(&b, 0x50), Some(12_500));
+                    f64_at(&mut b, 0x80, 0.0).unwrap();
+                    b[0x50..0x58].copy_from_slice(&9_000i64.to_le_bytes());
+                }
+                b
+            })
+            .collect();
+        let mut file = ::cfb::CompoundFile::open(Cursor::new(written)).unwrap();
+        file.create_stream("Dgn-Md/#000000/Dgn^G/$1")
+            .unwrap()
+            .write_all(&page(&records, 3, 1).unwrap())
+            .unwrap();
+        file.flush().unwrap();
+        let unmeasured = file.into_inner().into_inner();
+
+        let doc = crate::read(&unmeasured, &ReadOptions::default()).unwrap();
+        let text = &doc.models[0].entities[0];
+        assert_eq!(text.props["dgn.text_length"], Value::Float(9.0));
+        assert_eq!(
+            text.props["dgn.text_length_source"],
+            Value::Text("range".into())
+        );
+        assert!(!text.props.contains_key("dgn.text_length_estimated"));
+        let origin = match &text.props["dgn.origin"] {
+            Value::List(v) => v.clone(),
+            other => panic!("{other:?}"),
+        };
+        let (Value::Float(ox), Value::Float(oy)) = (&origin[0], &origin[1]) else {
+            panic!("origin")
+        };
+        let EntityKind::Text {
+            position, height, ..
+        } = text.kind
+        else {
+            panic!("text")
+        };
+        // Centre-middle: half the length along x, half the height along y.
+        assert!((position.x - (ox + 4.5)).abs() < 1e-9);
+        assert!((position.y - (oy + height / 2.)).abs() < 1e-9);
+
+        let back = write_v8(
+            &doc,
+            &unmeasured,
+            &WriteOptions::default().with_clear_seed_model(true),
+        )
+        .unwrap();
+        let native = v8::read(&back, &ReadOptions::default()).unwrap();
+        let record = native.models[0].graphic_pages[0]
+            .elements
+            .iter()
+            .find(|r| r.type_code() == 17)
+            .unwrap();
+        assert_eq!(le::f64_at(&record.bytes, 0x80), Some(9_000.));
+        let reread = crate::read(&back, &ReadOptions::default()).unwrap();
+        let again = &reread.models[0].entities[0];
+        let EntityKind::Text {
+            position: again_position,
+            ..
+        } = again.kind
+        else {
+            panic!("text")
+        };
+        for (a, b) in [
+            (again_position.x, position.x),
+            (again_position.y, position.y),
+            (again_position.z, position.z),
+        ] {
+            assert!((a - b).abs() < 1e-9);
+        }
+        assert_eq!(again.props["dgn.origin"], Value::List(origin));
+        assert_eq!(again.props["dgn.text_length"], Value::Float(9.0));
+        // The written record stores the length: it is no longer range-derived.
+        assert!(!again.props.contains_key("dgn.text_length_source"));
+        assert!(!again.props.contains_key("dgn.text_length_estimated"));
+    }
+}
+
 fn seed_with_fonts(fonts: &[(u32, &str)]) -> Vec<u8> {
     let mut records = vec![];
     for (index, (number, name)) in fonts.iter().enumerate() {

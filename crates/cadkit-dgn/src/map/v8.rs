@@ -50,10 +50,10 @@ fn map_file(file: &V8File, options: &ReadOptions, enc: TextDecoder) -> Document 
     );
 
     // File-level tables.
-    let mut levels: Vec<LevelData> = Vec::new();
+    let mut levels: Vec<(LevelData, Option<decode_v8::LevelSymbology>)> = Vec::new();
     for it in &named {
         match &it.el.data {
-            ElementData::Level(l) => levels.push(l.clone()),
+            ElementData::Level(l) => levels.push((l.clone(), decode_v8::level_symbology(it.raw))),
             ElementData::Font { number, name } if !name.is_empty() => {
                 m.fonts.insert(*number, name.clone());
             }
@@ -72,7 +72,7 @@ fn map_file(file: &V8File, options: &ReadOptions, enc: TextDecoder) -> Document 
     }
     let mut layers = Vec::new();
     let mut names: HashSet<String> = HashSet::new();
-    for l in &levels {
+    for (l, symbology) in &levels {
         let name = crate::level_names::assign(l.name.as_deref(), l.id, &mut names);
         m.levels.insert(l.id, name.clone());
         let mut props = Props::new();
@@ -80,9 +80,26 @@ fn map_file(file: &V8File, options: &ReadOptions, enc: TextDecoder) -> Document 
         if l.parent != u32::MAX {
             props.insert("dgn.parent_level".into(), Value::Int(i64::from(l.parent)));
         }
+        if let Some(s) = symbology {
+            props.insert("dgn.color_index".into(), Value::Int(i64::from(s.color)));
+            // Weak evidence only: kept raw, not mapped to the layer's lineweight / linetype
+            // and not under `dgn.weight` / `dgn.style`, which the writer interprets.
+            props.insert(
+                "dgn.level_weight_raw".into(),
+                Value::Int(i64::from(s.weight_raw)),
+            );
+            props.insert(
+                "dgn.level_style_raw".into(),
+                Value::Int(i64::from(s.style_raw)),
+            );
+        }
         layers.push({
             let mut layer = Layer::new(name).with_id(u64::from(l.id)).with_props(props);
             layer.description = l.description.clone();
+            // The palette (file color table) is complete here: tables were read above.
+            if let Some(s) = symbology.filter(|s| s.color <= 255) {
+                layer.color = m.color(s.color);
+            }
             layer
         });
     }
@@ -322,7 +339,7 @@ fn map_file(file: &V8File, options: &ReadOptions, enc: TextDecoder) -> Document 
     }
 
     // Layers for levels referenced without a table entry.
-    let declared: HashSet<u32> = levels.iter().map(|l| l.id).collect();
+    let declared: HashSet<u32> = levels.iter().map(|(l, _)| l.id).collect();
     for id in m.used_levels.clone() {
         if declared.contains(&id) {
             continue;

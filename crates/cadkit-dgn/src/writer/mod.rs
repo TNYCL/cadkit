@@ -575,14 +575,24 @@ impl State<'_> {
         let mut b = encode::header(kind, size, id, level, time, entity, three, weight)?;
         if !entity.props.contains_key("dgn.color_index") {
             use cadkit_core::Color;
-            let color = if entity.color == Color::ByLayer {
-                self.layers
-                    .iter()
-                    .find(|l| Some(l.name.as_str()) == entity.layer.as_deref())
-                    .map(|l| l.color)
-                    .unwrap_or(Color::ByLayer)
-            } else {
-                entity.color
+            let layer = self
+                .layers
+                .iter()
+                .find(|l| Some(l.name.as_str()) == entity.layer.as_deref());
+            // A ByLayer entity takes the layer's palette index first, as it takes the layer's
+            // `dgn.weight`: a layer read from a 240-byte level entry carries the level's
+            // color index, which then survives a seed palette that repeats or lacks its RGB.
+            let layer_index = match layer.and_then(|l| l.props.get("dgn.color_index")) {
+                Some(Value::Int(n)) => u8::try_from(*n).ok(),
+                _ => None,
+            };
+            let color = match (entity.color, layer_index) {
+                (Color::ByLayer, Some(index)) => {
+                    u32_at(&mut b, 0x34, u32::from(index))?;
+                    Color::ByLayer
+                }
+                (Color::ByLayer, None) => layer.map_or(Color::ByLayer, |l| l.color),
+                (color, _) => color,
             };
             let rgb = match color {
                 Color::Aci { index } => {

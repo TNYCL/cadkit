@@ -37,6 +37,15 @@ All notable changes are recorded here. The format follows
   prints it as JSON (exit 1 when it has warnings).
 - `cadkit_dgn::palette::exact_index` (the writer's palette match) and `nearest_index` (the
   match `V8Seed::prepare_document` uses for off-palette colors).
+- DGN V8 layers read from 240-byte level entries (MicroStation 8.11) carry the level color:
+  `Layer.color` is the file palette color of the entry's color index (`0x48`), kept in the
+  layer's `dgn.color_index`; the two fields that presumably hold the level's weight (`0x44`)
+  and style (`0x40`) are kept raw in `dgn.level_weight_raw` / `dgn.level_style_raw` and set
+  no lineweight or linetype. Layers from 104-byte entries are unchanged. Evidence: 807 of 853
+  by-level colored elements of the private corpus sit on the 2.7 % of levels with a nonzero
+  index.
+- `dgn.text_length_source = "range"` on DGN text whose length comes from its element range
+  (V7, and V8 as below).
 - `V8Seed::font_entries` (the seed's font table in stored order, repeated names included)
   and `V8Seed::font_number` (exact name, then trimmed ASCII case-insensitive; absent and
   ambiguous names are distinct `Unsupported` errors).
@@ -69,6 +78,18 @@ All notable changes are recorded here. The format follows
   before, the last entry won silently. `prepare_document` drops such a style like an
   unknown one.
 - A non-integer `dgn.style` is rejected instead of being ignored.
+- **DGN V8 text without a stored length** (`0x80` zero) takes its length from the element
+  range when it is unrotated, not empty, has property bit `0x1000` clear and its range starts
+  at the origin (as V7 text already did), instead of `characters × character width`; it is no
+  longer marked `dgn.text_length_estimated`. MicroStation's stored lengths equal the range
+  width within 1e-3 on 303 of 303 such texts of the private corpus; the change affects
+  test_dgnv8's three ODA texts (no private text: the unmeasured ones are empty), and a
+  rewrite stores the range-derived length.
+- The DGN writer gives a `ByLayer` entity without its own `dgn.color_index` the layer's
+  `dgn.color_index` (0–255) before trying the layer color, as it does for `dgn.weight`.
+  Documents read from a file write the same bytes as before (their elements carry their own
+  index); a new `ByLayer` entity on a colored level is written with that level's index
+  instead of 0, also into a seed whose palette lacks the layer's RGB.
 
 ### Fixed
 

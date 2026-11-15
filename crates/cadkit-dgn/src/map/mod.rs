@@ -678,6 +678,12 @@ impl Mapper {
                 if estimated {
                     e.props
                         .insert("dgn.text_length_estimated".into(), Value::Bool(true));
+                } else if !self.v8
+                    || crate::native::decode_v8::stored_text_length(item.raw).is_none()
+                {
+                    // Measured from the element range (V7 always; V8 when 0x80 is zero).
+                    e.props
+                        .insert("dgn.text_length_source".into(), Value::Text("range".into()));
                 }
                 e.props.insert(
                     "dgn.justification".into(),

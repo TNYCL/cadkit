@@ -81,10 +81,14 @@ Policies stay with the host: loose or locale-aware matching of level, tag and fo
 (pass the resolved `dgn.font_number` / exact names on), resolving `ByBlock` from a parent,
 how far an RGB may move to a palette entry, and which time to give new records. The writer
 keeps unchanged seed pages byte for byte and writes level-sentinel symbology
-(`dgn.color_index` / `dgn.weight` `0xFFFFFFFF`) back as read.
+(`dgn.color_index` / `dgn.weight` `0xFFFFFFFF`) back as read. Layers read from
+MicroStation 8.11 level entries carry the level color (`Layer.color`, `dgn.color_index`);
+a `ByLayer` entity without its own index is written with the layer's `dgn.color_index`.
 
 Center/right text requires measured `dgn.text_length` in drawing units. The
-application must update that value when text or its font metrics change.
+application must update that value when text or its font metrics change. A read
+text's length is stored in the file, derived from its range
+(`dgn.text_length_source = "range"`) or estimated (`dgn.text_length_estimated`).
 Identifier attributes should use the receiving profile's declared data type;
 numeric identifiers must not be routed through an inexact floating-point type.
 

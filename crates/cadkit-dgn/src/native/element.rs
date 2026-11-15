@@ -117,7 +117,8 @@ pub struct TextData {
     /// Text bytes as stored.
     pub raw_text: Vec<u8>,
     /// Length of the text along its baseline in UOR, when the file stores it (V8 `0x80`)
-    /// or it can be derived from the range (unrotated V7 text). `None`: unknown.
+    /// or it can be derived from the range (unrotated V7 text; unrotated, non-empty V8 text
+    /// without property bit `0x1000`; both when the range starts at the origin). `None`: unknown.
     pub measured_length: Option<f64>,
 }
 

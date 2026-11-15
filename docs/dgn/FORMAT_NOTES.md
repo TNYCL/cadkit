@@ -14,7 +14,7 @@ sample that exercises it.
 | Container | CFB (own reader: header, DIFAT, FAT, mini stream), zlib pages | flat record stream |
 | Models | every `Dgn-Md/#NNNNNN` storage; names from the model index; 2D/3D | one implicit model |
 | Units | model header UOR/master, global origin, master/sub unit definitions | TCB (sub/master, UOR/sub, labels, VAX origin) |
-| Levels → layers | level table (names, ids); flags kept raw | used levels as `Level N` |
+| Levels → layers | level table (names, ids); 240-byte entries: color index (`0x48`) → layer color, weight/style kept raw; flags kept raw | used levels as `Level N` |
 | Colors | default palette + type-5 color table; extended (>255) colors unresolved | default palette + type-5 color table |
 | Elements | 2, 3, 4, 6, 7, 11, 12, 14, 15, 16, 17, 18/19 (group), 21, 22, 27, 34, 35, 37, 94 | same families except raster |
 | Tags | tag sets (type 39) + tag elements attached to their target | decoded, **not attached** (no sample) |
@@ -205,7 +205,7 @@ was not separated; the writer removes all three.
 | `0x18` | f64 | last modified, milliseconds since 1970 (inferred: same value on every element of a save; 2017 in test_dgnv8, 2014 in TreeText) | — |
 | `0x20` | u32 | graphic group | oracle row 1 (= 2) |
 | `0x24` | u32 | unknown (`0x80000000` in test_dgnv8, 0 elsewhere) | — |
-| `0x28` | u32 | property flags: `0x0800` 3D, `0x8000` hole (shapes), `0x0200`/`0x0400` new/modified (as V7), `0x0080` hidden (see below) | oracle: Z vs 2D geometry; hole ring in a cell; `0x0080`: every hidden TreeText tag (13,808), no other record of the public or private corpus |
+| `0x28` | u32 | property flags: `0x0800` 3D point layout, `0x8000` hole (shapes), `0x0200`/`0x0400` new/modified (as V7), `0x0080` hidden; see [Property word](#property-word-0x28) | oracle: Z vs 2D geometry; hole ring in a cell; `0x0080`: every hidden TreeText tag (13,808), no other record of the public or private corpus |
 | `0x2C` | u32 | line style | oracle (4) |
 | `0x30` | u32 | line weight | oracle (5) |
 | `0x34` | u32 | color index (>255 = extended color) | oracle (3, 256) |
@@ -215,6 +215,22 @@ Type-word flags (high 16 bits): `0x2000` complex header, `0x4000` complex compon
 `0x1000` set on graphic elements, `0x0080`/`0x0040`/`0x0400`/`0x0800` vary by writer
 (meaning unknown, kept in `ElementHeader::type_flags`). Types without this display
 header: 1, 5, 8, 9, 10, 39, 57, 63, 66, 90–93, 95–99.
+
+### Property word (`0x28`)
+
+Counts over the graphic pages of the private corpus (567 MicroStation 8.11 files, 1,339,778
+records with a display header, 267,273 of them tags) and the three public V8 files (99,446
+records); own structural counts.
+
+| Bit | Reader | Evidence |
+|---|---|---|
+| `0x0800` | selects the record's point layout: set = 3D (3 doubles per point, quaternion), clear = 2D (2 doubles, angle), whatever the model header's 2D flag says | set on every private record; all 1,061,848 private lines, line strings and shapes have the 3D layout, the 27,751 of the 11 models flagged 2D included; public: Water's 66,053 records (2D model) have the 3D layout and test_dgnv8's 17 records without the bit the 2D layout in a 3D model; no counter-example. The writer sets it from the model dimension |
+| `0x8000` | `dgn.hole` on shapes (6) and complex shapes (14) only | graphic pages: one cell header (2) and one shape (6) in the private corpus, two of each in test_dgnv8 (oracle: the shape is a hole ring in a cell); shared cell definitions (`Dgn^Nm`): 107,730 nested cell headers and 2,835 ellipses carry it, without a filled sibling. A cell header is no hole, so the bit becomes `dgn.hole` only where a hole ring can be; elsewhere it stays in `dgn.properties` |
+| `0x0080` | `Entity::visible = false` on V8 graphics (issue #25) | TreeText's 13,808 hidden tags, all with an empty range; no other record of the public or private corpus. That graphics other than tags are hidden by it rests on the external report (issue #25) only; see "Hidden graphics" |
+| `0x0200`, `0x0400` | kept raw | private: 1,339,377 / 1,315,435 records; related to the type-word flags `0x0080` / `0x0040` but not one to one; meaning unknown |
+| `0x1000` | kept raw; a text with it gets no range-derived length | private: 20,304 records — every shape with a fill linkage `0x0041` (20,163), 39 shapes without one and 102 texts, 101 of whose ranges are the square origin ± L (L the stored length), not the text box; public: 85,580 records and TreeText's 13,808 tags. Meaning not established |
+| `0x4000` | kept raw | private 1, public 2 |
+| `0x0100`, `0x2000`, low nibble | kept raw | not observed |
 
 ### Element bodies (offsets from the element start)
 
@@ -245,8 +261,34 @@ store 3 doubles and a quaternion `(w, x, y, z)`. All coordinates are UOR doubles
 | Second level table | Most private 3D files (261/293; plans 3/274) hold a second type-96 table-1 header in a later `Dgn^Nm` page with its own type-95 entries whose level ids repeat ids of the first table (1–9 and 64). Elements carry the id only; a reader that lets the later entry win shows them on the second table's level. The writer keeps the first definition of an id, renumbers later ones above the highest id and keeps one header; since 0.3.5 the later tables' entries follow the first table's last entry on its page, and the XAttributes of the dropped headers are dropped | private structural count |
 | 95 table entry, table 2 (font) | `0x28` u32 font number, `0x2C` u16 name bytes, `0x2E` UTF-16 name | test_dgnv8 ("Arial" = 1024) |
 | 5 color table (level slot 1) | `0x20` u16 screen flag, `0x22` 256 RGB triples, first = color 255 (V7 order assumed), then u16 length + table file name | private sample (layout of the triples inferred from the trailing name) |
-| 36 | multi-line (assumed); not decoded → Unknown | oracle shows a 1-point line string |
+| 36 | multi-line (assumed); not decoded → Unknown. One sample only (test_dgnv8, ODA, 296 bytes, property `0x0800`): `0x7C` u16 1, `0x7E` u16 3, `0xF8` f64 1.0, `0x100` 3 doubles (0, 10000, 20000) UOR — the oracle's `LINESTRING Z (0 1 2)` (one point); a hint, not a layout | oracle shows a 1-point line string |
 | 66 (`Dgn~Mh`) | model header, below | all |
+
+### Level entry symbology
+
+Level entries (type 95, table 1) with a 240-byte fixed part are the only layout of the
+private corpus (205,849 entries, MicroStation 8.11). Fields beyond id, parent, flags and code,
+own structural counts:
+
+| Offset | Type | Content | Evidence |
+|---|---|---|---|
+| `0x2C` | u32 | reads as Unix seconds (years 2019–2026); not decoded | 204,834 of 204,840 dated entries are not later than the newest element of their file; `0xFFFFFFFF` in 902, 0 in 107 |
+| `0x40` | i32 | presumably the level line style (weak); kept raw in `dgn.level_style_raw` | 0 (205,443), −1 (404), −435 (2); of the 41 graphic elements with style `0x7FFFFFFF`, 39 are on levels with 0 and 2 on −435; no explicit style equals a nonzero value |
+| `0x44` | u32 | presumably the level line weight (weak); kept raw in `dgn.level_weight_raw` | 0, 1, 2 or 10; nonzero only where `0x48` is nonzero; of the 41 by-level weight elements 39 are on levels with 0 and 2 on 2; on levels with 2, 783 of 2,742 explicit weights are 2 (29 %, against 3.2 % of all explicit weights) |
+| `0x48` | u32 | level color index (strong) → `Layer.color` through the file palette, raw in `dgn.color_index` | 0–205, inside the 256-entry table; 807 of the 853 by-level colored elements with a level entry are on a level with `0x48` ≠ 0 (94.6 %), against 5,627 of 205,849 entries (2.7 %) and 2,053 of 1,071,651 explicitly colored elements (0.19 %); the 19 used levels that hold only by-level colored elements all have `0x48` ≠ 0, and of the levels with `0x48` = 0 that hold elements, 3 of 44,019 hold any by-level colored element; color 114 is used by exactly 100 elements, all on levels whose `0x48` is 114; a level name found in two or more files keeps its nonzero `0x48` in 29 of 40 cases |
+| `0x4C` | u32 | equal to `0x48` in every entry; not read separately | 205,849 of 205,849 |
+| `0x58` | u32 | 0, or 4 in 102 entries; not decoded | — |
+| `0x5C` | u32 | level code (above) | — |
+
+The reader gives every layer from such an entry `Layer.color` (palette color of `0x48`,
+index 0 included: index 0 is a color like any other) and the props `dgn.color_index`,
+`dgn.level_weight_raw` and `dgn.level_style_raw`; it sets no `Layer.lineweight` or
+`Layer.linetype` and does not use the layer's `dgn.weight` / `dgn.style`, which the writer
+interprets. Through the reader's own level mapping (a level id defined by two tables takes the
+later entry's name, open question 15) 813 of the 854 by-level colored elements are on a layer
+with a nonzero color index. 104-byte entries (ODA-written public files) are unchanged: their
+symbology fields are not located (`0x3C`, `0x4C` and `0x5C` are 1 on the used level and 0 on
+"Default"), and their layers keep `Color::ByLayer`.
 
 ### Tag set definition records (V7 type 66 level 24 and V8 type 39)
 
@@ -364,7 +406,7 @@ stream end (found by scanning, as ezdgn does).
 
 | Offset | Type | Meaning | Evidence |
 |---|---|---|---|
-| `0x00` | u32 | type word; `0x00800000` set = 2D model | Safe files 2D, test_dgnv8/private 3D |
+| `0x00` | u32 | type word; `0x00800000` set = 2D model. Observed: `0x00400042` (556 private files, 3D; header element 892 or 916 bytes), `0x00800042` (11 private 2D files, 724 bytes; both Safe files, 576 bytes), `0x00000042` (test_dgnv8, ODA, 3D, 616 bytes). `0x00400000` appears only on 3D MicroStation models; its meaning is unknown | Safe files 2D, test_dgnv8/private 3D |
 | `0x18` | f64 | timestamp (as elements) | |
 | `0x48`, `0x4C` | u32 | unit flags (`0x11` in all samples) | |
 | `0x50`, `0x58` | f64 | master unit numerator / denominator (units per meter; m = 1/1) | m in all samples |
@@ -435,6 +477,12 @@ skipped (counted in `dgn.deleted_count`). Records without a display header and t
 - **Colors**: 0–255 through the file color table (last one wins) or the default palette →
   `Color::Rgb`; index in `dgn.color_index`. Extended colors (>255) → `ByLayer` (their RGB
   is not located; the oracle reports different RGBs for the same index in two exports).
+  The by-level sentinels (color and weight `0xFFFFFFFF`, style `0x7FFFFFFF`) → `ByLayer`, no
+  millimetre weight and no linetype, the numbers kept in `dgn.color_index` / `dgn.weight` /
+  `dgn.style` (the writer writes them back as stored, see "Level sentinels"); `0xFFFFFFFE`
+  (by cell) → `ByBlock` (not observed). The layer of a 240-byte level entry carries the
+  level color ([Level entry symbology](#level-entry-symbology)), so a renderer that resolves
+  `ByLayer` through the layer shows by-level elements in their level color.
 - **Weights**: weight `w` → `Lineweight::Millimeters(0.1 · (1 + 2w))` (a weight-`w` line is
   `1 + 2w` pixels wide; 0.1 mm per pixel assumed); raw value in `dgn.weight`.
 - **Styles**: 0–7 → `DGN_SOLID`, `DGN_DOTTED`, `DGN_MEDIUM_DASH`, `DGN_LONG_DASH`,
@@ -450,8 +498,10 @@ skipped (counted in `dgn.deleted_count`). Records without a display header and t
   of the DGN text box being the baseline), and `position` is moved from the origin to the
   justification point: `origin + x̂·(fx·L) + ŷ·(fy·H)` with `fx, fy ∈ {0, ½, 1}`,
   `H` = text height and `L` = text length — V8 `0x80` when non-zero (MicroStation writes
-  it), V7 range width for unrotated text whose range starts at the origin, otherwise
-  `characters × character width` (GDAL's estimate; `dgn.text_length_estimated = true`).
+  it); else the range width for unrotated text whose range starts at the origin (within
+  1 UOR) — V7 text, and V8 text that is not empty and has property bit `0x1000` clear
+  (`dgn.text_length_source = "range"`); otherwise `characters × character width` (GDAL's
+  estimate; `dgn.text_length_estimated = true`).
   `end_point = None`. The stored origin is kept in `dgn.origin`, the length in
   `dgn.text_length`, the code in `dgn.justification`. Width factor = width / height.
   Style = font name (font table) or `DGN_FONT_n`; one `TextStyle` per font. Checks:
@@ -459,6 +509,22 @@ skipped (counted in `dgn.deleted_count`). Records without a display header and t
   (all left-top) keep their CSV point in `dgn.origin` with the anchor one height above it
   along the rotated Y axis; all 12,623 TreeText texts are left-bottom (anchor = origin,
   measured length present).
+
+  V8 text length evidence (own structural counts). Private corpus, 906 texts: 405 store
+  `0x80`; 303 of them are unrotated, have `0x1000` clear and a range starting at the origin,
+  and their range width equals the stored length within 1e-3 relative (283 within 1e-4; the
+  range is rounded outwards to whole UOR); the other 102 carry `0x1000` and 101 of their
+  ranges are the square origin ± L. Against the stored lengths the estimate is too long:
+  L / estimate is 0.6–0.9 (113, 97, 57 and 36 texts per tenth). The 501 texts that store 0
+  are all empty (no characters) with a 1 UOR wide range: they keep the estimate, 0, as the
+  range rule skips empty text. So no private text changes. Public: TreeText's 12,623 texts
+  store `0x80` (and carry `0x1000`); test_dgnv8 (ODA) stores none: its three unrotated
+  one-character texts take the range width (6,693 UOR, estimate 10,000), its rotated text
+  keeps the estimate. ODA's text range is 9,922 UOR high for a text height of 10,000, so it
+  is ODA's own glyph box: the rule's evidence is MicroStation's, and its value for ODA-written
+  text is unverified (their anchors do not depend on it: all four are left-top). A
+  range-derived length is written back as the stored `0x80` length; the anchor reads back
+  unchanged (`writer::tests::text`).
 - **Text nodes** → `Group { TextNode, origin }` with one `Text` per line (keeps per-line
   positions; `MText` would lose them).
 - **Ellipses / arcs**: `Circle`/`Arc` when the axes are equal, else `Ellipse` (major axis =
@@ -650,39 +716,63 @@ characters), and tag set definition strings are NUL-terminated.
 | Water | 66,053 elements (66,035 line strings, 18 lines), no warnings |
 | private sample | 7 graphic pages, 2,032 records (1,533 shapes, 418 tags, 49 ellipses, 24 line strings, 8 raster frames); 418/418 tags attached with resolved set and tag names; 8/8 rasters linked to a path; 370 levels; no Unknown entities |
 | private corpus rasters | 567 files, 2,029 frames: every frame placed from its matrix inside its own range with a pixel size, no `dgn.raster_outside_range` / `dgn.raster_range_placement` (`tests/private_corpus.rs`); a corpus seed takes a new attachment whose records have the corpus record signature and which reads back at the source attachment's placement |
+| private level colors and text lengths | every layer from a 240-byte entry has its palette color and raw fields (205,849 layers, 5,627 with a nonzero index); 854 by-level colored elements stay `ByLayer` with the sentinel; 303 stored text lengths equal the range width within 1e-3; no private text takes a range-derived length; written back into themselves, all 567 files give the same bytes with and without the layer colors (528 written, 39 fail alike) — `tests/private_corpus.rs` |
 | robustness | truncations and bit flips of every sample (`tests/robustness.rs`); mutations of the inflated pages repacked into new compound files (`src/fuzz_tests.rs`); V7 body stamping |
 
 ## Open questions
 
-1. **Level flags** (`0x28` of level entries) are not decoded; layers are reported
-   visible, unfrozen, unlocked, with the raw value in `dgn.level_flags`. Observed:
-   test_dgnv8 "Default" (used) `0x02600002`; TreeText and Water "Default" (unused)
-   `0x026F0002` and the used level `0x02670002`; private sample: `0x026F0006` on all 370
-   levels (122 used, 248 unused) — so no bit separates any observable state there.
-   104-byte entries (public files) have `u32` 1 at `0x3C`, `0x4C`, `0x5C` on the used
-   level and 0 on "Default"; in the 240-byte entries (private) `0x5C` is the level code
-   (see the level entry rows above), not the elements' color. Level symbology offsets are
-   therefore unknown.
+1. **Level flags and level symbology.** Flags (`0x28` of level entries) are not decoded;
+   layers are reported visible, unfrozen, unlocked, with the raw value in
+   `dgn.level_flags`. Observed: test_dgnv8 "Default" (used) `0x02600002`; TreeText and Water
+   "Default" (unused) `0x026F0002` and the used level `0x02670002`; private corpus (202,506
+   distinct level ids): `0x026F0006` (202,185), `0x02670006` (315), `0x02600006` (4),
+   `0x03600006` (2), and bit `0x00080000` is set on 99.75 % of the used and 99.90 % of the
+   unused levels — no bit separates an observable state. Symbology: the color index of
+   240-byte entries is located (`0x48`, [Level entry symbology](#level-entry-symbology));
+   weight (`0x44`) and style (`0x40`) are weak and kept raw; the fields of 104-byte entries
+   (ODA) are not located. Settled by: a file saved with a level switched off, frozen or locked
+   next to the same file before; a file with a level whose weight and style are set to known
+   nonzero values and elements that use them by level; an ODA-written file with a colored
+   level.
 2. **B-spline "closed"**: both test_dgnv8 curves have `0x6C = 0x22` (bit `0x80` clear) and
    `0x6D = 0x01`, yet the oracle strokes them as periodic. cadkit treats bit 0 of `0x6D`
-   as "closed" in V8; a sample with an open non-uniform curve would settle this.
-3. **Extended colors** (index > 255): RGB source not found in the file.
+   as "closed" in V8. The private corpus has no B-spline. Settled by: a sample with an open
+   non-uniform curve (and a closed one).
+3. **Extended colors** (index > 255): the RGB is not located. One element in all corpora
+   (a test_dgnv8 text, index 256); the oracle gives it two different RGBs in two exports and
+   neither byte triple occurs in any raw or inflated stream of the file; the private corpus
+   has none. Settled by: a file with extended colors whose RGB values are known.
 4. **Sheet models**: no public sample with a sheet model was found, and every sample has
-   one design model, so no field can be tied to design/sheet. Every model is reported as
+   one design model (567 private files: one model each, model index flags 0 in all 570 V8
+   files), so no field can be tied to design/sheet. Every model is reported as
    `ModelKind::Model` (`dgn.model_index_flags`, `dgn.model_type_word` kept); 2D/3D comes
-   from bit `0x00800000` of the model header type word.
+   from bit `0x00800000` of the model header type word (observed values under "Model
+   header"). Settled by: a file with a sheet model next to a design model.
 5. **Storage vs master unit**: `0xE0` is used as UOR per master (matches the oracle);
-   `0xE8`/`0xF0` might be a storage unit definition — irrelevant while both are 1/1.
-6. **Type 33 dimensions, 36 multi-lines, 26/28 V8 knots and weights, 18/19 bodies**: no
-   samples; left Unknown / unverified.
+   `0xE8`/`0xF0` might be a storage unit definition — irrelevant while both are 1/1, as in
+   all 570 V8 files. Settled by: a file whose storage unit differs from its master unit.
+6. **Type 33 dimensions, 36 multi-lines, 26/28 V8 knots and weights, 18/19 bodies**: left
+   Unknown / unverified. The private graphic pages hold only types 2, 3, 4, 6, 14, 15, 17, 37
+   and 94, all decoded. Type 36 has one degenerate public sample (one point, see the element
+   table). Settled by: files with dimensions, multi-lines, non-uniform or rational B-splines
+   and 18/19 headers.
 7. **V7 tag targets**: not attached. GDAL dgnlib reads only the set number (68), tag number
    (72), type (74), length (150) and value (154) of a tag element and has no reader or
-   writer code for the tag-to-element association; no public V7 sample contains tags.
-8. **Hidden flag** `0x0080`: on tags inferred from one file (TreeText); on other graphics
-   taken from issue #25 (not observed in any corpus file). V7's bit `0x0080` stays
-   uninterpreted.
-9. **Text length estimate**: V7 rotated text and V8 text without a stored length use
-   `characters × character width`, which is exact only for fixed-pitch fonts.
+   writer code for the tag-to-element association; no public V7 sample contains tags and the
+   private corpus has no V7 file. Settled by: a V7 file with tags attached to elements.
+8. **Hidden flag** `0x0080`: on tags inferred from one file (TreeText, 13,808 tags with an
+   empty range); on other graphics taken from issue #25 (reported externally with counts; no
+   record outside TreeText's tags carries the bit in the public or private corpus). V7's bit
+   `0x0080` stays uninterpreted. Settled by: a file with a hidden graphic element that is not
+   a tag.
+9. **Text length estimate**: V7 rotated text and V8 text without a stored length and without
+   a usable range (rotated, bit `0x1000`, range not at the origin) use `characters ×
+   character width`, which is exact only for fixed-pitch fonts (MicroStation's stored
+   lengths are 0.6–0.9 of it). No such non-empty V8 text occurs in the corpora. The
+   range rule rests on MicroStation texts; for ODA-written text (test_dgnv8) the range is a
+   glyph box and its width is not verified as the length. Settled by: a rotated V8 text
+   without a stored length, and an ODA-written text whose MicroStation re-save stores a
+   length.
 10. **Raster extent** (resolved in 0.3.1): `0x108`/`0x110` hold the edge lengths along
     the image axes (width·|a|, height·|b|). 0.3.0 read them as an XY extent from the
     translation, which matched only exactly unrotated frames; 1,635 of the 1,742 frames
@@ -702,6 +792,16 @@ characters), and tag set definition strings are NUL-terminated.
 14. **Model header prefix dwords** `+4` and `+8`: non-zero in every private file and in
     TreeText, meaning unknown; the writer keeps the seed's values. The first dword's
     relation to the page count is an observation (see "Model header").
+15. **Repeated level ids**: 3,343 private level entries repeat the id of an entry of an
+    earlier level table (see "Second level table"), and 1,885 of them have a different
+    `0x48` color. The reader names
+    an element's layer after the later entry (and gives it that entry's color), the writer
+    keeps the first definition; which entry MicroStation shows is not known. Settled by: a
+    file where the two definitions differ, with MicroStation's display of an element on that
+    id.
+16. **Property bits** `0x0200`, `0x0400`, `0x1000`, `0x4000`: kept raw, meaning unknown
+    (counts under "Property word"). Settled by: files saved before and after the
+    corresponding edit (new / modified element, fill, …).
 
 ## Seed-based V8 writer
 
@@ -898,8 +998,9 @@ ACI/RGB colors are matched exactly against the seed's palette (`palette::exact_i
 lowest matching index; `V8Seed::prepare_document` maps off-palette colors with
 `palette::nearest_index`, squared RGB distance, lowest index on a tie). An unavailable
 color fails unless the caller explicitly provides `dgn.color_index`. ByLayer
-color uses a supplied neutral layer color or seed palette index zero when no
-explicit color exists. This materializes the color, not a live inheritance rule.
+color uses the layer's `dgn.color_index` (0–255), else a supplied neutral layer color
+(exact palette match), or seed palette index zero when no explicit color exists. This
+materializes the color, not a live inheritance rule.
 ByBlock requires prior resolution. Native lineweight indexes must be in `0..31`;
 an entity's explicit `dgn.weight` takes precedence over the neutral layer's
 `dgn.weight`. A millimetre-only weight has no universal DGN index mapping and
@@ -916,6 +1017,22 @@ the numbers in `dgn.color_index` / `dgn.weight` / `dgn.style`. An element's (or 
 Before, the writer rejected such a document ("extended DGN color table entries"): 51 of the
 54 private files could not be written back into themselves; now 52 of 54 can (the other
 two fail on unrelated content: an unknown element and a non-zero Z in a 2D model).
+
+**Level colors** (Unreleased). Layers read from 240-byte level entries carry the level color
+(`Layer.color` and `dgn.color_index`, [Level entry symbology](#level-entry-symbology)). A
+`ByLayer` entity without its own `dgn.color_index` is written with the layer's
+`dgn.color_index` first, as it takes the layer's `dgn.weight`; before, only the layer's
+color was matched exactly against the seed palette, which fails for a seed without that RGB
+and picks the lowest of repeated palette entries. Elements read from a file carry their own
+index (the sentinel included), so a document read and written back gives the same bytes as
+before: all 570 private and public V8 files written into themselves produced unchanged output
+(528 private and 2 public written, 40 failing as before), and `prepare_document` outputs
+changed only for test_dgnv8 (its range-derived text lengths, "Mapping decisions"). A new `ByLayer`
+entity placed on a colored level is now written with that level's index instead of 0 (in a
+sweep adding one line to the first level of each private file, 121 of 528 outputs changed).
+The writer does not write `Layer.color` into level entries: a new level copies the seed's
+first level entry, its `0x40`–`0x4C` fields included, and reads back with that entry's
+color.
 
 **Fonts.** Nonzero font indexes must be in the seed's font table or actually referenced by
 seed Text/TextNode records; font zero is the default when a text names neither a style nor
