@@ -46,7 +46,9 @@ WASM viewer uses SVG and does not expose these Rust renderers.
 The host application supplies a neutral `Document`, a compatible DGN V8 seed, and
 `dgn::WriteOptions` to `cadkit::to_dgn`. Bindings expose the same operation; the
 JSON options accept `preserve_seed_rasters` without a separate C ABI function.
-Units, dimension, palette, and font tables must match the seed. A production seed
+Units, dimension, palette, and font tables must match the seed
+(`V8Seed::prepare_document` converts units, promotes a 2D document to a 3D seed and maps
+symbology when asked). A production seed
 should be an approved blank template rather than an arbitrary client drawing.
 
 ### Obtaining a seed
@@ -90,8 +92,8 @@ paths, as DGN raster attachments reference external files rather than embedding 
 
 A host needs no compound-file or page code of its own to check or prepare a write:
 
-- `dgn::check_structure(bytes, &ReadOptions)` returns a `StructureReport` of any V8 file (also
-  `cadkit check-dgn file.dgn`): sibling tree order and shape, unused directory slots, the
+- `dgn::check_structure(bytes, &ReadOptions)` returns a `StructureReport` of any V8 file (Rust
+  and `cadkit check-dgn file.dgn`; the Python, WASM and C bindings do not expose it): sibling tree order and shape, unused directory slots, the
   writer's slot order, page headers, record times, split dictionary pages and the model
   header's page count, with stable warning codes. Every `write_v8` / `repack_v8` output is
   checked to report no warning when the write has a time (`WriteOptions::timestamp_ms` or the
@@ -185,7 +187,9 @@ XSD checks; the receiving TKGM system remains the final acceptance authority.
 Local write/read comparisons, independent CFB opening and official XSD checks
 are necessary checks. They do not establish recipient acceptance. Release gates
 also need files created by the consuming application, inspection in the target
-CAD application, save/reopen checks, and validation by the receiving system.
+CAD application, save/reopen checks, and validation by the receiving system. For DGN,
+[dgn/ACCEPTANCE.md](dgn/ACCEPTANCE.md) is the protocol for such a pass with a generated kit
+of synthetic files; none has been recorded yet.
 See [implementation status](INTERCHANGE_STATUS.md) and the
 [DGN](dgn/FORMAT_NOTES.md) / [CityGML](gml/FORMAT_NOTES.md) contracts for current
 coverage and unresolved cases.

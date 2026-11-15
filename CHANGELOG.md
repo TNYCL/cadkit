@@ -8,24 +8,6 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
-- `Attribute::color` and `Attribute::lineweight` (optional, with `with_color` /
-  `with_lineweight`): the attribute record's own symbology when it differs from the
-  owning entity's; `None` means the owner's. The DGN reader resolves a tag element's
-  color through the file color table (or the default palette) and its weight as it does
-  for entities, keeping `dgn.color_index` / `dgn.weight`; the SVG renderer draws a
-  displayed attribute in its own color; the DGN writer uses them when the attribute has
-  no explicit `dgn.color_index` / `dgn.weight` (the explicit index still wins; a typed
-  color must exist in the seed palette, as for entities). Both fields are omitted from
-  JSON when unset, so `schema_version` stays 1 and older JSON reads unchanged
-  (#30).
-- DGN type 11 curves carry their end conditions as `dgn.curve_start_tangent` /
-  `dgn.curve_end_tangent` (GDAL dgnlib's slope at the first and last fit points, not
-  normalised); the DXF writer emits them, normalised, as SPLINE groups 12/13 of fit-point
-  splines (#28).
-- `cadkit_dgn::native::TagData::display_rotation` interprets the orientation doubles of
-  a tag element by its 3D flag.
-- Warning `dgn.complex_count`: a complex chain or shape declared more components than it
-  stores and was closed by the next chain or shape header.
 - `cadkit_dgn::check_structure` (also `native::structure`, and `cadkit::dgn::check_structure`
   through the facade) returns a `StructureReport` of a DGN V8 file without the `write`
   feature: sibling trees that are ordered red-black trees and that have the writer's
@@ -34,21 +16,7 @@ All notable changes are recorded here. The format follows
   dictionary pages, with the stable warning codes `dgn.cfb_tree_unordered`,
   `dgn.cfb_tree_unbalanced`, `dgn.cfb_free_entry`, `dgn.record_time`,
   `dgn.dictionary_page_split` and `dgn.model_page_counter`. CLI: `cadkit check-dgn file.dgn`
-  prints it as JSON (exit 1 when it has warnings).
-- `cadkit_dgn::palette::exact_index` (the writer's palette match) and `nearest_index` (the
-  match `V8Seed::prepare_document` uses for off-palette colors).
-- DGN V8 layers read from 240-byte level entries (MicroStation 8.11) carry the level color:
-  `Layer.color` is the file palette color of the entry's color index (`0x48`), kept in the
-  layer's `dgn.color_index`; the two fields that presumably hold the level's weight (`0x44`)
-  and style (`0x40`) are kept raw in `dgn.level_weight_raw` / `dgn.level_style_raw` and set
-  no lineweight or linetype. Layers from 104-byte entries are unchanged. Evidence: 807 of 853
-  by-level colored elements of the private corpus sit on the 2.7 % of levels with a nonzero
-  index.
-- `dgn.text_length_source = "range"` on DGN text whose length comes from its element range
-  (V7, and V8 as below).
-- `V8Seed::font_entries` (the seed's font table in stored order, repeated names included)
-  and `V8Seed::font_number` (exact name, then trimmed ASCII case-insensitive; absent and
-  ambiguous names are distinct `Unsupported` errors).
+  prints it as JSON (exit 1 when it has warnings). Not exposed in Python, WASM or C.
 - `cadkit_dgn::strip_seed_v8` (facade `cadkit::strip_dgn_seed`) copies a single-model DGN V8
   seed without the drawing content of its model and without the document properties that
   name people or organisations, for use as the seed of `write_v8`: graphic records and
@@ -74,47 +42,95 @@ All notable changes are recorded here. The format follows
   `cadkit_dgn_strip_seed` (seed bytes via `cadkit_bytes_free`, report JSON via
   `cadkit_string_free`) and C++ `cadkit::strip_dgn_seed`. No stripped seed has been opened
   in another application.
+- `Attribute::color` and `Attribute::lineweight` (optional, with `with_color` /
+  `with_lineweight`): the attribute record's own symbology when it differs from the
+  owning entity's; `None` means the owner's. The DGN reader resolves a tag element's
+  color through the file color table (or the default palette) and its weight as it does
+  for entities, keeping `dgn.color_index` / `dgn.weight`; the SVG renderer draws a
+  displayed attribute in its own color; the DGN writer uses them when the attribute has
+  no explicit `dgn.color_index` / `dgn.weight` (the explicit index still wins; a typed
+  color must exist in the seed palette, as for entities). Both fields are omitted from
+  JSON when unset, so `schema_version` stays 1 and older JSON reads unchanged (#30).
+- DGN type 11 curves carry their end conditions as `dgn.curve_start_tangent` /
+  `dgn.curve_end_tangent` (GDAL dgnlib's slope at the first and last fit points, not
+  normalised); the DXF writer emits them, normalised, as SPLINE groups 12/13 of fit-point
+  splines (#28).
+- `cadkit_dgn::native::TagData::display_rotation` interprets the orientation doubles of
+  a tag element by its 3D flag.
+- Warning `dgn.complex_count`: a complex chain or shape declared more components than it
+  stores and was closed by the next chain or shape header (#27).
+- `cadkit_dgn::palette::exact_index` (the writer's palette match) and `nearest_index` (the
+  match `V8Seed::prepare_document` uses for off-palette colors).
+- `V8Seed::font_entries` (the seed's font table in stored order, repeated names included)
+  and `V8Seed::font_number` (exact name, then trimmed ASCII case-insensitive; absent and
+  ambiguous names are distinct `Unsupported` errors).
+- `dgn.text_length_source = "range"` on DGN text whose length comes from its element range
+  (V7, and V8 as under Changed).
+- `dgn.level_weight_raw` / `dgn.level_style_raw` on layers read from 240-byte level entries:
+  the two fields that presumably hold the level's weight (`0x44`) and style (`0x40`), kept
+  raw; they set no lineweight or linetype.
+- DGN acceptance kit: `cargo run -p cadkit --example interchange -- SEED [DIR]` writes small
+  synthetic DGN V8 files into a public seed (repacked and stripped seed, every supported
+  geometry kind on new levels, justified, Turkish UTF-16 and windows-1254 and rotated text,
+  a tag set with displayed, rotated and hidden tags, a hidden element, a 2D document in a 3D
+  seed, large coordinates, a new raster attachment with a synthetic 1-bit TIFF beside it, a
+  chained write, ByLayer colour), each read back and compared, checked with
+  `check_structure` and opened with `cfb` in strict mode before it is written, plus
+  `MANIFEST.json` and `README.md`. `docs/dgn/ACCEPTANCE.md` is the protocol for opening
+  them in another application; no external acceptance is claimed. The example replaces the
+  former three-file output (`01-repacked.dgn`, `02-new-geometry.dgn`,
+  `03-moved-and-tagged.dgn`); `synthetic.gml` stays.
+- `docs/dgn/FORMAT_NOTES.md` ("Built-in blank seed") and `tests/blank_seed_evidence.rs`
+  record why cadkit ships no built-in blank seed: `Dgn~H` and `Dgn~Mh` hold undecoded
+  fields whose values differ between the public writers.
 
 ### Changed
 
-- **DGN flat ellipses and arcs** (smaller semi-axis at most 1e-9 of the larger one) are
-  read as `Line` (the segment the sweep covers along the non-zero axis) or `Point` (both
-  axes zero) instead of `Ellipse { ratio: 0 }`, which broke the documented `(0, 1]`
-  range. The element data stays in `dgn.degenerate_ellipse`, `dgn.primary_axis`,
+- DGN flat ellipses and arcs (smaller semi-axis at most 1e-9 of the larger one) are read as
+  `Line` (the segment the sweep covers along the non-zero axis) or `Point` (both axes
+  zero) instead of `Ellipse { ratio: 0 }`, which broke the documented `(0, 1]` range. The
+  element data stays in `dgn.degenerate_ellipse`, `dgn.primary_axis`,
   `dgn.secondary_axis`, `dgn.center`, `dgn.start_angle`, `dgn.sweep_angle` and
   `dgn.rotation` / `dgn.quaternion`; the DGN writer writes such an entity back as a line
   (#24).
-- **DGN V8 graphic elements with property bit `0x0080`** (hidden) are read with
-  `Entity::visible = false` instead of `true`; the raw word stays in `dgn.properties`.
-  V7 elements are unchanged. Written tags take their hidden bit from
-  `Attribute::invisible` only, so a displayed tag of a hidden entity stays displayed (#25).
+- DGN V8 graphic elements with property bit `0x0080` (hidden) are read with
+  `Entity::visible = false` instead of `true`; the raw word stays in `dgn.properties`. V7
+  elements are unchanged. Written tags take their hidden bit from `Attribute::invisible`
+  only, so a displayed tag of a hidden entity stays displayed (#25).
 - A complex chain or shape header that follows an unfinished chain or shape closes it
-  instead of becoming its component, so chains in cells no longer nest into each other
-  when a writer declares more components than it stores (#27).
-- **Bytes of every DGN file `write_v8` writes change**: the first dword of the model header
+  instead of becoming its component, so chains in cells no longer nest into each other when
+  a writer declares more components than it stores (#27).
+- The bytes of every DGN file `write_v8` writes change: the first dword of the model header
   stream prefix (`Dgn~Mh`) is the number of graphic and control pages the output holds with
   records, the relation observed in 552 of 567 private and 3 of 3 public V8 files (it was
   the seed's value); a page without records is its 16-byte header (no empty zlib stream).
   `write_v8` and `repack_v8` write unused directory slots in the MS-CFB 2.6.3 free form
   (the `cfb` crate's form had a name length of 2). Slot order and the page headers of
   unchanged seed pages are unchanged.
-- A text style naming a font that the seed's font table stores with two different numbers
-  is rejected ("text font style is ambiguous in seed") unless `dgn.font_number` picks one;
-  before, the last entry won silently. `prepare_document` drops such a style like an
-  unknown one.
-- A non-integer `dgn.style` is rejected instead of being ignored.
-- **DGN V8 text without a stored length** (`0x80` zero) takes its length from the element
-  range when it is unrotated, not empty, has property bit `0x1000` clear and its range starts
-  at the origin (as V7 text already did), instead of `characters × character width`; it is no
-  longer marked `dgn.text_length_estimated`. MicroStation's stored lengths equal the range
-  width within 1e-3 on 303 of 303 such texts of the private corpus; the change affects
-  test_dgnv8's three ODA texts (no private text: the unmeasured ones are empty), and a
-  rewrite stores the range-derived length.
 - The DGN writer gives a `ByLayer` entity without its own `dgn.color_index` the layer's
   `dgn.color_index` (0–255) before trying the layer color, as it does for `dgn.weight`.
   Documents read from a file write the same bytes as before (their elements carry their own
   index); a new `ByLayer` entity on a colored level is written with that level's index
   instead of 0, also into a seed whose palette lacks the layer's RGB.
+- DGN V8 layers read from 240-byte level entries (MicroStation 8.11) carry the level color:
+  `Layer.color` is the file palette color of the entry's color index (`0x48`), kept in the
+  layer's `dgn.color_index` (before, `Layer.color` stayed `ByLayer`), so `ByLayer` entities on
+  them resolve to it (`Entity::resolved_color`, SVG). Layers from 104-byte entries are
+  unchanged. Evidence: 807 of 853 by-level colored elements of the private corpus sit on the
+  2.7 % of levels with a nonzero index.
+- DGN V8 text without a stored length (`0x80` zero) takes its length from the element range
+  when it is unrotated, not empty, has property bit `0x1000` clear and its range starts at
+  the origin (as V7 text already did), instead of `characters × character width`; it is no
+  longer marked `dgn.text_length_estimated`. MicroStation's stored lengths equal the range
+  width within 1e-3 on 303 of 303 such texts of the private corpus; the change affects
+  test_dgnv8's three ODA texts (no private text: the unmeasured ones are empty), and a
+  rewrite stores the range-derived length.
+- A text style naming a font that the seed's font table stores with two different numbers
+  is rejected ("text font style is ambiguous in seed") unless `dgn.font_number` picks one;
+  before, the last entry won silently. The writer now knows the numbers of every entry of a
+  repeated name, not only the last. `prepare_document` drops such a style like an unknown
+  one.
+- A non-integer `dgn.style` is rejected instead of being ignored.
 
 ### Fixed
 
@@ -125,7 +141,6 @@ All notable changes are recorded here. The format follows
 - DGN 2D tag elements store their display rotation as an angle at `0x100`; it was read
   as a quaternion, so `[π, 0, 0, 0]` came out unrotated. 3D tags keep the quaternion, and
   the writer now stores an angle for tags written into a 2D seed (#29).
-
 - Documents read from DGN files whose elements take color or weight from their level
   (`dgn.color_index` / `dgn.weight` `0xFFFFFFFF`, style `0x7FFFFFFF`) are written back with
   those values instead of failing with "extended DGN color table entries" or a weight
@@ -134,7 +149,6 @@ All notable changes are recorded here. The format follows
 - Mesh faces written by `write_v8` inherit the mesh's line style, lineweight, visibility and
   `dgn.style` / `dgn.weight` / `dgn.color_index`, as polygon rings do (they kept level
   and color only).
-- Font numbers of a repeated font table name are known to the writer, not only the last.
 - The writer's raw CFB directory walk stops at the header's FAT sector count and at a
   repeated DIFAT sector.
 - `write_v8` on a version 4 seed (4096-byte sectors) no longer corrupts the FAT. The

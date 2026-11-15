@@ -722,6 +722,10 @@ characters), and tag set definition strings are NUL-terminated.
 
 ## Open questions
 
+An external pass with the acceptance kit settles several of these for the application
+used; [ACCEPTANCE.md](ACCEPTANCE.md#7-open-questions-this-pass-can-settle) lists which and
+the observation each needs.
+
 1. **Level flags and level symbology.** Flags (`0x28` of level entries) are not decoded;
    layers are reported visible, unfrozen, unlocked, with the raw value in
    `dgn.level_flags`. Observed: test_dgnv8 "Default" (used) `0x02600002`; TreeText and Water
@@ -819,8 +823,9 @@ characters), and tag set definition strings are NUL-terminated.
 
 `write_v8(Document, seed, WriteOptions)` constructs new model graphics in a
 single-model seed. Source dimension and known master units must match the seed.
-A plan may occupy a 3D model; the writer never silently changes the seed dimension
-or drops Z. Nonempty seeds require `clear_seed_model=true` explicitly.
+A 2D plan reaches a 3D seed through `V8Seed::prepare_document`
+(`DimensionPolicy::Promote2dTo3d`, the default; acceptance kit file 09); `write_v8` itself
+never changes the seed dimension or drops Z. Nonempty seeds require `clear_seed_model=true` explicitly.
 `repack_v8` reconstructs the CFB container without changing stream contents.
 Neither API edits the input buffer or file.
 
@@ -840,8 +845,9 @@ all matrix-to-quaternion branches, text angles, ellipse axes and tilted normals;
 2D angle encoding is unchanged.
 
 The writer uses the MIT `cfb` 0.14 crate for CFB sector allocation and directory
-construction. Existing streams and directory metadata are copied unless replaced
-or explicitly removed. Fresh entry times derive from the seed root, making
+construction. Existing streams and directory metadata (CLSIDs, state bits, times) are copied unless
+replaced or explicitly removed; the directory itself is rebuilt (slot order, sibling trees
+and unused slots, "Compound file"). Fresh entry times derive from the seed root, making
 repeated output deterministic. Model graphic/control/auxiliary pages are replaced;
 named tables are retained and extended. Unknown seed streams are preserved, not
 interpreted or certified as free of references to cleared graphics.
@@ -1210,7 +1216,7 @@ kept 176 attachments).
 
 Open: which removed parts a receiving application needs (the model settings records 66 and
 100, the locale property, the dropped empty storages) is unknown until a stripped seed is
-opened, filled and saved there; the contents of `Dgn~S`, `Dgn~Mf`, the model index entry
+opened, filled and saved there (acceptance kit files 02 and 03, [ACCEPTANCE.md](ACCEPTANCE.md)); the contents of `Dgn~S`, `Dgn~Mf`, the model index entry
 tail and the undecoded tables are kept unread and may identify the source.
 
 ### Built-in blank seed (not built)
@@ -1301,25 +1307,28 @@ Synthetic tests cover 2D/3D models, Unicode and CP1254 tags/text, tag dependenci
 palette mapping, holes, wrapped arc angles, limits and truncated seeds. Public
 GDAL `test_dgnv8.dgn` is tested for repack preservation, new geometry, deterministic
 output and independent `cfb::CompoundFile::open_strict`. Existing public CSV
-reader-oracle tests remain separate. Private seeds are checked in memory when
-`CADKIT_PRIVATE_DGN` is supplied; they are not copied into fixtures or outputs.
+reader-oracle tests remain separate. The private corpus tests (`tests/private_*.rs`,
+`tests/structure.rs`, `tests/strip_seed.rs`) run when `corpus/private` is present, and one
+writer test checks a private seed in memory when `CADKIT_PRIVATE_DGN` names one; neither
+copies anything into fixtures or outputs.
 
 These tests establish local container/reader agreement. They do not establish
 MicroStation or CityMax acceptance, unknown-field correctness for all V8 files,
 or byte-identical regeneration of vendor-written elements.
 
-The reproducible public/synthetic acceptance kit is generated with:
+The acceptance kit (public seed, invented content; [ACCEPTANCE.md](ACCEPTANCE.md) lists its
+14 DGN files and the checks for each) is generated and verified with:
 
 ```sh
 python3 scripts/buildlock.py cargo run -p cadkit --example interchange -- \
   corpus/public/gdal/test_dgnv8.dgn target/interchange-validation
-cadkit repack-dgn public-input.dgn repacked.dgn
-cadkit convert geometry.dxf output.dgn --seed blank.dgn
 ```
 
-Before claiming external acceptance, open the repacked file, check new and moved
-geometry/levels, check attached tags, then save and reopen in the target software.
-No external test environment is currently available. No compatibility
-certification is claimed. The `dgn_write` fuzz target also exercises reading,
+Every kit file reads back equal to what was written, reports no `check_structure` warning
+and opens with `cfb::CompoundFile::open_strict`; `crates/cadkit/tests/acceptance_kit.rs`
+also requires byte-identical regeneration. Before claiming external acceptance, follow
+[ACCEPTANCE.md](ACCEPTANCE.md): open every kit file, record the checks, save in the
+application and compare the saved copies with cadkit. No external test environment is
+currently available. No compatibility certification is claimed. The `dgn_write` fuzz target also exercises reading,
 seed-based writing and repacking under reduced resource limits; short
 coverage-instrumented AddressSanitizer runs complement the deterministic tests.

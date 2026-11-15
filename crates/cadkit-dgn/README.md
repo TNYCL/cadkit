@@ -20,7 +20,9 @@ tables byte for byte and reporting the names that remain (the result is not anon
 The `write` Cargo feature is enabled by default; disable default features for reading only.
 
 There is no DGN V7 writer. V8 output covers the documented geometry/tag/raster subset;
-full format coverage and external application acceptance remain open. See the
+full format coverage and external application acceptance remain open (the
+[acceptance protocol](https://github.com/TNYCL/cadkit/blob/main/docs/dgn/ACCEPTANCE.md) has not
+been run yet). See the
 [writer contract](https://github.com/TNYCL/cadkit/blob/main/docs/dgn/FORMAT_NOTES.md#seed-based-v8-writer)
 and [host integration guide](https://github.com/TNYCL/cadkit/blob/main/docs/CADKIT_INTEGRATION.md#dgn-export).
 

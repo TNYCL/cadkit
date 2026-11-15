@@ -14,6 +14,8 @@ knowledge. Contributors add a row when they rely on a new source.
 | [ezdxf](https://github.com/mozman/ezdxf) | MIT | DXF structure cross-check; dev-time validator (audit) of written DXF and reader comparison — not a runtime dependency |
 | Autodesk DXF Reference (public documentation) | Public document | DXF group codes per entity |
 | [MS-CFB] Compound File Binary File Format and [MS-OLEPS] Object Linking and Embedding (OLE) Property Set Data Structures (public Microsoft open specifications, learn.microsoft.com) | Open specification | CFB container; directory entry layout and stream entry times (2.6.1), free entry form (2.6.3 "Other Directory Entries"), sibling tree order and colours (2.6.4 "Red-Black Tree"); property set streams: `PropertySetStream` (2.21), `PropertySet` (2.20), `TypedPropertyValue` (2.15), `UnicodeString` (2.7), `FILETIME`, the Summary Information and Document Summary Information property sets and their property ids |
+| Adobe, *TIFF Revision 6.0* (public specification, 1992), Part 1 "Baseline TIFF" | Public document | The synthetic 1-bit image of the DGN acceptance kit (`crates/cadkit/examples/support/acceptance_kit.rs`): header, IFD entry layout, bilevel tags; not used by any library crate |
+| Public issue reports [#24–#30](https://github.com/TNYCL/cadkit/issues) | — | DGN reader corrections (structural descriptions only; see "Attributions") |
 | Own hex analysis of public and private corpus files | — | All formats |
 
 ## Excluded sources
@@ -62,7 +64,9 @@ Private client drawings in `corpus/private/` are used only for local, structural
   Rust 1.85; this geometry addition does not change the XML dependency.
 - [rust-cfb / cfb 0.14](https://github.com/mdsteele/rust-cfb), MIT:
   pure Rust CFB writing and independent strict-container validation. Rust 1.74
-  minimum; WASM compilation was checked. No vendor SDK is used.
+  minimum; WASM compilation was checked. No vendor SDK is used. The `cadkit` facade uses
+  the same workspace version as a dev-dependency only, for the strict open of the
+  acceptance kit (example and its test).
 - DGN V8 record encoders follow cadkit's existing attributed native decoders and
   own public/private corpus analysis. The public GDAL V8 sample and its checked-in
   reference CSV are test data; no ODA SDK or V8 driver implementation was used.
@@ -112,7 +116,12 @@ Private client drawings in `corpus/private/` are used only for local, structural
   measurements behind it come from own analysis of private CityGML files.
 
 Private source files and derived drawing data are not copied into the repository,
-examples, schema cache or acceptance kit. The kit uses public and synthetic data.
+examples, schema cache or acceptance kit. The kit uses public and synthetic data: the
+DGN acceptance kit (`crates/cadkit/examples/interchange.rs`, `docs/dgn/ACCEPTANCE.md`)
+writes invented names, texts, tag values and coordinates into GDAL's public
+`test_dgnv8.dgn` (MIT/X); nothing in it is derived from the Safe Software samples or the
+private corpus. Its read-back comparison, structure check and TIFF writer are original
+code; no external implementation was consulted.
 External vendor application and receiving-system acceptance remain untested.
 
 ### Generic GML export and TKGM local preflight

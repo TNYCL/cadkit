@@ -1,90 +1,47 @@
-//! Generates synthetic DGN V8 and CityGML outputs from a public seed for independent acceptance checks.
+//! Writes the DGN acceptance kit: small synthetic DGN V8 files written into a public seed,
+//! each exercising one thing an external DGN application must confirm, with `MANIFEST.json`
+//! and `README.md`. Every file is verified with cadkit first; the protocol for the person
+//! opening them is `docs/dgn/ACCEPTANCE.md`.
+//!
+//! ```sh
+//! python3 scripts/buildlock.py cargo run -p cadkit --example interchange -- \
+//!   corpus/public/gdal/test_dgnv8.dgn [OUTPUT_DIRECTORY]
+//! ```
+//!
+//! The output directory defaults to `target/interchange-validation`.
 
-use cadkit::{Document, Entity, EntityKind, Model, Point3, ReadOptions, Value};
-use std::{io, path::PathBuf};
+#[path = "support/acceptance_kit.rs"]
+mod acceptance_kit;
+
+use std::{
+    io::{self, Write},
+    path::PathBuf,
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args_os().skip(1);
-    let seed_path = args
-        .next()
-        .ok_or_else(|| io::Error::other("usage: interchange SEED OUTPUT_DIRECTORY"))?;
-    let directory = PathBuf::from(
+    let seed_path = PathBuf::from(
         args.next()
-            .ok_or_else(|| io::Error::other("output directory is required"))?,
+            .ok_or_else(|| io::Error::other("usage: interchange SEED [OUTPUT_DIRECTORY]"))?,
     );
-    let seed = std::fs::read(seed_path)?;
-    let seed_doc = cadkit::read(&seed)?;
-    let model = seed_doc
-        .models
-        .first()
-        .ok_or_else(|| io::Error::other("seed has no model"))?;
-    let ring = vec![
-        Point3::xy(0., 0.),
-        Point3::xy(10., 0.),
-        Point3::xy(10., 10.),
-        Point3::xy(0., 10.),
-        Point3::xy(0., 0.),
-    ];
-    let mut outline = Entity::new(EntityKind::Polygon {
-        exterior: ring,
-        interiors: vec![vec![
-            Point3::xy(2., 2.),
-            Point3::xy(2., 3.),
-            Point3::xy(3., 3.),
-            Point3::xy(3., 2.),
-            Point3::xy(2., 2.),
-        ]],
-    });
-    outline.layer = Some("Synthetic surfaces".into());
-    let mut doc = {
-        let mut doc = Document::default();
-        doc.units = seed_doc.units;
-        doc
-    };
-    doc.models.push(
-        Model::default()
-            .with_is_3d(model.is_3d)
-            .with_entities(vec![outline]),
+    let directory = args.next().map_or_else(
+        || PathBuf::from("target/interchange-validation"),
+        PathBuf::from,
     );
-    let options = {
-        let mut options = cadkit::dgn::WriteOptions::default().with_clear_seed_model(true);
-        options.codepage = Some("windows-1254".into());
-        options
-    };
-    std::fs::create_dir_all(&directory)?;
-    std::fs::write(
-        directory.join("01-repacked.dgn"),
-        cadkit::dgn::repack_v8(&seed, &ReadOptions::default())?,
-    )?;
-    std::fs::write(
-        directory.join("02-new-geometry.dgn"),
-        cadkit::to_dgn(&doc, &seed, &options)?,
-    )?;
-    let gml = cadkit::to_citygml(
-        &doc,
-        &cadkit::gml::ExportOptions::new("https://example.invalid/crs/synthetic-local", 1)
-            .with_limits(cadkit::Limits::default()),
-    )?;
-    std::fs::write(directory.join("synthetic.gml"), gml)?;
-    if let Some(entity) = doc.models.first_mut().and_then(|m| m.entities.first_mut()) {
-        entity.attributes.push(
-            cadkit::Attribute::new("Açıklama", Value::Text("Sentetik ölçüm".into()))
-                .with_set("Örnek")
-                .with_invisible(true),
-        );
-        if let EntityKind::Polygon {
-            exterior,
-            interiors,
-        } = &mut entity.kind
-        {
-            for p in exterior.iter_mut().chain(interiors.iter_mut().flatten()) {
-                p.x += 5.;
-            }
-        }
+    let seed = std::fs::read(&seed_path)?;
+    let seed_name = seed_path
+        .file_name()
+        .map_or_else(|| "seed.dgn".into(), |n| n.to_string_lossy().into_owned());
+    let summary = acceptance_kit::generate(&seed, &seed_name, &directory)?;
+    let mut out = io::stdout().lock();
+    for f in &summary.files {
+        writeln!(out, "{:>9}  {}", f.bytes, directory.join(&f.name).display())?;
     }
-    std::fs::write(
-        directory.join("03-moved-and-tagged.dgn"),
-        cadkit::to_dgn(&doc, &seed, &options)?,
+    writeln!(
+        out,
+        "{} files written and verified with cadkit; no external acceptance is claimed \
+         (docs/dgn/ACCEPTANCE.md).",
+        summary.files.len()
     )?;
     Ok(())
 }

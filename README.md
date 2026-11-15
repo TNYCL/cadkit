@@ -76,7 +76,9 @@ see [obtaining a seed](docs/CADKIT_INTEGRATION.md#obtaining-a-seed)). New
 CityGML geometry needs an explicit CRS, and the writer has
 [explicit limits](docs/gml/FORMAT_NOTES.md).
 Local test evidence and the remaining external acceptance are recorded in
-[docs/INTERCHANGE_STATUS.md](docs/INTERCHANGE_STATUS.md). There is no DWG writer yet.
+[docs/INTERCHANGE_STATUS.md](docs/INTERCHANGE_STATUS.md); the protocol for checking DGN
+output in another application is [docs/dgn/ACCEPTANCE.md](docs/dgn/ACCEPTANCE.md). There is
+no DWG writer yet.
 
 Readers degrade instead of failing: records they cannot model become `Unknown` entities and
 warnings on the document. A reader may still return `Unsupported` for a file that uses

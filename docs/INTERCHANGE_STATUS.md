@@ -1,5 +1,9 @@
 # DGN V8 and CityGML implementation status
 
+Latest DGN record: [2026-11-15](#dgn-reader-structure-and-seed-follow-up-2026-11-15). No
+external application acceptance is claimed; the protocol for it is
+[docs/dgn/ACCEPTANCE.md](dgn/ACCEPTANCE.md).
+
 Local validation record: 2026-10-01. Automatic TKGM building-model generation from
 generic CAD geometry is out of scope for cadkit; host applications supply domain
 semantics explicitly. An optional local TKGM preflight requires an explicit
@@ -36,11 +40,69 @@ Those storeys have 90 common-area Room backreferences in aggregate. No ownership
 links were invented or source files changed. This review condition and unchecked
 contract-specific/online rules prevent a claim of universal TKGM acceptance.
 
+## DGN reader, structure and seed follow-up (2026-11-15)
+
+What changed (details in the CHANGELOG "Unreleased" section and
+[DGN format notes](dgn/FORMAT_NOTES.md)):
+
+- Reader corrections for issues #24–#30: flat ellipses read as lines or points, hidden V8
+  graphics (`0x0080`) read as not visible, a complex header closes an unfinished chain,
+  byte-order-marked UTF-16 names, type 11 curve end tangents, 2D tag angles, the tag
+  element's own color and weight (`Attribute::color` / `lineweight`).
+- `check_structure` / `cadkit check-dgn`: a structural report of the compound file directory
+  and the pages of any V8 file, with stable warning codes.
+- Writer fidelity: unused directory slots in the MS-CFB free form, the model header page
+  counter set to the pages holding records, empty pages as a bare header, level-sentinel
+  symbology written back as read, palette and font table helpers for hosts, a font name
+  stored twice is an error unless `dgn.font_number` decides, non-integer `dgn.style` is an
+  error. Every written file's bytes change.
+- Level colours from 240-byte level entries and range-derived V8 text lengths (reader);
+  `ByLayer` entities written with the layer's `dgn.color_index`.
+- `strip_seed_v8` with CLI, Python, WASM, C and C++ bindings; no built-in blank seed can be
+  built under the current provenance rules ("Built-in blank seed" in the format notes).
+- An acceptance kit generator (`crates/cadkit/examples/interchange.rs`) and the protocol
+  [docs/dgn/ACCEPTANCE.md](dgn/ACCEPTANCE.md).
+
+What the writer takes from the seed now: every stream it does not write is copied with its
+bytes, CLSID, state bits and times (unknown streams included, uninterpreted); unchanged
+dictionary pages keep their bytes; the file header keeps every field but the id high-water
+mark (`0x128`); the model header keeps every field but the extents and the first dword of
+its stream prefix (the page counter, which 0.5.2 copied). The directory is not copied: the
+writer rebuilds the slot order, the sibling trees and the unused slots.
+
+Local evidence, reproduced on 2026-11-15 on Linux with the default stable toolchain
+(Rust 1.99.0), the public corpus fetched by `scripts/fetch-corpus.py` and the private
+corpus present (its tests assert structural facts only):
+
+| Command (through `python3 scripts/buildlock.py`) | Result |
+|---|---|
+| `cargo test -p cadkit-core` | 108 passed, 0 failed |
+| `cargo test -p cadkit-dgn` | 185 passed, 0 failed (includes `tests/private_corpus.rs`, `private_dictionary.rs`, `strip_seed.rs`, `structure.rs`, `blank_seed_evidence.rs`) |
+| `cargo test -p cadkit-dxf` | 67 passed, 0 failed |
+| `cargo test -p cadkit` | 9 passed, 0 failed (includes `tests/acceptance_kit.rs`) |
+| `cargo test -p cadkit-cli` | 22 passed, 0 failed |
+| `cargo test -p cadkit-capi` | 19 passed, 0 failed |
+| `cargo run -p cadkit --example interchange -- corpus/public/gdal/test_dgnv8.dgn DIR` | 18 files: 14 DGN, the TIFF, the GML, the manifest pair; every DGN read back equal, `check_structure` clean, strict `cfb` open |
+
+The structural counts behind the changes (private corpus: 567 V8 files strip, 552 of 567
+fit the page counter relation, 52 of 54 level-sentinel files now write back, 303 of 303
+stored text lengths equal the range width) are recorded with their tests in the format
+notes. The public seed `test_dgnv8.dgn` reports `dgn.cfb_free_entry` (3 unused slots not in
+the free form); its repack and every kit file report no warning.
+
+Not tested externally: no output of this work (written files, repacks, stripped seeds, the
+acceptance kit) has been opened, edited or saved in MicroStation, CityMax or any other DGN
+application. The questions such a pass can settle are listed in
+[ACCEPTANCE.md](dgn/ACCEPTANCE.md#7-open-questions-this-pass-can-settle). The kit uses a 3D
+seed only; 2D-seed paths (2D tag angles, issue #29) have synthetic tests and no external
+check. Python and WASM runtime tests, wasm32 builds and the MSRV toolchain for the
+bindings were not re-run in this follow-up.
+
 ## Implemented contracts
 
 | Surface | Implemented behavior |
 |---|---|
-| DGN V8 | Seed-based new geometry export, named levels, tag sets and attached tags; separate stream-preserving CFB repacking |
+| DGN V8 | Seed-based new geometry export, named levels, tag sets and attached tags; separate stream-preserving CFB repacking; structural report (`check_structure`); seed stripping (`strip_seed_v8`) |
 | CityGML 2.0 | Native read/write preserving XML objects and relationships; typed object/polygon builders; structural and geometric diagnostics |
 | Neutral geometry | CityGML projection with LoD selection; new GenericCityObject export with an explicit CRS |
 | Public interfaces | Rust facade, CLI, Python, WASM, C ABI and C++ convenience methods |
@@ -226,10 +288,16 @@ aggregate structural results and never writes source or derived drawing files.
 
 No external test environment is currently available. MicroStation opening,
 CityMax tag interpretation/control and save/reopen acceptance remain **untested**.
-Local reader agreement and strict CFB validation do not establish these claims.
-Vendor-written element byte identity is not claimed.
+Local reader agreement, a clean `check_structure` report and strict CFB validation do
+not establish these claims. Vendor-written element byte identity is not claimed. The
+protocol for an external pass, its results table and the open questions it can settle
+are in [docs/dgn/ACCEPTANCE.md](dgn/ACCEPTANCE.md); until a pass is recorded there and
+here, no external acceptance is claimed.
 
-The DGN writer requires one seed model, matching dimensions and known units. It
+The DGN writer requires one seed model, matching dimensions and known units
+(`V8Seed::prepare_document` promotes a 2D document to a 3D seed). cadkit ships no seed;
+`strip_seed_v8` prepares one from a drawing whose tables may be handed on, and its result
+keeps the names in those tables. It
 supports the documented entity subset, not every neutral CAD entity. Unknown seed
 streams are retained and can contain opaque references. Unsupported geometry,
 unrepresentable colors/text and invalid options return errors instead of silently
@@ -248,22 +316,27 @@ cavity containment. Receiving-system/TKGM acceptance remains a separate test.
 
 ## Reproduction
 
-All build commands use the shared workspace build lock.
+All build commands use the shared workspace build lock; run them one at a time. The
+minimum supported Rust version is 1.88 (the 1.85 commands of the earlier records no
+longer apply).
 
 ```sh
-python3 scripts/buildlock.py cargo +1.85.0 test --locked \
-  -p cadkit-core -p cadkit -p cadkit-dgn -p cadkit-gml \
-  -p cadkit-dxf -p cadkit-cli -p cadkit-capi
-python3 scripts/buildlock.py cargo clippy --locked \
-  -p cadkit-core -p cadkit -p cadkit-dgn -p cadkit-gml \
-  -p cadkit-dxf -p cadkit-cli -p cadkit-capi -p cadkit-py -p cadkit-wasm \
-  --all-targets -- -D warnings
+python3 scripts/fetch-corpus.py
+for p in cadkit-core cadkit-dgn cadkit-gml cadkit-dxf cadkit cadkit-cli cadkit-capi; do
+  python3 scripts/buildlock.py cargo test -p "$p"
+  python3 scripts/buildlock.py cargo clippy -p "$p" --all-targets -- -D warnings
+done
+python3 scripts/buildlock.py cargo +1.88 check -p cadkit-core -p cadkit-dgn -p cadkit -p cadkit-cli
 python3 scripts/buildlock.py cargo run -p cadkit --example interchange -- \
   corpus/public/gdal/test_dgnv8.dgn target/interchange-validation
 python3 scripts/validate-citygml.py target/interchange-validation/synthetic.gml
 ```
 
-`target/interchange-validation` contains a repacked public DGN, new synthetic
-geometry, moved geometry with Turkish tags and a synthetic CityGML file. It
-contains no private drawing data. The three DGN files are ready for a future
-external opening, geometry/tag inspection and save/reopen test.
+`target/interchange-validation` is the acceptance kit: 14 small DGN V8 files written into
+the public GDAL seed (each exercising one thing, listed in
+[ACCEPTANCE.md](dgn/ACCEPTANCE.md#1-generate-the-kit)), the synthetic TIFF the raster file
+references, a synthetic CityGML file, and `MANIFEST.json` / `README.md` with the expected
+content and checks per file. Names, texts, tag values and coordinates are invented; it
+contains no private drawing data and nothing derived from the Safe Software samples. The
+generator fails when a file does not read back equal, reports a `check_structure` warning
+or fails a strict `cfb` open.
