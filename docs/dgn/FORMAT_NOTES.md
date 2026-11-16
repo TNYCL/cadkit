@@ -499,8 +499,26 @@ skipped (counted in `dgn.deleted_count`). Records without a display header and t
   `1 + 2w` pixels wide; 0.1 mm per pixel assumed); raw value in `dgn.weight`.
 - **Styles**: 0–7 → `DGN_SOLID`, `DGN_DOTTED`, `DGN_MEDIUM_DASH`, `DGN_LONG_DASH`,
   `DGN_DOT_DASH`, `DGN_SHORT_DASH`, `DGN_DASH_DOUBLE_DOT`, `DGN_LONG_DASH_SHORT_DASH`;
-  larger values `DGN_STYLE_n` (custom styles, no pattern); linetype entries have empty
-  patterns.
+  larger values `DGN_STYLE_n` (custom styles, no pattern). The file stores only the style
+  number. Styles 1–7 are cosmetic: their dashes have a fixed size on screen or paper,
+  whatever the drawing units are (issue #34: a sheet modelled in metres, about 0.5 units
+  wide, with frames in style 7). Their linetype entries therefore carry a nominal pattern
+  in paper millimetres, converted to drawing units with the document's `meters_per_unit`
+  (1 mm = 0.001 / `meters_per_unit` units), so `Linetype::pattern` stays in drawing units
+  like every other linetype; a file in metres gets `DGN_MEDIUM_DASH` = `[0.003, -0.0015]`.
+  Without a known unit (V7 master label not recognised, V8 model header without a unit
+  definition) the pattern is empty and the name and `dgn.style` identify the style. The
+  millimetre lengths are cadkit's own choice, not file data (dash, gap, …; 0 = dot):
+
+  | Style | Name | Paper pattern (mm) |
+  |---|---|---|
+  | 1 | `DGN_DOTTED` | 0, −1.5 |
+  | 2 | `DGN_MEDIUM_DASH` | 3, −1.5 |
+  | 3 | `DGN_LONG_DASH` | 6, −1.5 |
+  | 4 | `DGN_DOT_DASH` | 4.5, −1.5, 0, −1.5 |
+  | 5 | `DGN_SHORT_DASH` | 1.5, −1.5 |
+  | 6 | `DGN_DASH_DOUBLE_DOT` | 4.5, −1.5, 0, −1.5, 0, −1.5 |
+  | 7 | `DGN_LONG_DASH_SHORT_DASH` | 6, −1.5, 1.5, −1.5 |
 - **Text**: the stored origin is the **lower-left corner** of the text box for every
   justification. Evidence: GDAL dgnlib documents it ("Bottom left corner of text") and its
   writer computes text bounds from it; smalltest's center-center text has origin x = range

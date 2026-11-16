@@ -351,6 +351,21 @@ fn test_dgnv8_structure() {
             .iter()
             .any(|s| s.font.as_deref() == Some("Arial"))
     );
+    // Built-in line styles are cosmetic: paper millimetres in drawing units, and the
+    // master unit is the metre, so no dash or gap is longer than 6 mm (issue #34).
+    assert_eq!(doc.units.meters_per_unit, Some(1.0));
+    let dashed: Vec<_> = doc
+        .linetypes
+        .iter()
+        .filter(|l| !l.pattern.is_empty())
+        .collect();
+    assert!(!dashed.is_empty());
+    assert!(
+        dashed
+            .iter()
+            .all(|l| l.pattern.iter().all(|v| v.abs() <= 0.006 + 1e-12)),
+        "{dashed:?}"
+    );
     // The shared cell definition is a block with its ellipse.
     let block = doc
         .blocks

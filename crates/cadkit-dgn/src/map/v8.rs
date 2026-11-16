@@ -379,7 +379,7 @@ fn map_file(file: &V8File, options: &ReadOptions, enc: TextDecoder) -> Document 
         props.insert("dgn.sub_units_per_master".into(), Value::Float(mm / sm));
     }
     let text_styles = m.text_styles();
-    let linetypes = m.linetypes();
+    let linetypes = m.linetypes(doc_mpu);
     let mut warnings = file.warnings.clone();
     warnings.extend(m.finish_warnings());
     {

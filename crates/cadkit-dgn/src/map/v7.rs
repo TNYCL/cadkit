@@ -165,7 +165,7 @@ fn map_file(file: &V7View<'_>, options: &ReadOptions, enc: TextDecoder) -> Docum
         props.insert("dgn.tag_sets".into(), sets);
     }
     let text_styles = m.text_styles();
-    let linetypes = m.linetypes();
+    let linetypes = m.linetypes(units.meters_per_unit);
     warnings.extend(m.finish_warnings());
     {
         let mut doc = Document::default();

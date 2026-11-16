@@ -399,13 +399,22 @@ impl Mapper {
     }
 
     /// Linetype definitions for every style referenced.
-    pub(crate) fn linetypes(&self) -> Vec<Linetype> {
+    ///
+    /// `meters_per_unit` is the size of one drawing unit in meters. The built-in styles
+    /// `1..=7` are cosmetic (their dashes have a fixed size on screen or paper, whatever
+    /// the drawing units are), so their nominal paper pattern is converted into drawing
+    /// units here; without a known unit the pattern stays empty and the name and
+    /// `dgn.style` alone identify the style.
+    pub(crate) fn linetypes(&self, meters_per_unit: Option<f64>) -> Vec<Linetype> {
+        let units_per_mm = meters_per_unit
+            .map(|m| 0.001 / m)
+            .filter(|k| k.is_normal() && *k > 0.0);
         self.used_styles
             .iter()
             .map(|s| {
                 let mut props = Props::new();
                 props.insert("dgn.style".into(), Value::Int(i64::from(*s)));
-                Linetype::new(style_name(*s), style_pattern(*s)).with_props(props)
+                Linetype::new(style_name(*s), style_pattern(*s, units_per_mm)).with_props(props)
             })
             .collect()
     }
@@ -1113,18 +1122,34 @@ fn style_name(s: u32) -> String {
         .map_or_else(|| format!("DGN_STYLE_{s}"), |n| (*n).to_owned())
 }
 
-/// Dash-gap pattern (positive = dash, zero = dot, negative = gap) for built-in DGN
-/// line styles `1..=7`; style `0` (`DGN_SOLID`) and custom styles have an empty pattern.
-fn style_pattern(s: u32) -> Vec<f64> {
+/// Nominal dash-gap pattern in paper millimeters (positive = dash, zero = dot, negative =
+/// gap) for the built-in DGN line styles `1..=7`; style `0` (`DGN_SOLID`) and custom
+/// styles have none. The file stores only the style number: the lengths are cadkit's own
+/// choice for these cosmetic styles, not data read from the file.
+fn style_pattern_mm(s: u32) -> &'static [f64] {
     match s {
-        1 => vec![0.0, -1.5],
-        2 => vec![3.0, -1.5],
-        3 => vec![6.0, -1.5],
-        4 => vec![4.5, -1.5, 0.0, -1.5],
-        5 => vec![1.5, -1.5],
-        6 => vec![4.5, -1.5, 0.0, -1.5, 0.0, -1.5],
-        7 => vec![6.0, -1.5, 1.5, -1.5],
-        _ => Vec::new(),
+        1 => &[0.0, -1.5],
+        2 => &[3.0, -1.5],
+        3 => &[6.0, -1.5],
+        4 => &[4.5, -1.5, 0.0, -1.5],
+        5 => &[1.5, -1.5],
+        6 => &[4.5, -1.5, 0.0, -1.5, 0.0, -1.5],
+        7 => &[6.0, -1.5, 1.5, -1.5],
+        _ => &[],
+    }
+}
+
+/// [`style_pattern_mm`] in drawing units, `units_per_mm` being the number of drawing units
+/// in one paper millimeter; empty when that is unknown or a length would not be finite.
+fn style_pattern(s: u32, units_per_mm: Option<f64>) -> Vec<f64> {
+    let Some(k) = units_per_mm else {
+        return Vec::new();
+    };
+    let pattern: Vec<f64> = style_pattern_mm(s).iter().map(|v| v * k).collect();
+    if pattern.iter().all(|v| v.is_finite()) {
+        pattern
+    } else {
+        Vec::new()
     }
 }
 
@@ -2425,7 +2450,8 @@ mod tests {
                 type_name: "test".into(),
             },
         );
-        let lts = m.linetypes();
+        // A drawing in millimeters: the nominal paper pattern as it is.
+        let lts = m.linetypes(Some(0.001));
         assert_eq!(lts.len(), 2);
         assert!(
             lts.iter()
@@ -2434,6 +2460,68 @@ mod tests {
         assert!(
             lts.iter()
                 .any(|l| l.name == "DGN_MEDIUM_DASH" && l.pattern == vec![3.0, -1.5])
+        );
+    }
+
+    /// Issue #34: the built-in styles are cosmetic, so a drawing in meters must not get
+    /// dashes that are meters long.
+    #[test]
+    fn builtin_style_patterns_are_paper_millimeters_in_drawing_units() {
+        let mut m = Mapper::new(false, 64);
+        m.used_styles.extend([0, 2, 7, 12]);
+        let pattern = |lts: &[Linetype], name: &str| {
+            lts.iter()
+                .find(|l| l.name == name)
+                .map(|l| l.pattern.clone())
+                .unwrap()
+        };
+        let same = |a: &[f64], b: &[f64]| {
+            a.len() == b.len() && a.iter().zip(b).all(|(x, y)| (x - y).abs() <= 1e-12)
+        };
+
+        // Meters: 1 mm on paper is 0.001 drawing units.
+        let meters = m.linetypes(Some(1.0));
+        assert_eq!(meters.len(), 4);
+        assert!(same(
+            &pattern(&meters, "DGN_MEDIUM_DASH"),
+            &[0.003, -0.0015]
+        ));
+        assert!(same(
+            &pattern(&meters, "DGN_LONG_DASH_SHORT_DASH"),
+            &[0.006, -0.0015, 0.0015, -0.0015]
+        ));
+        // Feet.
+        let feet = m.linetypes(Some(0.3048));
+        assert!(same(
+            &pattern(&feet, "DGN_MEDIUM_DASH"),
+            &[0.003 / 0.3048, -0.0015 / 0.3048]
+        ));
+        // Solid and custom styles never have a pattern.
+        for lts in [&meters, &feet] {
+            assert!(pattern(lts, "DGN_SOLID").is_empty());
+            assert!(pattern(lts, "DGN_STYLE_12").is_empty());
+        }
+        // Unknown or unusable units: no pattern, the style number is still there.
+        for unit in [
+            None,
+            Some(0.0),
+            Some(-1.0),
+            Some(f64::NAN),
+            Some(f64::INFINITY),
+        ] {
+            let lts = m.linetypes(unit);
+            assert_eq!(lts.len(), 4);
+            assert!(lts.iter().all(|l| l.pattern.is_empty()), "{unit:?}");
+            assert!(
+                lts.iter()
+                    .any(|l| l.props.get("dgn.style") == Some(&Value::Int(7)))
+            );
+        }
+        // A unit so small that a length overflows gives no pattern instead of infinities.
+        assert!(
+            m.linetypes(Some(1e-311))
+                .iter()
+                .all(|l| l.pattern.is_empty())
         );
     }
 }

@@ -32,6 +32,17 @@ All notable changes are recorded here. The format follows
   security@cadkit.org next to GitHub private vulnerability reporting.
 - New logo: the "C" drawn as a selected CAD arc with grips.
 
+### Fixed
+
+- DGN: the built-in line styles 1–7 are cosmetic (their dashes have a fixed size on screen
+  or paper), but since 0.3.7 their `Linetype::pattern` held fixed lengths such as
+  `[3.0, -1.5]` whatever the drawing units were, so a sheet modelled in metres got dashes
+  several metres long. The pattern is now a nominal paper pattern in millimetres converted
+  to drawing units with the document's `meters_per_unit` (`DGN_MEDIUM_DASH` is
+  `[0.003, -0.0015]` in a file in metres and `[3.0, -1.5]` in one in millimetres). Files
+  without a known unit get an empty pattern, as before 0.3.7; the style number stays in
+  `dgn.style` (#34).
+
 ## [0.5.3] - 2026-11-16
 
 ### Added
