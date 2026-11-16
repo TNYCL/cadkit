@@ -44,6 +44,31 @@ export function fit(home: Box, w: number, h: number): View {
 	return { cx: home.x + home.w / 2, cy: home.y + home.h / 2, s: fitScale(home, w, h), home };
 }
 
+/** Parts of the stage covered by controls (CSS pixels); fitting keeps the drawing clear of them. */
+export interface Insets {
+	left: number;
+	top: number;
+	right: number;
+	bottom: number;
+}
+export const NO_INSETS: Insets = { left: 0, top: 0, right: 0, bottom: 0 };
+
+/**
+ * A view that fits `box` into the part of a w x h stage the insets leave free. `home` stays the
+ * drawing's own extents (the reference for the zoom range), so `box` can be a part of the drawing.
+ */
+export function fitBox(home: Box, box: Box, w: number, h: number, insets: Insets = NO_INSETS): View {
+	const fw = Math.max(1, w - insets.left - insets.right);
+	const fh = Math.max(1, h - insets.top - insets.bottom);
+	const s = fitScale(box, fw, fh);
+	return {
+		cx: box.x + box.w / 2 - (insets.left + fw / 2 - w / 2) * s,
+		cy: box.y + box.h / 2 - (insets.top + fh / 2 - h / 2) * s,
+		s,
+		home,
+	};
+}
+
 /** viewBox string for a w x h stage. */
 export function viewBoxOf(v: View, w: number, h: number): string {
 	const vw = Math.max(1, w) * v.s;

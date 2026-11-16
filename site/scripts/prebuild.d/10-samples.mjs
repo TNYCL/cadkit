@@ -5,7 +5,10 @@
 //      upstream commit into public/samples/third-party/ (git-ignored) and verify its SHA-256 and
 //      size. A file already present with the right hash is not downloaded again. Any mismatch or
 //      download failure stops the build: there is no fallback.
-//   2. Every sample (own and third-party) is read with cadkit-wasm (Node build); the facts shown on
+//   2. Own samples marked "atBuild" (the large contour map) are not committed: their generator
+//      script is run here and the result written to public/samples/generated/ (git-ignored). A
+//      file already present with the same bytes is left alone.
+//   3. Every sample (own and third-party) is read with cadkit-wasm (Node build); the facts shown on
 //      /demo/samples/ (size, SHA-256, format, version, entity and layer counts, warnings) are
 //      written to src/demo/generated/samples.json (git-ignored). A sample that does not open
 //      stops the build. Cached by content hash and cadkit-wasm version.
@@ -14,7 +17,7 @@ import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { SAMPLES, rawUrl } from '../../src/demo/samples.ts';
 
 const require = createRequire(import.meta.url);
@@ -70,15 +73,37 @@ for (const s of SAMPLES) {
 	fetched++;
 	console.log(`samples: fetched ${s.id} (${bytes.length} bytes) from ${u.repo}@${u.commit.slice(0, 12)}`);
 }
-// public/samples/third-party/ is git-ignored by site/.gitignore (no ignore file inside public/,
-// which would be published).
+// public/samples/third-party/ and public/samples/generated/ are git-ignored by site/.gitignore
+// (no ignore file inside public/, which would be published).
 
 // Licence copies must exist for every upstream sample.
 for (const s of SAMPLES) {
 	if (s.upstream && !existsSync(join(root, s.upstream.licenseCopy))) fail(`missing licence copy ${s.upstream.licenseCopy}`);
 }
 
-// 2. Facts.
+// 2. Own samples that are built here instead of being committed.
+let built = 0;
+for (const s of SAMPLES) {
+	if (!s.atBuild) continue;
+	if (!s.generator) fail(`${s.id}: an atBuild sample needs a generator`);
+	const target = join(publicDir, s.path);
+	let text;
+	try {
+		const mod = await import(pathToFileURL(join(root, s.generator)).href);
+		text = mod.buildSample();
+	} catch (e) {
+		fail(`could not generate ${s.id} with ${s.generator}: ${e.message}`);
+	}
+	if (existsSync(target) && readFileSync(target, 'utf8') === text) continue;
+	mkdirSync(dirname(target), { recursive: true });
+	const tmp = target + '.part';
+	writeFileSync(tmp, text);
+	renameSync(tmp, target);
+	built++;
+	console.log(`samples: generated ${s.id} (${Buffer.byteLength(text)} bytes) with ${s.generator}`);
+}
+
+// 3. Facts.
 const files = SAMPLES.map((s) => {
 	const p = join(publicDir, s.path);
 	if (!existsSync(p)) fail(`missing sample file public${s.path}`);
@@ -89,7 +114,7 @@ const key = sha256(JSON.stringify([wasmVersion, SAMPLES, files.map((f) => f.hash
 if (existsSync(outPath)) {
 	try {
 		if (JSON.parse(readFileSync(outPath, 'utf8')).key === key) {
-			console.log(`samples: ${files.length} samples up to date${fetched ? `, ${fetched} fetched` : ''}`);
+			console.log(`samples: ${files.length} samples up to date${fetched ? `, ${fetched} fetched` : ''}${built ? `, ${built} generated` : ''}`);
 			process.exit(0);
 		}
 	} catch {
@@ -131,4 +156,4 @@ mkdirSync(outDir, { recursive: true });
 const ignoreGen = join(outDir, '.gitignore');
 if (!existsSync(ignoreGen)) writeFileSync(ignoreGen, '*\n!.gitignore\n');
 writeFileSync(outPath, JSON.stringify({ key, cadkitWasmVersion: wasmVersion, samples: facts }, null, '\t') + '\n');
-console.log(`samples: ${files.length} samples read with cadkit-wasm ${wasmVersion}${fetched ? `, ${fetched} fetched` : ''}`);
+console.log(`samples: ${files.length} samples read with cadkit-wasm ${wasmVersion}${fetched ? `, ${fetched} fetched` : ''}${built ? `, ${built} generated` : ''}`);

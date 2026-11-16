@@ -30,7 +30,7 @@ const ORIGIN = [500000, 5600000, 50];
  * A building as a closed polyhedron: named vertices (local metres) and faces as vertex-name
  * loops, counter-clockwise seen from outside, each tagged with its CityGML boundary surface.
  */
-function gableHouse(x0, y0, w, d, eaves, ridge) {
+export function gableHouse(x0, y0, w, d, eaves, ridge) {
 	const v = {
 		A: [x0, y0, 0], B: [x0 + w, y0, 0], C: [x0 + w, y0 + d, 0], D: [x0, y0 + d, 0],
 		Ae: [x0, y0, eaves], Be: [x0 + w, y0, eaves], Ce: [x0 + w, y0 + d, eaves], De: [x0, y0 + d, eaves],
@@ -48,7 +48,7 @@ function gableHouse(x0, y0, w, d, eaves, ridge) {
 	return { v, faces };
 }
 
-function flatBox(x0, y0, w, d, h) {
+export function flatBox(x0, y0, w, d, h) {
 	const v = {
 		A: [x0, y0, 0], B: [x0 + w, y0, 0], C: [x0 + w, y0 + d, 0], D: [x0, y0 + d, 0],
 		At: [x0, y0, h], Bt: [x0 + w, y0, h], Ct: [x0 + w, y0 + d, h], Dt: [x0, y0 + d, h],
@@ -85,7 +85,7 @@ const BUILDINGS = [
 
 const pos = ([x, y, z]) => `${ORIGIN[0] + x} ${ORIGIN[1] + y} ${ORIGIN[2] + z}`;
 
-function buildingXml(b) {
+export function buildingXml(b) {
 	const { v, faces } = b.shape;
 	const polyId = (f) => `${b.id}-${f[1]}-poly`;
 	const members = faces.map((f) => `<gml:surfaceMember xlink:href="#${polyId(f)}"/>`).join('\n');
@@ -115,33 +115,47 @@ ${bounded}
 </core:cityObjectMember>`;
 }
 
-export function buildSourceXml() {
-	const all = BUILDINGS.flatMap((b) => Object.values(b.shape.v));
+/**
+ * A CityGML 2.0 city model of the given buildings ({id, name, description, height, storeys,
+ * shape}), with an envelope computed from their vertices.
+ */
+export function cityModelXml(buildings, name, description) {
+	const all = buildings.flatMap((b) => Object.values(b.shape.v));
 	const lo = [0, 1, 2].map((i) => Math.min(...all.map((p) => p[i])));
 	const hi = [0, 1, 2].map((i) => Math.max(...all.map((p) => p[i])));
 	return `<?xml version="1.0" encoding="UTF-8"?>
 <core:CityModel xmlns:core="http://www.opengis.net/citygml/2.0" xmlns:bldg="http://www.opengis.net/citygml/building/2.0" xmlns:gen="http://www.opengis.net/citygml/generics/2.0" xmlns:gml="http://www.opengis.net/gml" xmlns:xlink="http://www.w3.org/1999/xlink">
-<gml:description>Synthetic CityGML 2.0 sample by cadkit.org (MIT OR Apache-2.0). Fictional buildings at round coordinates.</gml:description>
-<gml:name>cadkit sample buildings</gml:name>
+<gml:description>${description}</gml:description>
+<gml:name>${name}</gml:name>
 <gml:boundedBy><gml:Envelope srsName="${SRS}" srsDimension="3"><gml:lowerCorner>${pos(lo)}</gml:lowerCorner><gml:upperCorner>${pos(hi)}</gml:upperCorner></gml:Envelope></gml:boundedBy>
-${BUILDINGS.map(buildingXml).join('\n')}
+${buildings.map(buildingXml).join('\n')}
 </core:CityModel>
 `;
 }
 
-/** Reads the XML with cadkit's native CityGML reader, validates it and writes it with cadkit's writer. */
-export function buildSample() {
+export function buildSourceXml() {
+	return cityModelXml(BUILDINGS, 'cadkit sample buildings', 'Synthetic CityGML 2.0 sample by cadkit.org (MIT OR Apache-2.0). Fictional buildings at round coordinates.');
+}
+
+/** Reads CityGML XML with cadkit's native reader, validates it and writes it with cadkit's writer. */
+export function writeValidated(xml, polygons) {
 	const { readCityGml } = require('cadkit-wasm/node');
-	const native = readCityGml(new TextEncoder().encode(buildSourceXml()));
+	const native = readCityGml(new TextEncoder().encode(xml));
 	try {
 		const report = native.validate({ geometry: true });
-		if (report.polygons !== BUILDINGS.reduce((n, b) => n + b.shape.faces.length, 0)) {
-			throw new Error('unexpected polygon count ' + report.polygons);
-		}
+		if (report.polygons !== polygons) throw new Error(`unexpected polygon count ${report.polygons}, expected ${polygons}`);
 		return Buffer.from(native.toGml({ geometry: true })).toString('utf8');
 	} finally {
 		native.free();
 	}
+}
+
+/** Reads the XML with cadkit's native CityGML reader, validates it and writes it with cadkit's writer. */
+export function buildSample() {
+	return writeValidated(
+		buildSourceXml(),
+		BUILDINGS.reduce((n, b) => n + b.shape.faces.length, 0)
+	);
 }
 
 const isMain = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];

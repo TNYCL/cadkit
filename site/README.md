@@ -26,7 +26,7 @@ npm run dev                                        # http://localhost:4321
 | `test` | `node --test "test/**/*.test.mjs"` |
 | `verify` | `scripts/verify.mjs` over `dist/` (run after `build`) |
 | `brand` | regenerate the logo set (`scripts/brand.mjs`) |
-| `sample:plan` | regenerate the synthetic sample DXF (`scripts/samples/plan.mjs`) |
+| `sample:plan` | regenerate the synthetic sample DXF (`scripts/samples/plan.mjs`); the other samples: `node scripts/samples/<name>.mjs` |
 
 ## Structure
 
@@ -52,13 +52,14 @@ test/                   node --test suites
 ```
 
 `src/generated/` (hero render), the synced docs, `src/demo/generated/`, `src/stats/generated/`,
-`public/samples/third-party/` and `dist/` are build outputs and git-ignored.
+`public/samples/third-party/`, `public/samples/generated/` and `dist/` are build outputs and
+git-ignored.
 
 ### Shared components
 
 | Component | Use |
 |---|---|
-| `PageLayout` | Props `{title, description, breadcrumbs?, ogImage?, jsonLd?, noAnalytics?, noindex?, ogType?, header?, eyebrow?, lead?, pagefind?}`. Renders through `StarlightPage`, so header, search, theme toggle and the title-block footer match the docs. With `header` (default) it renders the page `<h1>` from `title`; with `header={false}` the page must render exactly one `<h1>`. |
+| `PageLayout` | Props `{title, description, breadcrumbs?, ogImage?, jsonLd?, noAnalytics?, noindex?, ogType?, header?, eyebrow?, lead?, pagefind?, app?}` (`app`: one-line header for the demo). Renders through `StarlightPage`, so header, search, theme toggle and the title-block footer match the docs. With `header` (default) it renders the page `<h1>` from `title`; with `header={false}` the page must render exactly one `<h1>`. |
 | `Prose` | Long text styled exactly like the docs (Starlight markdown styles). |
 | `CodeTabs` | `snippets: {label: 'Rust'\|'Python'\|'JavaScript'\|'C', lang, code, title?}[]`. Starlight synced tabs with sync key `lang`: the choice persists site-wide (also in MDX docs using `<Tabs syncKey="lang">` with the same labels). Copy button from Expressive Code. |
 | `InstallTabs` | `cargo add cadkit` / `pip install pycadkit` / `npm install cadkit-wasm` / C archive from GitHub Releases; same sync key. |
@@ -207,13 +208,37 @@ debug build through the lock). `DOCS_RUN` selects targets.
 ## Demo and samples
 
 `/demo/` (`src/demo/`) runs cadkit-wasm in a Web Worker; files are read in the tab and never
-uploaded, and the page loads no analytics. Samples are listed in `src/demo/samples.ts` and on
-`/demo/samples/`: our own synthetic files (`public/samples/cadkit-sample-plan.dxf`,
-`cadkit-sample-buildings.gml` from `scripts/samples/buildings.mjs`) and MIT-licensed upstream
-files fetched by `10-samples.mjs` from pinned commits with sha256 and size checks (a mismatch
-fails the build). Their licence texts are committed in `scripts/samples/licenses/` and served
-under `/demo/samples/licenses/`. The build therefore needs network access to
+uploaded, and the page loads no analytics. It works with the published `cadkit-wasm` package
+and needs no other dependency.
+
+| Module | Role |
+|---|---|
+| `worker.ts`, `core.ts` | The worker hosts `core.ts`, which owns the document and answers the page's requests (`protocol.ts`): open, render, pick, entity, 3D mesh, exports with a read-back check, unit conversion and block explode, header/limit/truncation checks, CityGML validation and TKGM preflight. Every cadkit-wasm call is timed and shown in the Calls tab. `core.ts` takes the module as a parameter, so `test/demo-core.test.mjs` runs it in Node. |
+| `viewer.ts`, `engine.ts`, `dom.ts` | Main thread: stage, input, tabbed panel, status; the worker client (restarted after a trap or a cancel). |
+| `sheet2d.ts`, `scene2d.ts`, `view.ts`, `colors.ts` | The 2D sheet: cadkit's SVG, sanitised; paper layouts composed from their viewports; point markers at constant size; the dark sheet restyled without a second render; selection highlight (the entity rendered alone by the engine) and measure overlay. |
+| `gl3d.ts`, `mesh.ts`, `camera.ts` | The 3D view: polygons, faces and meshes triangulated in the worker, drawn with WebGL2 (no library), orbit camera, picking by ray. |
+
+Decisions worth knowing: the engine renders the sheet once, for the light background, with
+layers that are off in the file included; the page hides those layers, hides the non-plotting
+`Defpoints` layer and recolours for the dark sheet (`colors.ts`). The inspector, the
+highlight, layouts and the 3D view use a JSON copy of the document that the worker keeps up to
+`MAX_JSON_ENTITIES`; larger files still open, render, pick and export. cadkit-wasm 0.5 draws
+a point as a cross sized by the drawing extents; `scene2d.ts` recognises that shape so the
+page can draw a dot instead (a test pins the shape).
+
+Samples are listed in `src/demo/samples.ts` and on `/demo/samples/`. Our own synthetic files
+come from the scripts in `scripts/samples/` (`plan.mjs`, `siteplan.mjs`, `buildings.mjs`,
+`district.mjs`; run one to regenerate its file, `--check` to compare, as `npm test` does) and
+are committed, except the 2 MB contour map (`contours.mjs`), which `10-samples.mjs` generates
+into `public/samples/generated/`. MIT-licensed upstream files are fetched by `10-samples.mjs`
+from pinned commits with sha256 and size checks (a mismatch fails the build). Their licence
+texts are committed in `scripts/samples/licenses/` and served under
+`/demo/samples/licenses/`. The build therefore needs network access to
 `raw.githubusercontent.com` on a cold cache.
+
+The browser itself is not part of `npm test`: after changing the viewer, open `/demo/` and go
+through the samples (2D, a paper layout of the DWG sheet, the 3D district, the contour map),
+both sheet colours, a pick, an export and the Checks tab.
 
 ## Statistics
 
