@@ -1278,6 +1278,17 @@ impl Document {
     /// Missing blocks, cyclic references, and inserts deeper than `max_depth` are kept intact.
     /// Work is bounded by [`DEFAULT_MAX_WORK`].
     pub fn explode_inserts(&mut self, max_depth: u32) -> WalkStats {
+        self.explode_inserts_with(max_depth, DEFAULT_MAX_WORK)
+    }
+
+    /// [`Document::explode_inserts`] with an explicit work budget.
+    ///
+    /// Every entity visited and every insert array cell costs one unit, so `max_work` is
+    /// also an upper bound on the number of entities the expansion adds. A caller with little
+    /// memory (a WebAssembly module, about 800 bytes per entity) passes a budget it can hold;
+    /// when the budget runs out the remaining inserts are kept as inserts and
+    /// [`WalkStats::truncated`] is set.
+    pub fn explode_inserts_with(&mut self, max_depth: u32, max_work: u64) -> WalkStats {
         let mut block_map: HashMap<&str, &Block> = HashMap::new();
         for b in &self.blocks {
             block_map.entry(b.name.as_str()).or_insert(b);
@@ -1285,7 +1296,7 @@ impl Document {
         let mut exploder = Exploder {
             blocks: block_map,
             max_depth,
-            work_left: DEFAULT_MAX_WORK,
+            work_left: max_work,
             work_spent: 0,
             truncated: false,
             stack: Vec::new(),
@@ -1569,6 +1580,55 @@ mod tests {
         assert_eq!(purged.blocks, 2); // SYM was exploded, UNUSED_BLK never used!
         assert_eq!(purged.linetypes, 1);
         assert_eq!(purged.text_styles, 1);
+    }
+
+    #[test]
+    fn explode_budget_bounds_the_entities_an_insert_array_adds() {
+        // One insert with a 1000 x 1000 array: a million cells from a few bytes of input.
+        let cell = Block {
+            name: "CELL".into(),
+            entities: vec![Entity::new(EntityKind::Point {
+                position: Point3::xy(0.0, 0.0),
+            })],
+            ..Block::default()
+        };
+        let array = Entity::new(EntityKind::Insert {
+            block: "CELL".into(),
+            position: Point3::xy(0.0, 0.0),
+            scale: Vec3::new(1.0, 1.0, 1.0),
+            rotation: 0.0,
+            normal: Vec3::Z,
+            columns: 1000,
+            rows: 1000,
+            column_spacing: 1.0,
+            row_spacing: 1.0,
+        });
+        let mut doc = Document {
+            blocks: vec![cell],
+            models: vec![crate::Model {
+                entities: vec![array],
+                ..crate::Model::default()
+            }],
+            ..Document::default()
+        };
+        let stats = doc.explode_inserts_with(8, 500);
+        assert!(stats.truncated);
+        assert!(stats.work <= 500);
+        assert!(doc.models[0].entities.len() <= 500);
+        // With room to spare the same call expands a small array completely.
+        if let Some(Entity {
+            kind: EntityKind::Insert { columns, rows, .. },
+            ..
+        }) = doc.models[0]
+            .entities
+            .iter_mut()
+            .find(|e| matches!(e.kind, EntityKind::Insert { .. }))
+        {
+            *columns = 3;
+            *rows = 2;
+            let stats = doc.explode_inserts_with(8, 500);
+            assert!(!stats.truncated);
+        }
     }
 
     #[test]
