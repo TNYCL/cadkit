@@ -322,13 +322,30 @@ impl Mapper {
             .unwrap_or_else(|| format!("Level {id}"))
     }
 
-    pub(crate) fn color(&self, index: u32) -> Color {
+    /// Color of an element or tag from its color index: `0..=255` through the palette,
+    /// `0xFFFFFFFE` (by cell) → `ByBlock`, `0xFFFFFFFF` (by level) → `ByLayer`.
+    ///
+    /// Any other index is a V8 extended color (a true color or a color book entry) whose
+    /// RGB is not located yet (FORMAT_NOTES, open question 3). It also becomes `ByLayer`,
+    /// which is a loss (the element is then drawn in its level's color), so it is counted
+    /// in the aggregated warning `dgn.color_extended_unresolved` (issue #33).
+    pub(crate) fn color(&mut self, index: u32) -> Color {
         if index == 0xffff_fffe {
             return Color::ByBlock;
         }
         match palette::lookup(&self.palette, index) {
             Some([r, g, b]) => Color::Rgb { r, g, b },
-            None => Color::ByLayer,
+            None => {
+                if index != 0xffff_ffff {
+                    self.note("dgn.color_extended_unresolved", || {
+                        "element color is a V8 extended color (index above 255) whose RGB \
+                         is not resolved; the element takes its level's color, the raw index \
+                         is kept in dgn.color_index"
+                            .into()
+                    });
+                }
+                Color::ByLayer
+            }
         }
     }
 
@@ -2395,6 +2412,55 @@ mod tests {
         );
         assert_eq!(unit_from_label("mu"), None);
         assert!(close(weight_mm(0), 0.1));
+    }
+
+    /// Issue #33: an extended color cannot be resolved, so the loss is reported once, with
+    /// a count; the by-level and by-cell sentinels and palette colors are not losses.
+    #[test]
+    fn extended_colors_are_counted_in_one_warning() {
+        let mut m = Mapper::new(false, 64);
+        let entity = |m: &mut Mapper, color: u32| {
+            let hdr = ElementHeader {
+                type_code: 3,
+                has_display_header: true,
+                color,
+                ..ElementHeader::default()
+            };
+            m.base(
+                &item(hdr, ElementData::Unknown),
+                EntityKind::Unknown {
+                    type_name: "test".into(),
+                },
+            )
+        };
+        for color in [0x4a03, 256, 0x0100_0000] {
+            let e = entity(&mut m, color);
+            assert_eq!(e.color, Color::ByLayer);
+            assert_eq!(
+                e.props.get("dgn.color_index"),
+                Some(&Value::Int(i64::from(color)))
+            );
+        }
+        assert_eq!(entity(&mut m, 0xffff_ffff).color, Color::ByLayer);
+        assert_eq!(entity(&mut m, 0xffff_fffe).color, Color::ByBlock);
+        assert!(matches!(entity(&mut m, 255).color, Color::Rgb { .. }));
+        assert!(matches!(entity(&mut m, 0).color, Color::Rgb { .. }));
+
+        let warnings = m.finish_warnings();
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert_eq!(warnings[0].code, "dgn.color_extended_unresolved");
+        assert!(
+            warnings[0].message.ends_with("(3 occurrences)"),
+            "{}",
+            warnings[0].message
+        );
+
+        // Nothing but resolvable colors and sentinels: no warning.
+        let mut m = Mapper::new(false, 64);
+        for color in [0, 7, 255, 0xffff_fffe, 0xffff_ffff] {
+            let _ = entity(&mut m, color);
+        }
+        assert!(m.finish_warnings().is_empty());
     }
 
     #[test]

@@ -24,6 +24,11 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- DGN V8: an element or tag with an extended colour (colour index above 255: a true colour
+  or a colour book entry) still maps to `Color::ByLayer`, because the RGB is not located
+  yet, but the loss is no longer silent: `Document::warnings` gets one
+  `dgn.color_extended_unresolved` warning with the number of occurrences. The raw index
+  stays in `dgn.color_index` (#33).
 - `cadkit-capi` is published to crates.io with a README; prebuilt C/C++ archives stay on
   GitHub Releases. 0.5.3 was published from the v0.5.3 sources.
 - Package metadata: homepage `https://cadkit.org` and authors

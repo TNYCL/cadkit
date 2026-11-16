@@ -381,4 +381,12 @@ fn test_dgnv8_structure() {
         .find(|e| prop_int(e, "dgn.color_index") == Some(256))
         .unwrap();
     assert_eq!(text.color, cadkit_core::Color::ByLayer);
+    // It is the only one, and the loss is reported (issue #33).
+    let unresolved: Vec<_> = doc
+        .warnings
+        .iter()
+        .filter(|w| w.code == "dgn.color_extended_unresolved")
+        .collect();
+    assert_eq!(unresolved.len(), 1, "{:?}", doc.warnings);
+    assert!(!unresolved[0].message.contains("occurrences"));
 }

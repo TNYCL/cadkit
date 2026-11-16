@@ -489,6 +489,8 @@ skipped (counted in `dgn.deleted_count`). Records without a display header and t
 - **Colors**: 0–255 through the file color table (last one wins) or the default palette →
   `Color::Rgb`; index in `dgn.color_index`. Extended colors (>255) → `ByLayer` (their RGB
   is not located; the oracle reports different RGBs for the same index in two exports).
+  This is a loss, since the element is then drawn in its level's color: every such
+  element or tag is counted in the aggregated warning `dgn.color_extended_unresolved`.
   The by-level sentinels (color and weight `0xFFFFFFFF`, style `0x7FFFFFFF`) → `ByLayer`, no
   millimetre weight and no linetype, the numbers kept in `dgn.color_index` / `dgn.weight` /
   `dgn.style` (the writer writes them back as stored, see "Level sentinels"); `0xFFFFFFFE`
@@ -671,7 +673,7 @@ skipped (counted in `dgn.deleted_count`). Records without a display header and t
   `dgn.stream_unreadable`, `dgn.model_header`, `dgn.model_index`, `dgn.v7_truncated`,
   `dgn.v7_units`, `dgn.unknown_element.type_N`, `dgn.decode_failed.type_N`,
   `dgn.tag_target_missing`, `dgn.raster_unlinked`, `dgn.bspline_knots`, `dgn.depth_limit`,
-  `dgn.complex_count`
+  `dgn.complex_count`, `dgn.color_extended_unresolved`
   (repeated issues are aggregated with a count).
 
 ## Tag sets in props
@@ -774,7 +776,10 @@ the observation each needs.
 3. **Extended colors** (index > 255): the RGB is not located. One element in all corpora
    (a test_dgnv8 text, index 256); the oracle gives it two different RGBs in two exports and
    neither byte triple occurs in any raw or inflated stream of the file; the private corpus
-   has none. Settled by: a file with extended colors whose RGB values are known.
+   has none. Issue #33 reports that they are common in production files (20 of 45 files,
+   11,219 elements, 7,280 of the 33,594 elements of one file; example raw value `0x4A03`),
+   so the reader now warns (`dgn.color_extended_unresolved`). Settled by: a file with
+   extended colors whose RGB values are known.
 4. **Sheet models**: no public sample with a sheet model was found, and every sample has
    one design model (567 private files: one model each, model index flags 0 in all 570 V8
    files), so no field can be tied to design/sheet. Every model is reported as
