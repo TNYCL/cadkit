@@ -14,6 +14,8 @@ use js_sys::Reflect;
 use serde_json::{Map, Value, json};
 use wasm_bindgen::prelude::*;
 
+mod bounded_pick;
+
 #[wasm_bindgen(typescript_custom_section)]
 const TS_DEFINITIONS: &'static str = r#"
 export type FormatName = "dwg" | "dxf" | "dgn_v7" | "dgn_v8" | "city_gml";
@@ -90,6 +92,26 @@ export interface WarningInfo {
 export interface PickOptions {
   excludedLayers?: string[];
   excludedKinds?: string[];
+}
+
+/** Selection with bounded metadata construction and a complete JSON byte budget. */
+export interface BoundedPickOptions extends PickOptions {
+  maxOutputBytes: number;
+  maxWork?: number;
+}
+
+export interface BoundedPickedEntity {
+  index: number;
+  id: number | null;
+  layer: string;
+  kind: string;
+  color: string;
+  bbox: { min: [number, number, number]; max: [number, number, number] };
+  distance: number;
+  text?: string;
+  block?: string;
+  attributes: Array<{ tag: string; value: string }>;
+  truncated: boolean;
 }
 
 export interface PickedEntity {
@@ -386,50 +408,43 @@ struct PickOptions {
     excluded_kinds: Vec<String>,
 }
 
-struct PickCandidate {
+struct PickCandidate<'a> {
     index: usize,
-    id: Option<u64>,
-    layer: String,
-    kind: &'static str,
-    rgb: (u8, u8, u8),
+    entity: &'a Entity,
+    context: cadkit::ops::WalkContext<'a>,
     bbox: BBox,
     distance: f64,
     area: f64,
-    text: Option<String>,
-    block: Option<String>,
-    attributes: Vec<Value>,
-    props: Value,
 }
 
-fn pick_entity_in_doc(
-    doc: &Document,
+fn pick_candidate_in_doc<'a>(
+    doc: &'a Document,
     model: usize,
-    wx: f64,
-    wy: f64,
+    point: (f64, f64),
     tolerance: f64,
     include_hidden_layers: bool,
     options: &PickOptions,
-) -> Option<Value> {
+    max_work: u64,
+) -> (Option<PickCandidate<'a>>, bool) {
+    let (wx, wy) = point;
     if !(wx.is_finite() && wy.is_finite() && tolerance.is_finite() && tolerance >= 0.0) {
-        return None;
+        return (None, false);
     }
     let walk_opts = WalkOptions::default()
         .with_max_depth(DEFAULT_WALK_DEPTH)
         .with_expand_inserts(true)
-        .with_max_work(5_000_000);
+        .with_max_work(max_work);
     let mut visited_index = 0usize;
-    let mut best: Option<PickCandidate> = None;
-    let mut visit = |e: &Entity, ctx: &cadkit::ops::WalkContext<'_>| -> bool {
+    let excluded_layers: std::collections::HashSet<&str> =
+        options.excluded_layers.iter().map(String::as_str).collect();
+    let excluded_kinds: std::collections::HashSet<&str> =
+        options.excluded_kinds.iter().map(String::as_str).collect();
+    let mut best: Option<PickCandidate<'a>> = None;
+    let mut visit = |e: &'a Entity, ctx: &cadkit::ops::WalkContext<'a>| -> bool {
         let cur_index = visited_index;
         visited_index += 1;
-        if options
-            .excluded_layers
-            .iter()
-            .any(|l| l == ctx.layer_name(e))
-            || options
-                .excluded_kinds
-                .iter()
-                .any(|k| k == e.kind.type_name())
+        if excluded_layers.contains(ctx.layer_name(e))
+            || excluded_kinds.contains(e.kind.type_name())
         {
             return true;
         }
@@ -466,69 +481,86 @@ fn pick_entity_in_doc(
             }
         };
         if replace {
-            let text = match &e.kind {
-                EntityKind::Text { value, .. } => Some(value.clone()),
-                EntityKind::MText { plain, value, .. } => Some(if plain.is_empty() {
-                    value.clone()
-                } else {
-                    plain.clone()
-                }),
-                EntityKind::Dimension { text, .. } => text.clone(),
-                _ => None,
-            };
-            let block = match &e.kind {
-                EntityKind::Insert { block, .. } => Some(block.clone()),
-                EntityKind::Dimension { block, .. } => block.clone(),
-                _ => None,
-            };
-            let attributes = e
-                .attributes
-                .iter()
-                .map(|a| json!({ "tag": a.tag, "value": a.value }))
-                .collect();
-            let props = serde_json::to_value(&e.props).unwrap_or_else(|_| json!({}));
             best = Some(PickCandidate {
                 index: cur_index,
-                id: e.id,
-                layer: ctx.layer_name(e).to_owned(),
-                kind: e.kind.type_name(),
-                rgb: e.resolved_color_in(doc, ctx),
+                entity: e,
+                context: ctx.clone(),
                 bbox: bb,
                 distance: dist,
                 area,
-                text,
-                block,
-                attributes,
-                props,
             });
         }
         true
     };
-    if include_hidden_layers {
-        doc.walk_all_layers_while(model, &walk_opts, &mut visit);
+    let stats = if include_hidden_layers {
+        doc.walk_all_layers_while(model, &walk_opts, &mut visit)
     } else {
-        doc.walk_while(model, &walk_opts, &mut visit);
-    }
+        doc.walk_while(model, &walk_opts, &mut visit)
+    };
+    (best, stats.truncated)
+}
+
+fn pick_entity_in_doc(
+    doc: &Document,
+    model: usize,
+    wx: f64,
+    wy: f64,
+    tolerance: f64,
+    include_hidden_layers: bool,
+    options: &PickOptions,
+) -> Option<Value> {
+    let (best, _) = pick_candidate_in_doc(
+        doc,
+        model,
+        (wx, wy),
+        tolerance,
+        include_hidden_layers,
+        options,
+        5_000_000,
+    );
     best.map(|hit| {
+        let e = hit.entity;
+        let text = match &e.kind {
+            EntityKind::Text { value, .. } => Some(value.clone()),
+            EntityKind::MText { plain, value, .. } => Some(if plain.is_empty() {
+                value.clone()
+            } else {
+                plain.clone()
+            }),
+            EntityKind::Dimension { text, .. } => text.clone(),
+            _ => None,
+        };
+        let block = match &e.kind {
+            EntityKind::Insert { block, .. } => Some(block.clone()),
+            EntityKind::Dimension { block, .. } => block.clone(),
+            _ => None,
+        };
+        let attributes: Vec<_> = e
+            .attributes
+            .iter()
+            .map(|a| json!({ "tag": a.tag, "value": a.value }))
+            .collect();
+        let props = serde_json::to_value(&e.props).unwrap_or_else(|_| json!({}));
+        let rgb = e.resolved_color_in(doc, &hit.context);
         let mut obj = json!({
             "index": hit.index,
-            "id": hit.id,
-            "layer": hit.layer,
-            "kind": hit.kind,
-            "color": format!("#{:02x}{:02x}{:02x}", hit.rgb.0, hit.rgb.1, hit.rgb.2),
+            "id": e.id,
+            "layer": hit.context.layer_name(e),
+            "kind": e.kind.type_name(),
+            "color": format!("#{:02x}{:02x}{:02x}", rgb.0, rgb.1, rgb.2),
             "bbox": {
                 "min": [hit.bbox.min.x, hit.bbox.min.y, hit.bbox.min.z],
                 "max": [hit.bbox.max.x, hit.bbox.max.y, hit.bbox.max.z],
             },
             "distance": hit.distance,
-            "attributes": hit.attributes,
-            "props": hit.props,
+            "attributes": attributes,
+            "props": props,
         });
         if let Value::Object(map) = &mut obj {
-            if let Some(t) = hit.text {
+            if let Some(t) = text {
                 map.insert("text".into(), Value::String(t));
             }
-            if let Some(b) = hit.block {
+            if let Some(b) = block {
                 map.insert("block".into(), Value::String(b));
             }
         }
@@ -733,6 +765,58 @@ impl CadDocument {
             Some(v) => value_to_js(&v),
             None => Ok(JsValue::NULL),
         }
+    }
+
+    /// Picks an entity with metadata capped before copying or JSON conversion.
+    /// `maxOutputBytes` bounds the complete UTF-8 JSON result (up to 64 KiB).
+    /// Work exhaustion throws `limit_exceeded`; a missing hit alone returns null.
+    /// Existing `pickEntity` remains available for callers needing full metadata.
+    #[wasm_bindgen(js_name = pickEntityBounded, unchecked_return_type = "BoundedPickedEntity | null")]
+    pub fn pick_entity_bounded(
+        &self,
+        model: usize,
+        wx: f64,
+        wy: f64,
+        tolerance: f64,
+        #[wasm_bindgen(unchecked_param_type = "BoundedPickOptions")] options: JsValue,
+        #[wasm_bindgen(unchecked_optional_param_type = "boolean | null")]
+        include_hidden_layers: Option<bool>,
+    ) -> Result<JsValue, JsValue> {
+        if model >= self.doc.models.len() && !self.doc.models.is_empty() {
+            return Err(js_error("bad_argument", "model index out of range"));
+        }
+        if !(wx.is_finite() && wy.is_finite() && tolerance.is_finite() && tolerance >= 0.0) {
+            return Err(js_error(
+                "bad_argument",
+                "coordinates and tolerance must be finite (tolerance >= 0)",
+            ));
+        }
+        let max_output = svg_integer_option(&options, "maxOutputBytes", 65_536.0)?
+            .ok_or_else(|| js_error("bad_argument", "maxOutputBytes is required"))?
+            as usize;
+        let max_work = svg_integer_option(&options, "maxWork", 5_000_000.0)?.unwrap_or(5_000_000);
+        let filters = bounded_pick::filters(&options)?;
+        let (hit, exhausted) = pick_candidate_in_doc(
+            &self.doc,
+            model,
+            (wx, wy),
+            tolerance,
+            include_hidden_layers.unwrap_or(false),
+            &filters,
+            max_work,
+        );
+        if exhausted {
+            return Err(js_error("limit_exceeded", "pick work budget exceeded"));
+        }
+        let Some(hit) = hit else {
+            if max_output < 4 {
+                return Err(js_error("limit_exceeded", "pick output budget exceeded"));
+            }
+            return Ok(JsValue::NULL);
+        };
+        let text = bounded_pick::summary(&self.doc, &hit, max_output)
+            .map_err(|()| js_error("limit_exceeded", "pick output budget exceeded"))?;
+        parse_json(&text)
     }
 
     /// The full document as a JS object (so `JSON.stringify(doc)` works).

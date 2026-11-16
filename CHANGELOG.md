@@ -6,6 +6,13 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- WASM `CadDocument.pickEntityBounded` caps inspection metadata before copying
+  and JSON conversion, reports shortened previews, omits raw properties and
+  rejects exhausted output/work budgets. Legacy `pickEntity` remains compatible
+  and now copies metadata only after selecting the winning entity.
+
 ## [0.5.2] - 2026-11-01
 
 ### Added

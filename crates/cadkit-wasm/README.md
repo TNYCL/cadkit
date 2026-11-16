@@ -42,6 +42,13 @@ Use `inspect` for header-only metadata, `convertUnits` and `explodeInserts` for 
 document operations, and `pickEntity` for geometric viewer selection. SVG output can be
 used in a web UI; the repository includes an SVG-based drag-and-drop viewer.
 
+For untrusted inspection metadata, `pickEntityBounded` (added after 0.5.2)
+requires a complete JSON byte budget and caps metadata before copying it across
+the WASM boundary. It omits raw properties and reports shortened previews with
+`truncated`. Output or traversal exhaustion throws `limit_exceeded`; legacy
+`pickEntity` remains available with its full metadata shape. See the WASM guide
+for field limits and the method's argument order.
+
 This npm package exposes the file/document APIs in the WASM guide. It does not export the
 standalone Rust `cadkit-geom`, `cadkit-scene` or `cadkit-gpu` APIs. DGN and CityGML output
 have explicit limits; CityGML generic export requires a CRS. See the
