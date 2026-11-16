@@ -22,8 +22,8 @@ are separate Rust crates; the other interfaces do not expose them.
 | Rust | [`cadkit`](https://crates.io/crates/cadkit) on crates.io | [Getting started: Rust](/docs/getting-started/rust/) |
 | Python 3.9+ | [`pycadkit`](https://pypi.org/project/pycadkit/) on PyPI, imported as `cadkit` | [Getting started: Python](/docs/getting-started/python/) |
 | JavaScript, browser and Node | [`cadkit-wasm`](https://www.npmjs.com/package/cadkit-wasm) on npm | [Getting started: JavaScript](/docs/getting-started/javascript/) |
-| C and C++ | `cadkit-capi-<target>` archives on [GitHub Releases](https://github.com/TNYCL/cadkit/releases/latest) | [Getting started: C and C++](/docs/getting-started/c/) |
-| Shell | `cadkit` binary (`cadkit-cli`) | [Command line](/docs/getting-started/cli/) |
+| C and C++ | `cadkit-capi-<target>` archives on `release.cadkit.org` and [GitHub Releases](https://github.com/TNYCL/cadkit/releases/latest) | [Getting started: C and C++](/docs/getting-started/c/) |
+| Shell | `cadkit` binary (`cadkit-cli`), installed with [one command](/docs/getting-started/cli/#install) | [Command line](/docs/getting-started/cli/) |
 
 The [demo](/demo/) runs the JavaScript package in your browser; files you open there stay on
 your machine.

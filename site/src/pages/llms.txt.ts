@@ -2,7 +2,7 @@
 // pages are linked as Markdown (the ".md" files of src/pages/[...doc].md.ts); the list follows
 // the docs sidebar, so a page added there is listed here without further registration.
 import type { APIRoute } from 'astro';
-import { SITE, REPO, LINKS, CADKIT_VERSION, LICENSE } from '../config';
+import { SITE, REPO, LINKS, CADKIT_VERSION, LICENSE, RELEASE_HOST } from '../config';
 import { docPages, sidebarSections } from '../lib/llms';
 
 /** What a site page (not a docs page) offers, where its sidebar label does not say it. */
@@ -39,7 +39,8 @@ ${sections.join('\n\n')}
 - [cadkit on crates.io](${LINKS.crates}): the Rust crate; API documentation on [docs.rs](${LINKS.docsRs})
 - [pycadkit on PyPI](${LINKS.pypi}): the Python package
 - [cadkit-wasm on npm](${LINKS.npm}): the JavaScript and WebAssembly package
-- [Releases](${LINKS.releases}): CLI and C API archives
+- [Releases](${LINKS.releases}): CLI and C API archives, also served from ${RELEASE_HOST}/v${CADKIT_VERSION}/
+- [CLI installer](${SITE}/install.sh): \`curl -fsSL ${SITE}/install.sh | sh\` on Linux and macOS, \`irm ${SITE}/install.ps1 | iex\` on Windows
 
 ## Source and community
 

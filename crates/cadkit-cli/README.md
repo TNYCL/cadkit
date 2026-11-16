@@ -5,6 +5,8 @@ SVG, DXF, seed-based DGN V8 and CityGML 2.0.
 
 ## Install
 
+- Linux and macOS: `curl -fsSL https://cadkit.org/install.sh | sh`
+- Windows (PowerShell): `irm https://cadkit.org/install.ps1 | iex`
 - Prebuilt binaries for Windows, macOS and Linux: [GitHub Releases](https://github.com/TNYCL/cadkit/releases)
 - `cargo binstall cadkit-cli` (downloads the prebuilt binary)
 - `cargo install cadkit-cli` (builds from source)

@@ -7,8 +7,11 @@
     python scripts/release.py bump X.Y.Z              set the version and open its CHANGELOG section
     python scripts/release.py sync-licenses           copy the root license files into each package
     python scripts/release.py publish-crates [--dry-run]
+    python scripts/release.py mirror DIR --version X.Y.Z [--dry-run]
 
-publish-crates publishes every crate whose manifest allows it, in dependency order, and
+mirror uploads the release files in DIR (with their SHA256SUMS) to release.cadkit.org, reads
+them back and moves latest.txt forward; it needs the aws CLI and the R2 credentials named in
+docs/RELEASING.md. publish-crates publishes every crate whose manifest allows it, in dependency order, and
 skips versions already on the crates.io index, so a failed release can simply be re-run.
 Cargo commands run through scripts/buildlock.py. Only the standard library is used.
 """
@@ -17,11 +20,13 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 
@@ -33,6 +38,12 @@ EXTRA_LICENSE_DIRS = ("crates/cadkit-py",)
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$")
 INDEX = "https://index.crates.io"
 USER_AGENT = "cadkit-release (https://github.com/TNYCL/cadkit)"
+# Public download host and the Cloudflare R2 bucket behind it (docs/RELEASING.md).
+MIRROR_URL = "https://release.cadkit.org"
+MIRROR_BUCKET = "cadkit-release"
+# A version directory never changes once published; latest.txt does.
+CACHE_IMMUTABLE = "public, max-age=31536000, immutable"
+CACHE_LATEST = "public, max-age=300"
 
 
 def fail(message: str) -> None:
@@ -240,6 +251,110 @@ def cmd_publish_crates(args: argparse.Namespace) -> None:
     subprocess.run(LOCK + cmd, cwd=ROOT, check=True)
 
 
+def sha256_file(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def read_sums(directory: str) -> dict[str, str]:
+    """SHA256SUMS as written by sha256sum: '<hex>  <name>' (or ' *<name>') per line."""
+    path = os.path.join(directory, "SHA256SUMS")
+    if not os.path.exists(path):
+        fail(f"{path} is missing (run: cd {directory} && sha256sum -- * > SHA256SUMS)")
+    sums = {}
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                digest, name = line.split(None, 1)
+                sums[name.strip().lstrip("*")] = digest.lower()
+    return sums
+
+
+def mirror_content_type(name: str) -> str:
+    # Set explicitly: a guessed "Content-Encoding: gzip" would make browsers unpack the archives.
+    if name.endswith((".tar.gz", ".tgz")):
+        return "application/gzip"
+    if name.endswith((".zip", ".whl")):
+        return "application/zip"
+    return "text/plain; charset=utf-8"
+
+
+def mirror_get(key: str) -> bytes | None:
+    """The object as release.cadkit.org serves it, or None when it does not exist."""
+    request = urllib.request.Request(f"{MIRROR_URL}/{key}", headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            return response.read()
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return None
+        raise
+
+
+def stable_version(text: str) -> tuple[int, int, int] | None:
+    m = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", text.strip())
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else None
+
+
+def cmd_mirror(args: argparse.Namespace) -> None:
+    version = args.version
+    if not VERSION_RE.match(version):
+        fail(f"'{version}' is not a semantic version")
+    directory = os.path.abspath(args.directory)
+    sums = read_sums(directory)
+    files = sorted(n for n in os.listdir(directory) if n != "SHA256SUMS")
+    if set(files) != set(sums):
+        fail(f"SHA256SUMS and {directory} list different files: {sorted(set(files) ^ set(sums))}")
+    for name in files:
+        if sha256_file(os.path.join(directory, name)) != sums[name]:
+            fail(f"{name} does not match its SHA256SUMS entry")
+
+    account = os.environ.get("R2_ACCOUNT_ID", "")
+    if not args.dry_run and not (account and os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_SECRET_ACCESS_KEY")):
+        fail("set R2_ACCOUNT_ID, AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY (docs/RELEASING.md)")
+    endpoint = f"https://{account or 'R2_ACCOUNT_ID'}.r2.cloudflarestorage.com"
+
+    def put(path: str, key: str, cache: str) -> None:
+        cmd = ["aws", "s3", "cp", path, f"s3://{MIRROR_BUCKET}/{key}", "--endpoint-url", endpoint, "--region", "auto",
+               "--content-type", mirror_content_type(key), "--cache-control", cache, "--only-show-errors"]
+        print("+ " + " ".join(cmd), flush=True)
+        if not args.dry_run:
+            subprocess.run(cmd, check=True)
+
+    # SHA256SUMS last: once it is there, every file it names is there too.
+    for name in files + ["SHA256SUMS"]:
+        put(os.path.join(directory, name), f"v{version}/{name}", CACHE_IMMUTABLE)
+    if args.dry_run:
+        print(f"dry run: nothing uploaded; {len(files)} files and SHA256SUMS would go to {MIRROR_URL}/v{version}/")
+        return
+
+    for name in files:
+        body = mirror_get(f"v{version}/{name}")
+        if body is None or hashlib.sha256(body).hexdigest() != sums[name]:
+            fail(f"{MIRROR_URL}/v{version}/{name} does not serve the uploaded file")
+    print(f"read back {len(files)} files from {MIRROR_URL}/v{version}/: checksums match")
+
+    # latest.txt names the newest stable release; the installers read it (site/public/install.*).
+    new = stable_version(version)
+    if new is None:
+        print(f"{version} is a pre-release: latest.txt is left alone")
+        return
+    current = mirror_get("latest.txt")
+    old = stable_version(current.decode("utf-8", "replace")) if current is not None else None
+    if old is not None and old >= new:
+        print(f"latest.txt stays at {'.'.join(map(str, old))}")
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "latest.txt")
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(version + "\n")
+        put(path, "latest.txt", CACHE_LATEST)
+    print(f"latest.txt -> {version}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -257,6 +372,11 @@ def main() -> None:
     p = sub.add_parser("publish-crates")
     p.add_argument("--dry-run", action="store_true")
     p.set_defaults(run=cmd_publish_crates)
+    p = sub.add_parser("mirror")
+    p.add_argument("directory", help="release files and their SHA256SUMS")
+    p.add_argument("--version", required=True, help="the release version, for example 0.5.3")
+    p.add_argument("--dry-run", action="store_true")
+    p.set_defaults(run=cmd_mirror)
     args = parser.parse_args()
     args.run(args)
 

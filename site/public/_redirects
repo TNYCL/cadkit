@@ -1,3 +1,8 @@
 # Cloudflare static-asset redirects. The sitemap index is where the sitemap integration writes
 # it; /sitemap.xml is the address people and tools try first.
 /sitemap.xml /sitemap-index.xml 301
+
+# Short address for the CLI install instructions. /install.sh and /install.ps1 are the scripts
+# themselves (files in public/), not redirects.
+/install /docs/getting-started/cli/#install 302
+/install/ /docs/getting-started/cli/#install 302

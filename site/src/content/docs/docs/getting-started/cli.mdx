@@ -12,7 +12,35 @@ script. It uses the same readers and writers as the libraries.
 
 ## Install
 
-- Prebuilt: `cadkit-<target>` archives on [GitHub Releases](https://github.com/TNYCL/cadkit/releases/latest)
+Linux and macOS:
+
+```sh
+curl -fsSL https://cadkit.org/install.sh | sh
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://cadkit.org/install.ps1 | iex
+```
+
+The script picks the build for your platform, downloads it from `release.cadkit.org` (or from
+the GitHub release when that host cannot be reached), checks it against the release's
+`SHA256SUMS` and copies `cadkit` into `~/.local/bin`. On Windows it goes to
+`%LOCALAPPDATA%\Programs\cadkit\bin`, which is added to your user `PATH`. No administrator
+rights are needed. Both scripts are short; read [install.sh](/install.sh) or
+[install.ps1](/install.ps1) before you run them.
+
+| Variable | Meaning |
+|---|---|
+| `CADKIT_VERSION` | Install this version, for example `0.5.3`, instead of the latest release |
+| `CADKIT_INSTALL_DIR` | Directory the binary is copied into |
+| `CADKIT_NO_MODIFY_PATH=1` | Windows: leave the user `PATH` alone |
+
+Other ways to get it:
+
+- Prebuilt: `cadkit-<target>` archives at `https://release.cadkit.org/v<version>/` and on
+  [GitHub Releases](https://github.com/TNYCL/cadkit/releases/latest)
   for `x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl` (static binaries),
   `aarch64-apple-darwin`, `x86_64-apple-darwin` and `x86_64-pc-windows-msvc`, with checksums
   in `SHA256SUMS`.

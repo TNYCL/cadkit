@@ -13,6 +13,11 @@ All notable changes are recorded here. The format follows
   pages, an in-browser demo built on `cadkit-wasm` (files never leave the browser), public
   project statistics collected daily by [cadkit-stats](https://github.com/TNYCL/cadkit-stats),
   and community, security, privacy, trademark and brand pages.
+- One-line installers for the CLI: `curl -fsSL https://cadkit.org/install.sh | sh` (Linux,
+  macOS) and `irm https://cadkit.org/install.ps1 | iex` (Windows). They check the download
+  against `SHA256SUMS` and install into a user directory without administrator rights.
+- Release files are also served from `https://release.cadkit.org/v<version>/`, with the same
+  `SHA256SUMS` as the GitHub release; `latest.txt` there names the newest stable version.
 - `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1), `GOVERNANCE.md`, `SUPPORT.md` and
   `TRADEMARKS.md`; issue template contact links. Role addresses: security@, conduct@,
   hello@ and maintainers@cadkit.org.
