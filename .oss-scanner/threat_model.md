@@ -62,6 +62,9 @@ Most important, in this order:
 - `crates/cadkit-py` and `crates/cadkit-wasm`: binding glue, and whether limits reach the
   readers from these bindings.
 - `crates/cadkit-cli`: argument handling and output paths.
+- The CLI installers `site/public/install.sh` and `site/public/install.ps1`, which people
+  pipe into a shell. They download a release archive, must check it against `SHA256SUMS`
+  before anything is installed, and must write only into the chosen install directory.
 
 Less important, still in scope: `crates/cadkit-geom` (analytic geometry on caller-supplied
 `f64` data), `crates/cadkit-scene` and `crates/cadkit-gpu` (rendering of data the host
@@ -83,8 +86,8 @@ Out of scope:
 - Misuse of the C API against the contract documented in `cadkit.h` (dangling or
   wrong-sized pointers, use after free by the caller, freeing a document while another
   thread still reads it).
-- `site/` (the project website), `fuzz/` harness code, test code, and the fetched files
-  under `corpus/` and `refs/`.
+- The rest of `site/` (the project website), `fuzz/` harness code, test code, and the
+  fetched files under `corpus/` and `refs/`.
 - Build and release automation (`.github/workflows/`, `scripts/`), except for a flaw that
   lets someone without write access run code with repository secrets or change a
   published release file.
@@ -121,7 +124,8 @@ an assertion in a test or from a fuzz harness.
   exploitation. Reading a file or contacting a host named by file content (external
   entities, references to other files). Disclosure of memory or of other documents' data
   into output. A limit in `Limits::strict()` bypassed by a large factor, for example a few
-  kilobytes of input that allocate gigabytes or run for minutes.
+  kilobytes of input that allocate gigabytes or run for minutes. An installer that
+  installs a download it did not verify, or that writes outside the install directory.
 - **Medium**: a process abort that cannot be caught (stack overflow from unbounded
   recursion, allocation failure from an unvalidated count), a hang or an endless loop,
   under the default limits. A size or count used before it is validated against the
