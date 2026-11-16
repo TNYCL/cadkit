@@ -9,6 +9,8 @@ export const SITE_NAME = 'cadkit';
 
 /** Source repository. Moves to a GitHub organisation later: change it only here. */
 export const REPO = 'https://github.com/TNYCL/cadkit';
+/** Release files (CLI and C API archives, SHA256SUMS) under /v<version>/. Same value as MIRROR_URL in scripts/release.py. */
+export const RELEASE_HOST = 'https://release.cadkit.org';
 export const STATS_REPO = 'https://github.com/TNYCL/cadkit-stats';
 export const STATS_SUMMARY_URL =
 	'https://raw.githubusercontent.com/TNYCL/cadkit-stats/main/data/summary.json';

@@ -264,6 +264,52 @@ jobs:
           name: fuzz-artifacts-${{ matrix.target }}
           path: fuzz/artifacts
 
+  # The one-line installers, run for real against the published release: first from
+  # release.cadkit.org, then with the mirror unreachable so the GitHub Releases path runs too.
+  installer:
+    name: installer (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        if: matrix.os == 'ubuntu-latest'
+        run: shellcheck site/public/install.sh
+      - name: install.sh, piped as documented
+        if: runner.os != 'Windows'
+        run: |
+          CADKIT_INSTALL_DIR="$RUNNER_TEMP/mirror" sh < site/public/install.sh
+          "$RUNNER_TEMP/mirror/cadkit" --version
+      - name: install.sh, GitHub Releases fallback
+        if: runner.os != 'Windows'
+        run: |
+          CADKIT_DOWNLOAD_URL=https://release.invalid CADKIT_INSTALL_DIR="$RUNNER_TEMP/fallback" sh site/public/install.sh
+          "$RUNNER_TEMP/fallback/cadkit" --version
+      - name: install.ps1 through iex (PowerShell 7), user PATH
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'mirror'
+          $env:CADKIT_INSTALL_DIR = $dir
+          Get-Content -Raw site/public/install.ps1 | Invoke-Expression
+          cadkit --version
+          if ($LASTEXITCODE -ne 0) { throw 'cadkit is not on PATH for this session' }
+          $stored = [Environment]::GetEnvironmentVariable('Path', 'User') -split ';'
+          if ($stored -notcontains $dir) { throw 'the install directory was not added to the user PATH' }
+      - name: install.ps1 (Windows PowerShell 5.1), GitHub Releases fallback
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $env:CADKIT_DOWNLOAD_URL = 'https://release.invalid'
+          $env:CADKIT_NO_MODIFY_PATH = '1'
+          $env:CADKIT_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'fallback'
+          ./site/public/install.ps1
+          & (Join-Path $env:CADKIT_INSTALL_DIR 'cadkit.exe') --version
+          if ($LASTEXITCODE -ne 0) { throw 'cadkit.exe did not run' }
+
   site:
     name: website (cadkit.org)
     runs-on: ubuntu-latest

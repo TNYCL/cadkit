@@ -1,7 +1,11 @@
 ---
 // Install commands per language; shares the "lang" sync key with <CodeTabs>.
 import { Tabs, TabItem, Code } from '@astrojs/starlight/components';
-import { LINKS } from '../config';
+import { LINKS, SITE } from '../config';
+
+// The CLI is installed by a script served from this site (public/install.sh, public/install.ps1).
+const cliInstall = `curl -fsSL ${SITE}/install.sh | sh`;
+const cliInstallWindows = `irm ${SITE}/install.ps1 | iex`;
 ---
 
 <div class="ck-install">
@@ -15,6 +19,13 @@ import { LINKS } from '../config';
 				<a href={LINKS.releases}>GitHub Releases</a>
 			</p>
 		</TabItem>
+		<TabItem label="CLI">
+			<Code code={cliInstall} lang="sh" frame="code" />
+			<p class="ck-install-more">
+				<span>Windows: <code>{cliInstallWindows}</code></span>
+				<a href="/docs/getting-started/cli/#install">Other ways to install</a>
+			</p>
+		</TabItem>
 	</Tabs>
 </div>
 
@@ -25,6 +36,12 @@ import { LINKS } from '../config';
 	.ck-install :global([role='tab']) {
 		font-family: var(--__sl-font-mono);
 		font-size: var(--sl-text-xs);
+	}
+	/* Five tabs at Starlight's default padding are wider than a phone screen. */
+	@media (max-width: 30rem) {
+		.ck-install :global(starlight-tabs .tab > [role='tab']) {
+			padding-inline: var(--ck-space-2);
+		}
 	}
 	.ck-install :global([role='tabpanel']) {
 		margin-top: var(--ck-space-3);
@@ -45,5 +62,14 @@ import { LINKS } from '../config';
 	}
 	.ck-install-c code {
 		font-size: 0.875em;
+	}
+	.ck-install-more {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: space-between;
+		gap: var(--ck-space-1) var(--ck-space-4);
+		margin: var(--ck-space-2) 0 0;
+		font-size: var(--sl-text-xs);
+		color: var(--ck-muted);
 	}
 </style>

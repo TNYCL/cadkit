@@ -198,6 +198,8 @@ const useCases = [
 <style>
 	.ck-hero {
 		display: grid;
+		/* minmax(0, ...): a long install command scrolls inside its code block instead of widening the page. */
+		grid-template-columns: minmax(0, 1fr);
 		gap: var(--ck-space-12);
 		padding-top: var(--ck-space-12);
 		padding-bottom: var(--ck-space-16);

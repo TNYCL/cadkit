@@ -47,7 +47,7 @@ src/pages/              index, 404, robots.txt, llms.txt, llms-full.txt, [...doc
                         changelog/feed.xml, .well-known/security.txt
 scripts/                build pipeline (hero, OG cards, CSP, verify, brand, sample plan)
 scripts/check-snippets/ the four landing snippets and their checks
-public/                 favicons, brand/, samples/, _headers template, _redirects, IndexNow key file
+public/                 favicons, brand/, samples/, _headers template, _redirects, IndexNow key file, install.sh and install.ps1
 test/                   node --test suites
 ```
 
@@ -61,7 +61,7 @@ test/                   node --test suites
 | `PageLayout` | Props `{title, description, breadcrumbs?, ogImage?, jsonLd?, noAnalytics?, noindex?, ogType?, header?, eyebrow?, lead?, pagefind?}`. Renders through `StarlightPage`, so header, search, theme toggle and the title-block footer match the docs. With `header` (default) it renders the page `<h1>` from `title`; with `header={false}` the page must render exactly one `<h1>`. |
 | `Prose` | Long text styled exactly like the docs (Starlight markdown styles). |
 | `CodeTabs` | `snippets: {label: 'Rust'\|'Python'\|'JavaScript'\|'C', lang, code, title?}[]`. Starlight synced tabs with sync key `lang`: the choice persists site-wide (also in MDX docs using `<Tabs syncKey="lang">` with the same labels). Copy button from Expressive Code. |
-| `InstallTabs` | `cargo add cadkit` / `pip install pycadkit` / `npm install cadkit-wasm` / C archive from GitHub Releases; same sync key. |
+| `InstallTabs` | `cargo add cadkit` / `pip install pycadkit` / `npm install cadkit-wasm` / C archive from GitHub Releases / the CLI install command; same sync key (the CLI tab has no counterpart in `CodeTabs`). |
 | `FormatMatrix`, `StatusChip` | Read/write status from `src/data/formats.ts`; chips are icon + text. Use chips on `bg` or `surface` only (light "ok" on `raised` is below AA). |
 | `DimensionDivider` | `label`: section divider drawn as a dimension line (decorative). |
 | `Callout` | `variant: 'note' \| 'caution'`, optional `title`. |
@@ -203,6 +203,21 @@ JavaScript ones; `scripts/check-snippets/run.sh` runs Python (venv with `pycadki
 (`cargo check` and run; `CADKIT_REGISTRY_VERSION=0.5.3` checks against crates.io), C (syntax,
 plus link and run when `CADKIT_CAPI_LIB_DIR` is set) and the CLI (`CADKIT_BIN`, otherwise a
 debug build through the lock). `DOCS_RUN` selects targets.
+
+## CLI installers
+
+`public/install.sh` (POSIX sh) and `public/install.ps1` (Windows PowerShell 5.1 and
+PowerShell 7) are served at `/install.sh` and `/install.ps1` as plain text
+(`public/_headers`). They download the CLI from `release.cadkit.org`, or from the GitHub
+release when that host cannot be reached, verify it against `SHA256SUMS` and install it into a
+user directory; how the files get there is in [docs/RELEASING.md](../docs/RELEASING.md).
+`test/installers.test.mjs` keeps them in step with the release workflow's CLI targets and the
+mirror URL in `scripts/release.py`; the CI job `installer` runs them on Linux, macOS and Windows.
+Keep `install.ps1` ASCII-only and free of `exit`.
+
+Where the site points to them: the CLI tab of `InstallTabs` on the home page, the Install
+section of `/docs/getting-started/cli/`, `llms.txt`, and `/install`, which redirects to that
+section (`public/_redirects`). `RELEASE_HOST` in `src/config.ts` is the download host.
 
 ## Demo and samples
 

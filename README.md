@@ -96,13 +96,25 @@ certified by any CAD vendor.
 | Python | [`pycadkit`](https://pypi.org/project/pycadkit/) | `pip install pycadkit` (imports as `cadkit`) |
 | JavaScript (browser, Node) | [`cadkit-wasm`](https://www.npmjs.com/package/cadkit-wasm) | `npm install cadkit-wasm` |
 | Rust library | [`cadkit`](https://crates.io/crates/cadkit) | `cargo add cadkit` |
-| CLI | [`cadkit-cli`](https://crates.io/crates/cadkit-cli) | binary from [GitHub Releases](https://github.com/TNYCL/cadkit/releases/latest), `cargo binstall cadkit-cli` or `cargo install cadkit-cli` |
+| CLI | [`cadkit-cli`](https://crates.io/crates/cadkit-cli) | install script (below), `cargo binstall cadkit-cli`, `cargo install cadkit-cli`, or the binary from [GitHub Releases](https://github.com/TNYCL/cadkit/releases/latest) |
 | C / C++ | [`cadkit-capi`](https://crates.io/crates/cadkit-capi) | archive `cadkit-capi-<target>` from [GitHub Releases](https://github.com/TNYCL/cadkit/releases/latest): headers, shared and static library; or build from source |
 
 Python wheels, CLI binaries and C API archives are built for Linux x86_64 and aarch64, macOS
 arm64 and x86_64, and Windows x64. One Python wheel per platform serves Python 3.9 and
 newer; the Linux CLI is a static binary. Each release lists checksums in `SHA256SUMS`.
 The minimum supported Rust version is 1.88.
+
+The CLI installs without a Rust toolchain:
+
+```sh
+curl -fsSL https://cadkit.org/install.sh | sh      # Linux, macOS
+irm https://cadkit.org/install.ps1 | iex           # Windows (PowerShell)
+```
+
+The script downloads the binary for your platform from `release.cadkit.org` (the same files as
+the GitHub release, which it falls back to), checks it against `SHA256SUMS` and puts it into
+`~/.local/bin`, or `%LOCALAPPDATA%\Programs\cadkit\bin` on Windows, without administrator
+rights. `CADKIT_VERSION` pins a version and `CADKIT_INSTALL_DIR` chooses the directory.
 
 ## Document operations
 
