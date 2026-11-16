@@ -3,29 +3,117 @@
 // page starts; the page itself never loads WebAssembly. Files are read locally and never uploaded.
 // No analytics on /demo/ (NO_ANALYTICS_PREFIXES in src/config.ts), and public/_headers gives
 // /demo/* its own CSP (worker-src 'self', connect-src 'self').
+import { Code } from '@astrojs/starlight/components';
 import PageLayout from '../../layouts/PageLayout.astro';
+import CodeTabs from '../../components/CodeTabs.astro';
 import { CADKIT_VERSION, LINKS } from '../../config';
 import { SAMPLES } from '../../demo/samples';
-import { MAX_FILE_BYTES, MAX_SVG_BYTES } from '../../demo/protocol';
+import { DXF_CODEPAGES, DXF_VERSIONS, MAX_FILE_BYTES, MAX_JSON_ENTITIES, MAX_SVG_BYTES, TARGET_UNITS, TKGM_PROFILES } from '../../demo/protocol';
+import { unitName } from '../../demo/text';
 import '../../demo/viewer.css';
+
+// The code examples under the viewer are the files the documentation shows and CI checks
+// (scripts/check-snippets/docs/), imported verbatim.
+import readRust from '../../../scripts/check-snippets/docs/rust/read_dxf.rs?raw';
+import readPython from '../../../scripts/check-snippets/docs/python/read_dxf.py?raw';
+import readJs from '../../../scripts/check-snippets/docs/js/read-dxf.mjs?raw';
+import readC from '../../../scripts/check-snippets/docs/c/read_dxf.c?raw';
+import readCli from '../../../scripts/check-snippets/docs/cli/tour.sh?raw';
+import svgRust from '../../../scripts/check-snippets/docs/rust/dxf_to_svg.rs?raw';
+import svgPython from '../../../scripts/check-snippets/docs/python/dxf_to_svg.py?raw';
+import svgJs from '../../../scripts/check-snippets/docs/js/dxf-to-svg.mjs?raw';
+import svgC from '../../../scripts/check-snippets/docs/c/dxf_to_svg.c?raw';
+import svgCli from '../../../scripts/check-snippets/docs/cli/dxf-to-svg.sh?raw';
+import inspectRust from '../../../scripts/check-snippets/docs/rust/inspect_drawing.rs?raw';
+import inspectPython from '../../../scripts/check-snippets/docs/python/inspect_drawing.py?raw';
+import inspectJs from '../../../scripts/check-snippets/docs/js/inspect-drawing.mjs?raw';
+import inspectC from '../../../scripts/check-snippets/docs/c/inspect_drawing.c?raw';
+import inspectCli from '../../../scripts/check-snippets/docs/cli/inspect.sh?raw';
+import untrustedRust from '../../../scripts/check-snippets/docs/rust/untrusted.rs?raw';
+import untrustedPython from '../../../scripts/check-snippets/docs/python/untrusted.py?raw';
+import untrustedJs from '../../../scripts/check-snippets/docs/js/untrusted.mjs?raw';
+import untrustedC from '../../../scripts/check-snippets/docs/c/untrusted.c?raw';
+import untrustedCli from '../../../scripts/check-snippets/docs/cli/untrusted.sh?raw';
+import gmlRust from '../../../scripts/check-snippets/docs/rust/citygml.rs?raw';
+import gmlPython from '../../../scripts/check-snippets/docs/python/citygml.py?raw';
+import gmlJs from '../../../scripts/check-snippets/docs/js/citygml.mjs?raw';
+import gmlC from '../../../scripts/check-snippets/docs/c/citygml.c?raw';
+import gmlCli from '../../../scripts/check-snippets/docs/cli/citygml.sh?raw';
 
 const mb = (n: number) => `${Math.round(n / (1024 * 1024))} MiB`;
 const title = 'Viewer demo';
 const description =
-	'Open DWG, DGN, DXF and CityGML drawings in your browser with cadkit-wasm: pan, zoom, inspect layers, export SVG, DXF or JSON. Files never leave the tab.';
+	'Open DWG, DGN, DXF and CityGML files in your browser with cadkit-wasm: 2D sheets, paper layouts, 3D models, layers, inspector and exports. Files stay in the tab.';
+
+const four = (rust: string, python: string, js: string, c: string, stem: string) => [
+	{ label: 'JavaScript' as const, lang: 'js', code: js, title: `${stem.replace(/_/g, '-')}.mjs (Node)` },
+	{ label: 'Rust' as const, lang: 'rust', code: rust, title: 'src/main.rs' },
+	{ label: 'Python' as const, lang: 'python', code: python, title: `${stem}.py` },
+	{ label: 'C' as const, lang: 'c', code: c, title: `${stem}.c` },
+];
+const TASKS = [
+	{
+		id: 'read',
+		label: 'Read and write',
+		text: 'What "Open file" and the DXF export do: read any supported format into the neutral document and write it back as DXF.',
+		guide: { href: '/docs/getting-started/javascript/', label: 'Getting started' },
+		snippets: four(readRust, readPython, readJs, readC, 'read_dxf'),
+		cli: readCli,
+	},
+	{
+		id: 'svg',
+		label: 'Render SVG',
+		text: 'What the 2D sheet is made of: one model of the document as a standalone SVG, one group per layer.',
+		guide: { href: '/docs/guides/dxf-to-svg/', label: 'Convert DXF to SVG' },
+		snippets: four(svgRust, svgPython, svgJs, svgC, 'dxf_to_svg'),
+		cli: svgCli,
+	},
+	{
+		id: 'inspect',
+		label: 'Inspect',
+		text: 'What the File, Layers and Entity tabs show: the header without decoding entities, then layers, entities and warnings.',
+		guide: { href: '/docs/guides/inspect-drawing/', label: 'Inspect a drawing and its layers' },
+		snippets: four(inspectRust, inspectPython, inspectJs, inspectC, 'inspect_drawing'),
+		cli: inspectCli,
+	},
+	{
+		id: 'untrusted',
+		label: 'Untrusted input',
+		text: 'What the Checks tab exercises: explicit limits, typed errors instead of crashes, and output with a byte budget.',
+		guide: { href: '/docs/guides/untrusted-files/', label: 'Handling untrusted files' },
+		snippets: four(untrustedRust, untrustedPython, untrustedJs, untrustedC, 'untrusted'),
+		cli: untrustedCli,
+	},
+	{
+		id: 'citygml',
+		label: 'CityGML',
+		text: 'What the CityGML checks and export use: the native CityGML model, validation and the local TKGM preflight.',
+		guide: { href: '/docs/guides/citygml-tkgm/', label: 'CityGML and TKGM preflight' },
+		snippets: four(gmlRust, gmlPython, gmlJs, gmlC, 'citygml'),
+		cli: gmlCli,
+	},
+];
+const TABS = [
+	{ id: 'file', label: 'File' },
+	{ id: 'layers', label: 'Layers' },
+	{ id: 'entity', label: 'Entity' },
+	{ id: 'export', label: 'Export' },
+	{ id: 'checks', label: 'Checks' },
+	{ id: 'calls', label: 'Calls' },
+];
 ---
 
 <PageLayout
 	title={title}
 	description={description}
 	breadcrumbs={[{ label: 'Demo' }]}
-	eyebrow={`cadkit-wasm ${CADKIT_VERSION} · runs in your browser`}
-	lead="Read a DWG, DGN, DXF or CityGML file with cadkit compiled to WebAssembly. Pan and zoom, toggle layers, pick entities to see their properties, and export the document. Your file is read in this tab and never uploaded."
+	lead="cadkit compiled to WebAssembly, running in this tab. Your file is read here and never uploaded."
 	noAnalytics
+	app
 >
-	<section class="ck-container ck-demo" aria-labelledby="ck-viewer-heading">
+	<section class="ck-demo" aria-labelledby="ck-viewer-heading">
 		<h2 id="ck-viewer-heading" class="sr-only">Viewer</h2>
-		<div class="ck-viewer" id="ck-viewer" data-state="empty" data-sheet="light">
+		<div class="ck-viewer" id="ck-viewer" data-state="empty" data-sheet="light" data-panel="open" data-mode="2d">
 			<div class="ck-vbar">
 				<button type="button" class="ck-btn ck-btn--primary" id="ck-open">
 					<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 3.5h4l1.5 1.5H14v8H2z" fill="none" stroke="currentColor" stroke-width="1.25"></path></svg>
@@ -44,6 +132,9 @@ const description =
 					<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><rect x="3" y="7" width="10" height="7" fill="none" stroke="currentColor" stroke-width="1.25"></rect><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" fill="none" stroke="currentColor" stroke-width="1.25"></path></svg>
 					Local only, nothing is uploaded
 				</span>
+				<button type="button" class="ck-ibtn ck-vbar-panel" id="ck-panel-toggle" aria-pressed="true" aria-controls="ck-panel" aria-label="Details panel" title="Show or hide the details panel">
+					<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 2.5h11v11h-11zM10 2.5v11" fill="none" stroke="currentColor" stroke-width="1.5"></path></svg>
+				</button>
 			</div>
 
 			<div class="ck-vmain">
@@ -58,26 +149,54 @@ const description =
 						aria-describedby="ck-summary ck-keys"
 					>
 						<div class="ck-canvas" id="ck-canvas"></div>
+						<canvas class="ck-gl" id="ck-gl" hidden></canvas>
 						<span class="ck-crosshair" aria-hidden="true"></span>
 					</div>
 
 					<div class="ck-stage-tools" role="group" aria-label="View">
 						<button type="button" class="ck-ibtn" id="ck-zin" aria-label="Zoom in" title="Zoom in (+)" disabled>
-							<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.5"></path></svg>
+							<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 3v10M3 8h10" fill="none" stroke="currentColor" stroke-width="1.5"></path></svg>
 						</button>
 						<button type="button" class="ck-ibtn" id="ck-zout" aria-label="Zoom out" title="Zoom out (-)" disabled>
-							<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 8h10" stroke="currentColor" stroke-width="1.5"></path></svg>
+							<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 8h10" fill="none" stroke="currentColor" stroke-width="1.5"></path></svg>
 						</button>
 						<button type="button" class="ck-ibtn" id="ck-fit" aria-label="Fit drawing" title="Fit drawing (0)" disabled>
 							<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4" fill="none" stroke="currentColor" stroke-width="1.5"></path></svg>
 						</button>
+						<button type="button" class="ck-ibtn ck-ibtn--text" id="ck-3d" aria-pressed="false" aria-label="3D view" title="3D view (3)" hidden>3D</button>
+						<button type="button" class="ck-ibtn" id="ck-measure-toggle" aria-pressed="false" aria-label="Measure" title="Measure distance and area (M)" disabled>
+							<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M1.5 10.5 10.5 1.5l4 4-9 9zM4.5 7.5 6 9M6.5 5.5 8 7M8.5 3.5 10 5" fill="none" stroke="currentColor" stroke-width="1.5"></path></svg>
+						</button>
 						<button type="button" class="ck-ibtn" id="ck-sheet" aria-pressed="false" aria-label="Dark sheet" title="Dark sheet" disabled>
 							<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><rect x="2.5" y="2.5" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.25"></rect><path d="M13.5 2.5v11h-11z" fill="currentColor"></path></svg>
+						</button>
+						<button type="button" class="ck-ibtn" id="ck-full" aria-pressed="false" aria-label="Full screen" title="Full screen (F)">
+							<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M9.5 2.5h4v4M13.5 2.5 9 7M6.5 13.5h-4v-4M2.5 13.5 7 9" fill="none" stroke="currentColor" stroke-width="1.5"></path></svg>
 						</button>
 						<button type="button" class="ck-ibtn ck-touch-done" id="ck-touch-done" hidden>Done</button>
 					</div>
 
 					<p class="ck-readout" id="ck-readout" aria-hidden="true"></p>
+
+					<div class="ck-notice" id="ck-notice" role="note" hidden>
+						<p id="ck-notice-text"></p>
+						<button type="button" class="ck-link-btn" id="ck-notice-more">Details</button>
+						<button type="button" class="ck-link-btn" id="ck-notice-close" aria-label="Dismiss this note">Dismiss</button>
+					</div>
+
+					<div class="ck-mbox" id="ck-mbox" hidden>
+						<p id="ck-mbox-text" role="status"></p>
+						<div>
+							<button type="button" class="ck-link-btn" id="ck-m-close" disabled>Close shape</button>
+							<button type="button" class="ck-link-btn" id="ck-m-undo" disabled>Undo point</button>
+							<button type="button" class="ck-link-btn" id="ck-m-clear" disabled>Clear</button>
+						</div>
+					</div>
+
+					<div class="ck-selchip" id="ck-selchip" hidden>
+						<p id="ck-selchip-text"></p>
+						<button type="button" class="ck-link-btn" id="ck-selchip-more">Details</button>
+					</div>
 
 					<div class="ck-overlay ck-empty" id="ck-empty">
 						<div class="ck-empty-inner">
@@ -121,71 +240,209 @@ const description =
 					</div>
 
 					<div class="ck-overlay ck-touch" id="ck-touch" hidden>
-						<button type="button" class="ck-btn ck-btn--primary" id="ck-touch-start">Tap to interact</button>
+						<button type="button" class="ck-btn ck-btn--primary" id="ck-touch-start">Tap to move the drawing</button>
 					</div>
 
 					<div class="ck-alert" id="ck-alert" role="alert" hidden></div>
 				</div>
 
 				<aside class="ck-panel" id="ck-panel" aria-label="Drawing details">
-					<span class="ck-panel-handle" aria-hidden="true"></span>
-					<section class="ck-psec" aria-labelledby="ck-h-doc">
-						<h3 id="ck-h-doc">Document</h3>
-						<p class="ck-summary" id="ck-summary">No drawing open. Open a file or a sample to see its format, units, layers and entities here.</p>
-						<div class="ck-model" id="ck-model-wrap" hidden>
-							<label for="ck-model">Model</label>
-							<select id="ck-model"></select>
-						</div>
-						<dl class="ck-dl" id="ck-info"></dl>
-					</section>
+					<div class="ck-tabs" role="tablist" aria-label="Drawing details">
+						{
+							TABS.map((t, i) => (
+								<button type="button" role="tab" class="ck-tab" id={`ck-t-${t.id}`} data-tab={t.id} aria-controls={`ck-p-${t.id}`} aria-selected={i === 0 ? 'true' : 'false'} tabindex={i === 0 ? 0 : -1}>
+									{t.label}
+								</button>
+							))
+						}
+					</div>
 
-					<section class="ck-psec" aria-labelledby="ck-h-layers">
-						<div class="ck-psec-head">
-							<h3 id="ck-h-layers">Layers <span class="ck-count" id="ck-layer-count"></span></h3>
-							<div class="ck-psec-actions">
-								<button type="button" class="ck-link-btn" id="ck-layers-all" disabled>Show all</button>
-								<button type="button" class="ck-link-btn" id="ck-layers-none" disabled>Hide all</button>
+					<div class="ck-tabpanel" role="tabpanel" id="ck-p-file" aria-labelledby="ck-t-file" tabindex="0">
+						<section class="ck-psec">
+							<p class="ck-summary" id="ck-summary">No drawing open. Open a file or a sample to see its format, units, layers and entities here.</p>
+							<div class="ck-model" id="ck-model-wrap" hidden>
+								<label for="ck-model">Model or layout</label>
+								<select id="ck-model"></select>
 							</div>
-						</div>
-						<ul class="ck-layers" id="ck-layers"></ul>
-					</section>
+							<dl class="ck-dl" id="ck-info"></dl>
+						</section>
+						<section class="ck-psec" id="ck-notdrawn" aria-labelledby="ck-h-notdrawn" hidden>
+							<h3 id="ck-h-notdrawn">Read but not drawn <span class="ck-count" id="ck-notdrawn-count"></span></h3>
+							<p class="ck-hint">
+								cadkit keeps entity types it has no model for as <code>unknown</code> entities with their source type and handle, and says so in a warning. The viewer and the writers skip them. Coverage per format: <a href={LINKS.interchangeStatus}>interchange status</a>.
+							</p>
+							<ul class="ck-chips" id="ck-notdrawn-list"></ul>
+						</section>
+						<section class="ck-psec" aria-labelledby="ck-h-warn">
+							<h3 id="ck-h-warn">Warnings <span class="ck-count" id="ck-warn-count"></span></h3>
+							<p class="ck-hint" id="ck-warn-hint">
+								Readers record what they could not model as warnings with stable codes and keep going.
+							</p>
+							<div id="ck-warnings"></div>
+						</section>
+					</div>
 
-					<section class="ck-psec" aria-labelledby="ck-h-sel">
-						<div class="ck-psec-head">
-							<h3 id="ck-h-sel" tabindex="-1">Selection</h3>
-							<div class="ck-psec-actions">
-								<button type="button" class="ck-link-btn" id="ck-sel-clear" hidden>Clear</button>
+					<div class="ck-tabpanel" role="tabpanel" id="ck-p-layers" aria-labelledby="ck-t-layers" tabindex="0" hidden>
+						<section class="ck-psec">
+							<div class="ck-psec-head">
+								<h3 id="ck-h-layers">Layers <span class="ck-count" id="ck-layer-count"></span></h3>
+								<div class="ck-psec-actions">
+									<button type="button" class="ck-link-btn" id="ck-layers-all" disabled>Show all</button>
+									<button type="button" class="ck-link-btn" id="ck-layers-none" disabled>Hide all</button>
+								</div>
 							</div>
-						</div>
-						<p class="ck-hint" id="ck-sel-hint">Click an entity, or press Enter in the drawing to pick at the crosshair.</p>
-						<dl class="ck-dl" id="ck-sel"></dl>
-					</section>
+							<input type="search" class="ck-input" id="ck-layer-filter" placeholder="Filter layers" aria-label="Filter layers" hidden />
+							<ul class="ck-layers" id="ck-layers" aria-labelledby="ck-h-layers"></ul>
+							<p class="ck-hint" id="ck-layers-hint">Open a drawing to list its layers.</p>
+						</section>
+					</div>
 
-					<section class="ck-psec" aria-labelledby="ck-h-warn">
-						<h3 id="ck-h-warn">Warnings <span class="ck-count" id="ck-warn-count"></span></h3>
-						<p class="ck-hint" id="ck-warn-hint">
-							Readers record what they could not model as warnings with stable codes and keep going.
-						</p>
-						<div id="ck-warnings"></div>
-					</section>
+					<div class="ck-tabpanel" role="tabpanel" id="ck-p-entity" aria-labelledby="ck-t-entity" tabindex="0" hidden>
+						<section class="ck-psec">
+							<div class="ck-psec-head">
+								<h3 id="ck-h-sel" tabindex="-1">Selection</h3>
+								<div class="ck-psec-actions">
+									<button type="button" class="ck-link-btn" id="ck-sel-zoom" hidden>Zoom to</button>
+									<button type="button" class="ck-link-btn" id="ck-sel-clear" hidden>Clear</button>
+								</div>
+							</div>
+							<p class="ck-hint" id="ck-sel-hint">Click an entity in the drawing, or press Enter in the drawing to pick at the crosshair.</p>
+							<dl class="ck-dl" id="ck-sel"></dl>
+						</section>
+						<section class="ck-psec" id="ck-sel-props" aria-labelledby="ck-h-props" hidden>
+							<h3 id="ck-h-props">Format properties <span class="ck-count" id="ck-sel-props-count"></span></h3>
+							<p class="ck-hint">Data the neutral model has no field for is kept under a format prefix instead of being dropped.</p>
+							<dl class="ck-dl ck-dl--props" id="ck-sel-props-list"></dl>
+						</section>
+						<section class="ck-psec" id="ck-sel-json-wrap" hidden>
+							<details class="ck-json">
+								<summary>Entity as JSON</summary>
+								<p class="ck-json-actions">
+									<button type="button" class="ck-link-btn" id="ck-sel-copy">Copy</button>
+									<span class="ck-hint" id="ck-sel-json-note"></span>
+								</p>
+								<pre class="ck-pre" id="ck-sel-json" tabindex="0"></pre>
+							</details>
+						</section>
+					</div>
 
-					<section class="ck-psec" aria-labelledby="ck-h-export">
-						<h3 id="ck-h-export">Export</h3>
-						<ul class="ck-exports">
-							<li>
-								<button type="button" class="ck-btn" id="ck-exp-svg" disabled>SVG</button>
-								<span>The current model as shown, without hidden layers.</span>
-							</li>
-							<li>
-								<button type="button" class="ck-btn" id="ck-exp-dxf" disabled>DXF</button>
-								<span>ASCII DXF R2018 from cadkit's writer. Unknown entities are skipped, groups are flattened, handles are new.</span>
-							</li>
-							<li>
-								<button type="button" class="ck-btn" id="ck-exp-json" disabled>JSON</button>
-								<span>The whole format-neutral document, as the CLI and Python output it.</span>
-							</li>
-						</ul>
-					</section>
+					<div class="ck-tabpanel" role="tabpanel" id="ck-p-export" aria-labelledby="ck-t-export" tabindex="0" hidden>
+						<section class="ck-psec" aria-labelledby="ck-h-export">
+							<h3 id="ck-h-export">Save as</h3>
+							<ul class="ck-exports">
+								<li>
+									<button type="button" class="ck-btn" id="ck-exp-svg" disabled>SVG</button>
+									<span>The 2D sheet as shown: this model, the sheet colour, without hidden layers.</span>
+								</li>
+								<li>
+									<button type="button" class="ck-btn" id="ck-exp-dxf" disabled>DXF</button>
+									<span class="ck-exp-opts">
+										<label>
+											<span>Version</span>
+											<select id="ck-dxf-version">
+												{DXF_VERSIONS.map((v) => <option value={v} selected={v === 'r2018'}>{v.toUpperCase()}</option>)}
+											</select>
+										</label>
+										<label>
+											<span>Code page</span>
+											<select id="ck-dxf-codepage" disabled>
+												{DXF_CODEPAGES.map((c) => <option value={c}>{c || 'Default'}</option>)}
+											</select>
+										</label>
+									</span>
+								</li>
+								<li>
+									<button type="button" class="ck-btn" id="ck-exp-json" disabled>JSON</button>
+									<span>The whole format-neutral document, as the CLI and Python output it.</span>
+								</li>
+								<li>
+									<button type="button" class="ck-btn" id="ck-exp-gml" disabled>CityGML</button>
+									<span id="ck-exp-gml-note">For CityGML files: written from the native model, which keeps the object graph, ids and references.</span>
+								</li>
+							</ul>
+							<div class="ck-result" id="ck-exp-result" role="status" hidden></div>
+							<p class="ck-hint ck-small">
+								Every export is read back by cadkit in the worker and compared with the document. DXF R2007 and newer is always UTF-8; older versions take a code page. Not offered: DWG (cadkit has no DWG writer), DGN V8 (<a href="/docs/guides/write-dgn-v8/">needs a seed file</a>) and CityGML from other formats (<a href="/docs/guides/citygml-tkgm/">needs an explicit CRS</a>).
+							</p>
+						</section>
+						<section class="ck-psec" aria-labelledby="ck-h-change">
+							<h3 id="ck-h-change">Change the document</h3>
+							<div class="ck-row">
+								<label for="ck-unit">Units</label>
+								<select id="ck-unit" disabled>
+									{TARGET_UNITS.map((u) => <option value={u}>{unitName(u)}</option>)}
+								</select>
+								<button type="button" class="ck-btn ck-btn--small" id="ck-unit-apply" disabled>Convert</button>
+							</div>
+							<p class="ck-hint ck-small" id="ck-unit-note" hidden>This document names no unit, so there is nothing to convert from.</p>
+							<div class="ck-row">
+								<button type="button" class="ck-btn ck-btn--small" id="ck-explode" disabled>Explode blocks</button>
+								<button type="button" class="ck-btn ck-btn--small" id="ck-reset" disabled>Reset to file</button>
+							</div>
+							<div class="ck-result" id="ck-change-result" role="status" hidden></div>
+							<p class="ck-hint ck-small">Changes apply to the open document in the worker, so the view, the inspector and the exports follow. The file itself is not touched.</p>
+						</section>
+					</div>
+
+					<div class="ck-tabpanel" role="tabpanel" id="ck-p-checks" aria-labelledby="ck-t-checks" tabindex="0" hidden>
+						<section class="ck-psec" aria-labelledby="ck-h-chk-inspect">
+							<h3 id="ck-h-chk-inspect">Header only</h3>
+							<p class="ck-hint">Format, version, code page and units from the first bytes, without decoding entities.</p>
+							<div class="ck-row">
+								<button type="button" class="ck-btn ck-btn--small" id="ck-chk-inspect" disabled>Inspect header</button>
+							</div>
+							<div class="ck-result" id="ck-chk-inspect-out" role="status" hidden></div>
+						</section>
+						<section class="ck-psec" aria-labelledby="ck-h-chk-limit">
+							<h3 id="ck-h-chk-limit">Object limit</h3>
+							<p class="ck-hint">Every count read from a file is checked against limits before memory is allocated. Read the same file again with a lower one.</p>
+							<div class="ck-row">
+								<label for="ck-chk-limit">Max objects</label>
+								<input type="number" class="ck-input ck-input--num" id="ck-chk-limit" min="1" step="1" value="10" disabled />
+								<button type="button" class="ck-btn ck-btn--small" id="ck-chk-limit-run" disabled>Read</button>
+							</div>
+							<div class="ck-result" id="ck-chk-limit-out" role="status" hidden></div>
+						</section>
+						<section class="ck-psec" aria-labelledby="ck-h-chk-cut">
+							<h3 id="ck-h-chk-cut">Truncated file</h3>
+							<p class="ck-hint">Cut the file short and read what is left. A reader must return: a document with warnings, or a typed error.</p>
+							<div class="ck-row">
+								<label for="ck-chk-cut">Keep <output id="ck-chk-cut-value" for="ck-chk-cut">50%</output></label>
+								<input type="range" id="ck-chk-cut" min="5" max="95" step="5" value="50" disabled />
+								<button type="button" class="ck-btn ck-btn--small" id="ck-chk-cut-run" disabled>Read</button>
+							</div>
+							<div class="ck-result" id="ck-chk-cut-out" role="status" hidden></div>
+						</section>
+						<section class="ck-psec" id="ck-chk-gml" aria-labelledby="ck-h-chk-gml" hidden>
+							<h3 id="ck-h-chk-gml">CityGML</h3>
+							<p class="ck-hint">Structural and geometric validation of the native CityGML model, and the local TKGM preflight.</p>
+							<div class="ck-row">
+								<button type="button" class="ck-btn ck-btn--small" id="ck-gml-validate">Validate</button>
+							</div>
+							<div class="ck-result" id="ck-gml-validate-out" role="status" hidden></div>
+							<div class="ck-row">
+								<label for="ck-gml-profile">TKGM profile</label>
+								<select id="ck-gml-profile">
+									{TKGM_PROFILES.map((p) => <option value={p}>{p}</option>)}
+								</select>
+								<button type="button" class="ck-btn ck-btn--small" id="ck-gml-preflight">Preflight</button>
+							</div>
+							<div class="ck-result" id="ck-gml-preflight-out" role="status" hidden></div>
+						</section>
+					</div>
+
+					<div class="ck-tabpanel" role="tabpanel" id="ck-p-calls" aria-labelledby="ck-t-calls" tabindex="0" hidden>
+						<section class="ck-psec">
+							<div class="ck-psec-head">
+								<h3 id="ck-h-calls">cadkit-wasm calls <span class="ck-count" id="ck-calls-count"></span></h3>
+								<div class="ck-psec-actions">
+									<button type="button" class="ck-link-btn" id="ck-calls-clear" disabled>Clear</button>
+								</div>
+							</div>
+							<p class="ck-hint">Every call this page made to the engine, newest first, with the time it took in the worker. "Code" shows the same task in other languages.</p>
+							<ol class="ck-calls" id="ck-calls" aria-labelledby="ck-h-calls"></ol>
+						</section>
+					</div>
 				</aside>
 			</div>
 
@@ -197,6 +454,33 @@ const description =
 		<noscript>
 			<p class="ck-noscript">The viewer needs JavaScript and WebAssembly. The sample files are listed on the <a href="/demo/samples/">samples page</a>.</p>
 		</noscript>
+	</section>
+
+	<section class="ck-container ck-demo-code" id="ck-code" aria-labelledby="ck-code-heading">
+		<h2 id="ck-code-heading">The same in your language</h2>
+		<p class="ck-lead">
+			The viewer calls the JavaScript binding. The Rust crate, the Python package, the C API and the command-line tool do the same work; these are the examples the documentation shows and CI checks.
+		</p>
+		<div class="ck-code-tasks" role="tablist" aria-label="Task">
+			{
+				TASKS.map((t, i) => (
+					<button type="button" role="tab" class="ck-tab" id={`ck-ct-${t.id}`} data-task={t.id} aria-controls={`ck-cp-${t.id}`} aria-selected={i === 0 ? 'true' : 'false'} tabindex={i === 0 ? 0 : -1}>
+						{t.label}
+					</button>
+				))
+			}
+		</div>
+		{
+			TASKS.map((t) => (
+				<div class="ck-code-task" role="tabpanel" id={`ck-cp-${t.id}`} aria-labelledby={`ck-ct-${t.id}`} data-task={t.id}>
+					<p>
+						{t.text} Guide: <a href={t.guide.href}>{t.guide.label}</a>.
+					</p>
+					<CodeTabs snippets={t.snippets} />
+					<Code code={t.cli.trimEnd()} lang="sh" title="shell" />
+				</div>
+			))
+		}
 	</section>
 
 	<section class="ck-container ck-demo-notes" aria-label="About this demo">
@@ -211,20 +495,22 @@ const description =
 		<div>
 			<h2>Limits</h2>
 			<ul class="ck-grips">
-				<li>Files up to {mb(MAX_FILE_BYTES)}; the preview SVG is capped at {mb(MAX_SVG_BYTES)}. The <a href="/docs/">CLI and libraries</a> take your own limits.</li>
-				<li>The preview is an SVG of one model at a time. 3D models are shown as a top view (X/Y).</li>
-				<li>Exports here are SVG, DXF and JSON. DWG has no writer; DGN V8 writing needs a seed file and CityGML writing an explicit CRS, so they are not offered. Coverage per format: <a href={LINKS.interchangeStatus}>INTERCHANGE_STATUS.md</a>.</li>
+				<li>Files up to {mb(MAX_FILE_BYTES)}; the 2D sheet is an SVG of one model, capped at {mb(MAX_SVG_BYTES)}. The <a href="/docs/">CLI and libraries</a> take your own limits.</li>
+				<li>Paper layouts show model space through their viewports. The 3D view draws polygons, faces and meshes; a model without them is shown from above. Both, the inspector and the highlight need the document as JSON, which the demo keeps up to {MAX_JSON_ENTITIES.toLocaleString('en-US')} entities.</li>
+				<li>Points are drawn as dots of constant size. On the dark sheet, colours too dark to see are lightened; the file's colours are in the JSON export.</li>
+				<li>Text uses a browser font, not the drawing's fonts. Coverage per format: <a href={LINKS.interchangeStatus}>interchange status</a>.</li>
 			</ul>
 		</div>
 		<div>
 			<h2 id="ck-keys-heading">Keyboard</h2>
-			<p class="sr-only" id="ck-keys">Arrow keys pan, plus and minus zoom, 0 fits the drawing, Enter picks the entity at the crosshair, Escape clears the selection.</p>
+			<p class="sr-only" id="ck-keys">Arrow keys pan or turn the view, plus and minus zoom, 0 fits the drawing, Enter picks the entity at the crosshair, Escape clears the selection, M measures, 3 switches the 3D view, F is full screen.</p>
 			<dl class="ck-keys" aria-labelledby="ck-keys-heading">
-				<div><dt><kbd>←</kbd> <kbd>↑</kbd> <kbd>→</kbd> <kbd>↓</kbd></dt><dd>Pan (Shift: faster)</dd></div>
+				<div><dt><kbd>←</kbd> <kbd>↑</kbd> <kbd>→</kbd> <kbd>↓</kbd></dt><dd>Pan, or turn the 3D view (Shift: faster, or pan in 3D)</dd></div>
 				<div><dt><kbd>+</kbd> <kbd>−</kbd></dt><dd>Zoom in, out</dd></div>
 				<div><dt><kbd>0</kbd></dt><dd>Fit the drawing</dd></div>
-				<div><dt><kbd>Enter</kbd></dt><dd>Pick at the crosshair</dd></div>
-				<div><dt><kbd>Esc</kbd></dt><dd>Clear the selection</dd></div>
+				<div><dt><kbd>Enter</kbd></dt><dd>Pick at the crosshair, or add a measure point</dd></div>
+				<div><dt><kbd>Esc</kbd></dt><dd>Clear the selection, or stop measuring</dd></div>
+				<div><dt><kbd>M</kbd> <kbd>3</kbd> <kbd>F</kbd></dt><dd>Measure, 3D view, full screen</dd></div>
 			</dl>
 			<p class="ck-small">Samples, their sources and licences: <a href="/demo/samples/">demo samples</a>.</p>
 		</div>
