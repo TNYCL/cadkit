@@ -32,6 +32,13 @@ serde_json = { workspace = true, optional = true }
 [lints]
 workspace = true
 
+[dev-dependencies]
+cfb.workspace = true
+
 [[example]]
 name = "interchange"
-required-features = ["dgn", "gml"]
+required-features = ["dgn", "gml", "json"]
+
+[[test]]
+name = "acceptance_kit"
+required-features = ["dgn", "gml", "json"]

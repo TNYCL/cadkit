@@ -10,11 +10,19 @@ seed-based DGN V8 writer for a documented geometry and tag subset. Part of
 Build DGN import/export into a CAD application using a neutral document and a compatible
 seed. `V8Seed` parses a single-design-model seed once for reuse; `prepare_document` handles
 explicit unit, dimension and symbology conversion. Rust accessors expose the seed palette,
-levels, font names and timestamp, and `Symbology` provides typed access to DGN property keys.
+levels, font names and entries (`font_entries`, `font_number`) and timestamp;
+`palette::exact_index` / `nearest_index` match colors the way the writer does, and
+`Symbology` provides typed access to DGN property keys. `check_structure` reports the
+compound file directory and pages of any V8 file (sibling trees, free slots, page headers,
+record times) with stable warning codes; it needs no `write` feature. `strip_seed_v8` copies a
+seed without its model's drawing content and identifying document properties, keeping its
+tables byte for byte and reporting the names that remain (the result is not anonymous).
 The `write` Cargo feature is enabled by default; disable default features for reading only.
 
 There is no DGN V7 writer. V8 output covers the documented geometry/tag/raster subset;
-full format coverage and external application acceptance remain open. See the
+full format coverage and external application acceptance remain open (the
+[acceptance protocol](https://github.com/TNYCL/cadkit/blob/main/docs/dgn/ACCEPTANCE.md) has not
+been run yet). See the
 [writer contract](https://github.com/TNYCL/cadkit/blob/main/docs/dgn/FORMAT_NOTES.md#seed-based-v8-writer)
 and [host integration guide](https://github.com/TNYCL/cadkit/blob/main/docs/CADKIT_INTEGRATION.md#dgn-export).
 

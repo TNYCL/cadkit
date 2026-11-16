@@ -3,6 +3,8 @@
 //! Observed encodings (see `docs/dgn/FORMAT_NOTES.md`, "Strings"):
 //! - `ff fd` prefix: UTF-16LE follows (V8 string linkages, V7 multibyte text).
 //! - `ff fe 01 00` prefix: 8-bit text in the file / element code page follows (V8 text).
+//! - `ff fe` followed by anything else, in V8 string linkages only: a UTF-16LE byte-order
+//!   mark, UTF-16LE text follows ([`decode_linkage_string`]).
 //! - otherwise: 8-bit text in the code page (no UTF-8 sniffing: MicroStation stores
 //!   locale code page text, and guessing UTF-8 would mis-decode valid code page bytes).
 
@@ -47,7 +49,8 @@ impl TextDecoder {
 /// How a string was stored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StringEncoding {
-    /// `ff fd` marker followed by UTF-16LE.
+    /// UTF-16LE after the `ff fd` marker (or, in V8 string linkages, after an `ff fe`
+    /// byte-order mark).
     Utf16,
     /// `ff fe 01 00` marker followed by 8-bit code page text.
     MarkedCodePage,
@@ -139,6 +142,36 @@ pub(crate) fn decode_utf16(bytes: &[u8]) -> String {
         .take_while(|&u| u != 0)
         .collect();
     String::from_utf16_lossy(&units)
+}
+
+/// Decodes UTF-16LE name fields that carry no marker of their own (model index names,
+/// font names). A leading byte-order mark is not part of the name and is dropped.
+pub(crate) fn decode_utf16_name(bytes: &[u8]) -> String {
+    let rest = bytes.strip_prefix(&[0xff, 0xfe]).unwrap_or(bytes);
+    decode_utf16(rest)
+}
+
+/// The UTF-16LE units after a byte-order mark: `ff fe` not followed by `01 00`.
+///
+/// `ff fe 01 00` keeps its documented meaning (marked 8-bit text, FORMAT_NOTES
+/// "Strings"); as UTF-16 it would start with U+0001, a control character no name holds.
+fn utf16_after_bom(bytes: &[u8]) -> Option<&[u8]> {
+    let rest = bytes.strip_prefix(&[0xff, 0xfe])?;
+    (!rest.starts_with(&[0x01, 0x00])).then_some(rest)
+}
+
+/// Decodes a V8 string linkage payload (level, model, cell and tag set names, unit
+/// labels, file names): the markers of [`decode_dgn_string`], and `ff fe` + UTF-16LE
+/// (a byte-order mark) for writers that store names that way (reported in
+/// cadkit issue #26; no such file is in the test corpus).
+pub(crate) fn decode_linkage_string(
+    bytes: &[u8],
+    enc: impl Into<TextDecoder>,
+) -> (String, StringEncoding) {
+    if let Some(units) = utf16_after_bom(bytes) {
+        return (decode_utf16(units), StringEncoding::Utf16);
+    }
+    decode_dgn_string(bytes, enc)
 }
 
 /// Decodes a DGN string payload, honoring the `ff fd` / `ff fe 01 00` markers.
@@ -253,6 +286,52 @@ mod tests {
         u16.extend_from_slice(&[0, 0, 0x41, 0]);
         assert_eq!(decode_dgn_string(&u16, w1252).0, "Şişe");
         assert_eq!(decode_dgn_string(b"plain\0junk", w1252).0, "plain");
+    }
+
+    fn bom(text: &str) -> Vec<u8> {
+        let mut b = vec![0xff, 0xfe];
+        for u in text.encode_utf16() {
+            b.extend_from_slice(&u.to_le_bytes());
+        }
+        b
+    }
+
+    #[test]
+    fn string_linkages_honor_a_utf16_byte_order_mark() {
+        let w1252 = encoding_for(None);
+        // Cyrillic, Turkish and ASCII names after `ff fe`; the NUL unit ends the name.
+        for name in ["Стены", "Duvar Çizgisi İç", "A-WALL (7)"] {
+            let mut b = bom(name);
+            b.extend_from_slice(&[0, 0, b'x', 0]);
+            assert_eq!(
+                decode_linkage_string(&b, w1252),
+                (name.to_string(), StringEncoding::Utf16)
+            );
+        }
+        // `ff fe 01 00` stays marked 8-bit text in every string kind.
+        let marked = [0xff, 0xfe, 1, 0, b'm', b'y', b'T', 0xe9, b'x', b't'];
+        assert_eq!(
+            decode_linkage_string(&marked, w1252),
+            ("myTéxt".to_string(), StringEncoding::MarkedCodePage)
+        );
+        // Text element payloads keep the documented markers only: no BOM rule there.
+        assert_eq!(decode_dgn_string(&bom("AB"), w1252).0, "ÿþA");
+        // Truncated input: a lone BOM, an odd unit, a cut `ff fe 01`.
+        assert_eq!(decode_linkage_string(&[0xff, 0xfe], w1252).0, "");
+        assert_eq!(
+            decode_linkage_string(&[0xff, 0xfe, b'A', 0, b'B'], w1252).0,
+            "A"
+        );
+        assert_eq!(decode_linkage_string(&[0xff, 0xfe, 1], w1252).0, "");
+        assert_eq!(decode_linkage_string(&[0xff], w1252).0, "ÿ");
+        // Plain and `ff fd` names are unchanged.
+        assert_eq!(decode_linkage_string(b"Default", w1252).0, "Default");
+        let mut fd = vec![0xff, 0xfd];
+        fd.extend_from_slice(&bom("Iı")[2..]);
+        assert_eq!(decode_linkage_string(&fd, w1252).0, "Iı");
+        // Name fields that are UTF-16 by definition drop a leading BOM.
+        assert_eq!(decode_utf16_name(&bom("Модель")), "Модель");
+        assert_eq!(decode_utf16_name(&bom("Model")[2..]), "Model");
     }
 
     #[test]

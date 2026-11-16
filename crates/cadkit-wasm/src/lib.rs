@@ -137,6 +137,37 @@ export interface DgnWriteOptions {
   limits?: Record<string, number>;
 }
 
+/** `dgn::StripSeedOptions`; snake_case or camelCase keys. */
+export interface DgnStripSeedOptions {
+  keep_controls?: boolean;
+  keepControls?: boolean;
+  keep_raster_template?: boolean;
+  keepRasterTemplate?: boolean;
+  keep_cell_definitions?: boolean;
+  keepCellDefinitions?: boolean;
+  model_name?: string | null;
+  modelName?: string | null;
+  timestamp_ms?: number;
+  timestampMs?: number;
+  application?: string;
+}
+
+/** A stripped seed and its `dgn::StripSeedReport` (what was removed, what remains). */
+export interface StrippedDgnSeed {
+  seed: Uint8Array;
+  report: Record<string, unknown> & {
+    removed_graphic_records: number;
+    levels: number;
+    named_levels: number;
+    tag_sets: number;
+    cell_definitions: number;
+    model_name_from_seed: boolean;
+    unknown_streams: number;
+    timestamp_ms: number;
+    warnings: WarningInfo[];
+  };
+}
+
 export interface GmlValidationOptions {
   geometry?: boolean;
   planarity_tolerance?: number;
@@ -384,6 +415,32 @@ pub fn inspect(
     let summary = cadkit::inspect_with(bytes, &opts).map_err(|e| from_cadkit(&e))?;
     let val = serde_json::to_value(&summary).map_err(|e| js_error("invalid", &e.to_string()))?;
     value_to_js(&val)
+}
+
+/// Copies a DGN V8 seed without its model's drawing content and without the document
+/// properties that name people or organisations. `options` follows the Rust
+/// `dgn::StripSeedOptions` contract (object or JSON string, camelCase accepted; an unknown key
+/// is a `bad_argument` error); `readOptions` sets the read limits as for [`read`]. Returns
+/// `{ seed, report }`; the report counts what was removed and what remains. Names in the kept
+/// tables remain: review them before handing the seed on. The result is not anonymous.
+#[wasm_bindgen(js_name = stripDgnSeed, unchecked_return_type = "StrippedDgnSeed")]
+pub fn strip_dgn_seed(
+    seed: &[u8],
+    #[wasm_bindgen(unchecked_optional_param_type = "DgnStripSeedOptions | string | null")]
+    options: Option<JsValue>,
+    #[wasm_bindgen(unchecked_optional_param_type = "ReadOptions | string | null")]
+    read_options: Option<JsValue>,
+) -> Result<JsValue, JsValue> {
+    let opts: cadkit::dgn::StripSeedOptions = decode_js_options(options)?;
+    let read = parse_read_options(read_options)?;
+    let stripped = cadkit::strip_dgn_seed(seed, &opts, &read).map_err(|e| from_cadkit(&e))?;
+    let report =
+        serde_json::to_string(&stripped.report).map_err(|e| js_error("invalid", &e.to_string()))?;
+    let out = js_sys::Object::new();
+    let bytes = js_sys::Uint8Array::from(stripped.bytes.as_slice());
+    Reflect::set(&out, &JsValue::from_str("seed"), &bytes)?;
+    Reflect::set(&out, &JsValue::from_str("report"), &parse_json(&report)?)?;
+    Ok(out.into())
 }
 
 /// Reads a drawing. `options` may contain `keepRaw`, `codepage`, `maxInputBytes`,
@@ -1083,6 +1140,29 @@ mod tests {
         assert!(opts.clear_seed_model);
         assert!((opts.planarity_tolerance - 0.05).abs() < 1e-12);
         assert_eq!(opts.limits.max_objects, 42);
+    }
+
+    #[test]
+    fn strip_seed_options_accept_camel_case_and_keep_defaults() {
+        let raw = json!({ "keepControls": true, "modelName": "Model", "timestampMs": 1.7e12 });
+        let opts: cadkit::dgn::StripSeedOptions =
+            serde_json::from_value(normalize_option_keys(raw)).unwrap();
+        assert!(opts.keep_controls && opts.keep_cell_definitions && !opts.keep_raster_template);
+        assert_eq!(opts.model_name.as_deref(), Some("Model"));
+        assert_eq!(opts.timestamp_ms, 1.7e12);
+        assert_eq!(opts.application, "cadkit");
+        let empty: cadkit::dgn::StripSeedOptions = serde_json::from_value(json!({})).unwrap();
+        assert_eq!(empty, cadkit::dgn::StripSeedOptions::default());
+        // A misspelt key, in either spelling, is rejected instead of keeping a default.
+        for raw in [
+            json!({ "keepCellDefinition": false }),
+            json!({ "keep_cell_definition": false }),
+        ] {
+            let err =
+                serde_json::from_value::<cadkit::dgn::StripSeedOptions>(normalize_option_keys(raw))
+                    .unwrap_err();
+            assert!(err.to_string().contains("unknown field"), "{err}");
+        }
     }
 
     #[test]

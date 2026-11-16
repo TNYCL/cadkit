@@ -1114,6 +1114,16 @@ pub struct Attribute {
     /// How the value text is drawn at `position`; `None` when unknown or not drawn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display: Option<AttributeDisplay>,
+    /// Color of the attribute's own record when the format stores one that differs from
+    /// the owning entity's (a DGN tag element has its own symbology; the DGN reader
+    /// resolves it through the file's color table as it does for entities). `None` uses
+    /// the owning entity's color.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<Color>,
+    /// Lineweight of the attribute's own record when the format stores one that differs
+    /// from the owning entity's. `None` uses the owning entity's lineweight.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lineweight: Option<Lineweight>,
     /// Format-specific data with no neutral field (e.g. `dgn.color_index`, `dgn.weight`).
     #[serde(default, skip_serializing_if = "Props::is_empty")]
     pub props: Props,

@@ -70,11 +70,15 @@ and domain rules.
 
 The model can be written as JSON, SVG, DXF, seed-based DGN V8 and CityGML 2.0 from Rust,
 the CLI, Python, WebAssembly and C (C++ wraps the C ABI). The DGN V8 writer needs a seed
-file and covers a [documented subset](docs/dgn/FORMAT_NOTES.md#seed-based-v8-writer). New
+file and covers a [documented subset](docs/dgn/FORMAT_NOTES.md#seed-based-v8-writer);
+`cadkit strip-seed` prepares one from a drawing of your own (the tables and their names stay,
+see [obtaining a seed](docs/CADKIT_INTEGRATION.md#obtaining-a-seed)). New
 CityGML geometry needs an explicit CRS, and the writer has
 [explicit limits](docs/gml/FORMAT_NOTES.md).
 Local test evidence and the remaining external acceptance are recorded in
-[docs/INTERCHANGE_STATUS.md](docs/INTERCHANGE_STATUS.md). There is no DWG writer yet.
+[docs/INTERCHANGE_STATUS.md](docs/INTERCHANGE_STATUS.md); the protocol for checking DGN
+output in another application is [docs/dgn/ACCEPTANCE.md](docs/dgn/ACCEPTANCE.md). There is
+no DWG writer yet.
 
 Readers degrade instead of failing: records they cannot model become `Unknown` entities and
 warnings on the document. A reader may still return `Unsupported` for a file that uses
@@ -186,6 +190,8 @@ cadkit convert plan.dxf plan.json --pretty
 cadkit convert plan.dxf plan.dgn --seed blank.dgn
 cadkit convert surfaces.dxf model.gml --crs "YOUR_EXPLICIT_CRS" --lod 1
 cadkit validate-gml model.gml
+cadkit check-dgn plan.dgn
+cadkit strip-seed template.dgn blank.dgn --report
 cadkit convert plan.dxf - --to dxf --dxf-version r2000 --output-codepage DOS857 > legacy.dxf
 cadkit convert - plan.svg --explode-inserts --units meter --layer WALLS < plan.dxf
 cadkit completions bash > cadkit.bash

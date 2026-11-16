@@ -912,6 +912,79 @@ pub unsafe extern "C" fn cadkit_document_to_dgn(
     })
 }
 
+/// Copies a DGN V8 seed without the drawing content of its model and without the document
+/// properties that name people or organisations (`dgn::strip_seed_v8`). `options_json_text`
+/// follows the Rust `dgn::StripSeedOptions` JSON contract (an unknown field is
+/// `InvalidArgument`) and `options` sets the read limits; NULL selects the defaults of either. On success `*out` / `*out_len` hold the seed (release
+/// with [`cadkit_bytes_free`]) and `*report_json` the `dgn::StripSeedReport` JSON (release with
+/// [`cadkit_string_free`]); on failure all three are NULL / 0. Names in the kept tables remain
+/// and are counted in the report; the result is not anonymous.
+///
+/// # Safety
+/// `seed` must be NULL or point to `seed_len` readable bytes; `options_json_text` must be NULL
+/// or a valid NUL-terminated C string; `options` must be NULL or point to a valid
+/// `cadkit_options`; `out`, `out_len` and `report_json` must be NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cadkit_dgn_strip_seed(
+    seed: *const u8,
+    seed_len: usize,
+    options_json_text: *const c_char,
+    options: *const cadkit_options,
+    out: *mut *mut u8,
+    out_len: *mut usize,
+    report_json: *mut *mut c_char,
+) -> cadkit_status {
+    // SAFETY: Non-null out-pointers are writable per the caller's contract.
+    unsafe {
+        if !out.is_null() {
+            *out = std::ptr::null_mut();
+        }
+        if !out_len.is_null() {
+            *out_len = 0;
+        }
+        if !report_json.is_null() {
+            *report_json = std::ptr::null_mut();
+        }
+    }
+    guarded(|| {
+        if out.is_null() || out_len.is_null() || report_json.is_null() {
+            return fail(cadkit_status::NullPointer, "output pointer is NULL");
+        }
+        if seed.is_null() || seed_len > isize::MAX as usize {
+            return fail(cadkit_status::InvalidArgument, "invalid DGN seed buffer");
+        }
+        // SAFETY: `options_json_text` is NULL or a valid NUL-terminated C string per the caller's contract.
+        let strip =
+            match unsafe { options_json::<cadkit::dgn::StripSeedOptions>(options_json_text) } {
+                Ok(o) => o,
+                Err(s) => return s,
+            };
+        // SAFETY: `options` is NULL or valid per the caller's contract.
+        let read = match unsafe { convert_options(options) } {
+            Ok(o) => o,
+            Err(s) => return s,
+        };
+        // SAFETY: `seed` is non-null, readable for `seed_len` bytes, and `seed_len <= isize::MAX as usize`.
+        let bytes = unsafe { std::slice::from_raw_parts(seed, seed_len) };
+        let stripped = match cadkit::strip_dgn_seed(bytes, &strip, &read) {
+            Ok(s) => s,
+            Err(e) => return map_error(&e),
+        };
+        let report = match serde_json::to_string(&stripped.report) {
+            Ok(r) => r,
+            Err(e) => return fail(cadkit_status::Internal, &e.to_string()),
+        };
+        let (ptr, len) = register_live_buffer(stripped.bytes);
+        // SAFETY: The three out-pointers were checked non-null above and are writable per the contract.
+        unsafe {
+            *out = ptr;
+            *out_len = len;
+            *report_json = into_c_string(report).into_raw();
+        }
+        cadkit_status::Ok
+    })
+}
+
 /// Exports generic geometry as a UTF-8 CityGML 2.0 string; release `*out` with [`cadkit_string_free`].
 ///
 /// # Safety

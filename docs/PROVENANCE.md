@@ -13,6 +13,10 @@ knowledge. Contributors add a row when they rely on a new source.
 | [GDAL](https://github.com/OSGeo/gdal) `frmts/dgn` (dgnlib) and autotest data | MIT/X | DGN V7 structure, sample files, V8 reference CSV |
 | [ezdxf](https://github.com/mozman/ezdxf) | MIT | DXF structure cross-check; dev-time validator (audit) of written DXF and reader comparison — not a runtime dependency |
 | Autodesk DXF Reference (public documentation) | Public document | DXF group codes per entity |
+| [MS-CFB] Compound File Binary File Format and [MS-OLEPS] Object Linking and Embedding (OLE) Property Set Data Structures (public Microsoft open specifications, learn.microsoft.com) | Open specification | CFB container; directory entry layout and stream entry times (2.6.1), free entry form (2.6.3 "Other Directory Entries"), sibling tree order and colours (2.6.4 "Red-Black Tree"), the root entry's zero creation time (2.6.1); property set streams: `PropertySetStream` (2.21), `PropertySet` (2.20), `TypedPropertyValue` (2.15), `CodePageString` (2.5), `UnicodeString` (2.7), `FILETIME`, the Summary Information (2.25.1, property types) and Document Summary Information property sets and their property ids |
+| Adobe, *TIFF Revision 6.0* (public specification, 1992), Part 1 "Baseline TIFF" | Public document | The synthetic 1-bit image of the DGN acceptance kit (`crates/cadkit/examples/support/acceptance_kit.rs`): header, IFD entry layout, bilevel tags; not used by any library crate |
+| Public issue reports [#24–#30](https://github.com/TNYCL/cadkit/issues) | — | DGN reader corrections (structural descriptions only; see "Attributions") |
+| Top-down 2-3-4 red-black tree insertion: L. J. Guibas and R. Sedgewick, "A dichromatic framework for balanced trees" (FOCS 1978), and R. Sedgewick, *Algorithms* (public literature) | Published algorithm | The sibling tree shape the DGN writer builds and `check_structure` compares (`cfb_tree::top_down_shape`) |
 | Own hex analysis of public and private corpus files | — | All formats |
 
 ## Excluded sources
@@ -41,6 +45,10 @@ Private client drawings in `corpus/private/` are used only for local, structural
 
 - `cadkit-dwg`: R2007 (AC1021) LZ77 decompressor ported from ACadSharp `DwgLZ77AC21Decompressor.cs` (MIT, © DomCR); R2007 container read flow follows ACadSharp `DwgReader.cs`. Spec errata found during implementation are listed in `docs/dwg/FORMAT_NOTES.md`.
 - `cadkit-dgn`: default 256-color DGN palette ported from GDAL dgnlib `abyDefaultPCT` (MIT/X) → `src/palette.rs`; V7 element layouts, TCB, tag set/tag value layouts follow GDAL dgnlib; V7 description-length rule and shared-cell offsets from ezdgn (MIT) → `src/native/v7.rs`; V8 model-header search from ezdgn → `src/native/v8.rs`. Full source table in `docs/dgn/FORMAT_NOTES.md`.
+- `cadkit-dgn` (issues #24–#30): type 11 curve end tangents follow the slope formula of GDAL dgnlib `DGNStrokeCurve` (`ogr/ogrsf_frmts/dgn/dgnstroke.cpp`, MIT/X) → `map::curve_end_tangents`; the rule that a complex chain/shape owns plain components rests on GDAL dgnlib `DGNCreateComplexHeaderFromGroup` (`dgnwrite.cpp`) and the complex-header child loop of `ogrdgnlayer.cpp` (MIT/X) plus own structural counts of the public and private corpus; V7's property bit `0x0080` is left uninterpreted because GDAL's `DGNPF_*` flags (`dgnlib.h`) define none; the `ff fe 01 00` marker in string linkages is the one ezdgn documents (`docs/v8/FORMAT_NOTES.md`, MIT). The `ff fe` byte-order-mark names, hidden graphics, 2D tag angles and chain-in-chain nesting are taken from the public issue reports (structural descriptions only); tests use invented records. No other external implementation was consulted.
+- `cadkit-dgn` structural report and writer fidelity (Unreleased): the free directory entry form and the red-black rules follow the public [MS-CFB] sections 2.6.3 and 2.6.4; the insertion that builds the top-down 2-3-4 shape is the published algorithm in the sources table; the CFB name order's case conversion matches the `cfb` crate (MIT) `compare_names` (`src/internal/path.rs` and its exception table `uppercase.txt`, extracted from ICU data), restated as rules in `cfb_tree::cfb_upper` without copying the table; that most observed trees have the top-down shape, slot orders, page header fields, the model header prefix counter, level sentinels and font table duplicates are own structural counts over the public and private corpus (counts only). Tests use invented names and synthetic records. No external implementation was consulted.
+- `cadkit-dgn` level colors and text lengths (Unreleased): the level color index at `0x48` of 240-byte level entries, the raw weight/style fields, the V8 text length taken from the element range and the property-word observations (`0x0800` point layout, `0x8000`, `0x1000`, type 36, model header type words) are own structural counts over the public and private corpus (counts only). Tests use invented names and synthetic records. No external implementation was consulted.
+- `cadkit-dgn` seed stripping (Unreleased): the minimal property set streams follow the public [MS-OLEPS] structures named in the sources table, with the values observed in the three public V8 samples (code page 1200, system identifier `0x00020005`) and the application name typed as [MS-OLEPS] 2.25.1 specifies (`VT_LPSTR`; the samples store `VT_LPWSTR`); the decision which control records to keep rests on own structural scans of the public and private corpus (record types, in-record offsets and value equality across files, counts only); the container builder reuses the writer's [MS-CFB] directory rules; the per-record-kind decisions, the time fields (`Dgn~H` `0x130`, model header `0x18`/`0x88`, model index `+8`) and the model index entry layout are own structural counts over the public and private corpus (counts only). Tests use invented names and synthetic records. No external implementation was consulted.
 - `cadkit-core`: ACI color table from ACadSharp `Color.cs` (MIT), entries 250–254 corrected to the published AutoCAD greys; DOS/OEM single-byte high-half (`0x80..=0xFF`) character tables (`CP437`, `CP850`, `CP852`, `CP855`, `CP857`, `CP860`, `CP861`, `CP863`, `CP864`, `CP865`, `CP869`) from the Unicode Consortium Public Mapping tables (`PUBLIC/MAPPINGS/VENDORS/MICSFT/PC/`, Unicode License v3) → `src/text.rs`.
 
 ## CityGML and DGN writing additions
@@ -57,7 +65,9 @@ Private client drawings in `corpus/private/` are used only for local, structural
   Rust 1.85; this geometry addition does not change the XML dependency.
 - [rust-cfb / cfb 0.14](https://github.com/mdsteele/rust-cfb), MIT:
   pure Rust CFB writing and independent strict-container validation. Rust 1.74
-  minimum; WASM compilation was checked. No vendor SDK is used.
+  minimum; WASM compilation was checked. No vendor SDK is used. The `cadkit` facade uses
+  the same workspace version as a dev-dependency only, for the strict open of the
+  acceptance kit (example and its test).
 - DGN V8 record encoders follow cadkit's existing attributed native decoders and
   own public/private corpus analysis. The public GDAL V8 sample and its checked-in
   reference CSV are test data; no ODA SDK or V8 driver implementation was used.
@@ -76,6 +86,13 @@ Private client drawings in `corpus/private/` are used only for local, structural
   variation between attachments, cross ids, XAttribute 170 framing). New
   attachments copy a seed attachment and rewrite only the fields that analysis
   identified; tests use invented records. No external implementation was consulted.
+- The blank seed analysis (`docs/dgn/FORMAT_NOTES.md`, "Built-in blank seed";
+  `tests/blank_seed_evidence.rs`) is own byte comparison of the public GDAL `test_dgnv8.dgn`
+  (ODA-written) and the two Safe Software samples (MicroStation-written), with structural
+  counts over the private corpus (equal / not equal, distinct-value counts; no names, values
+  or coordinates copied); ezdgn's V8 notes (MIT) were checked and decode none of the differing
+  fields. Nothing was embedded: no bytes of a third-party template or of any sample are in the
+  sources, and no built-in seed exists.
 - `cadkit-core` writer preflight (`validate_limits`) validates object, vertex, nesting, string, finite-float, and byte budgets directly on the in-memory `Document` AST without extra dependencies.
 - DGN V8 type-17 range writing uses own byte inspection of the existing public
   GDAL and Safe Software samples: low slots are absolute UOR bounds and high
@@ -100,7 +117,12 @@ Private client drawings in `corpus/private/` are used only for local, structural
   measurements behind it come from own analysis of private CityGML files.
 
 Private source files and derived drawing data are not copied into the repository,
-examples, schema cache or acceptance kit. The kit uses public and synthetic data.
+examples, schema cache or acceptance kit. The kit uses public and synthetic data: the
+DGN acceptance kit (`crates/cadkit/examples/interchange.rs`, `docs/dgn/ACCEPTANCE.md`)
+writes invented names, texts, tag values and coordinates into GDAL's public
+`test_dgnv8.dgn` (MIT/X); nothing in it is derived from the Safe Software samples or the
+private corpus. Its read-back comparison, structure check and TIFF writer are original
+code; no external implementation was consulted.
 External vendor application and receiving-system acceptance remain untested.
 
 ### Generic GML export and TKGM local preflight

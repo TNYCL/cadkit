@@ -74,16 +74,38 @@ impl Node {
     }
 }
 
-/// Builds the V8 hierarchy from the role bits and declared component counts.
+/// [`tree_v8_counted`] without the count.
+#[cfg(test)]
+pub(crate) fn tree_v8(items: &[Item<'_>], max_depth: u32) -> Vec<Node> {
+    tree_v8_counted(items, max_depth).0
+}
+
+/// Complex chain (12) and complex shape (14) headers.
+fn is_chain_or_shape(type_code: u16) -> bool {
+    matches!(type_code, 12 | 14)
+}
+
+/// Builds the V8 hierarchy from the role bits and declared component counts, and counts
+/// the complex chains / shapes closed before their declared count was reached because
+/// another chain or shape header followed.
 ///
 /// A component decrements the innermost open header; a non-component closes every open
 /// header (writers sometimes declare more components than they store). Headers whose
 /// count is unknown accept components until the next non-component. Nesting deeper than
 /// `max_depth` is flattened.
-pub(crate) fn tree_v8(items: &[Item<'_>], max_depth: u32) -> Vec<Node> {
+///
+/// A complex chain or shape owns plain components (lines, line strings, arcs, curves);
+/// GDAL dgnlib's complex-header reader collects line geometry only and notes that a child
+/// "should verify complex bit set, not another header". In every chain and shape of the
+/// public and private corpus the declared count equals the run of plain components that
+/// follows. So a chain or shape header that arrives while a chain or shape is still open
+/// is its sibling: the open one declared more components than it stores. Nesting it would
+/// turn the following chains of a cell into a staircase of chains (issue #27).
+pub(crate) fn tree_v8_counted(items: &[Item<'_>], max_depth: u32) -> (Vec<Node>, usize) {
     struct Open {
         node: Node,
         remaining: Option<u32>,
+        chain: bool,
     }
     fn close(stack: &mut Vec<Open>, roots: &mut Vec<Node>) {
         if let Some(open) = stack.pop() {
@@ -95,11 +117,20 @@ pub(crate) fn tree_v8(items: &[Item<'_>], max_depth: u32) -> Vec<Node> {
     }
     let mut roots = Vec::new();
     let mut stack: Vec<Open> = Vec::new();
+    let mut closed_early = 0usize;
     for (i, item) in items.iter().enumerate() {
         while stack.last().is_some_and(|o| o.remaining == Some(0)) {
             close(&mut stack, &mut roots);
         }
         let h = &item.el.header;
+        // Only a component header closes open chains early; any other element closes every
+        // open header below, which is no early close.
+        if h.complex_header && h.complex_component && is_chain_or_shape(h.type_code) {
+            while stack.last().is_some_and(|o| o.chain) {
+                close(&mut stack, &mut roots);
+                closed_early += 1;
+            }
+        }
         if !(h.complex_component && !stack.is_empty()) {
             while !stack.is_empty() {
                 close(&mut stack, &mut roots);
@@ -113,6 +144,7 @@ pub(crate) fn tree_v8(items: &[Item<'_>], max_depth: u32) -> Vec<Node> {
             stack.push(Open {
                 node: Node::leaf(i),
                 remaining: count,
+                chain: is_chain_or_shape(h.type_code),
             });
         } else {
             match stack.last_mut() {
@@ -124,7 +156,7 @@ pub(crate) fn tree_v8(items: &[Item<'_>], max_depth: u32) -> Vec<Node> {
     while !stack.is_empty() {
         close(&mut stack, &mut roots);
     }
-    roots
+    (roots, closed_early)
 }
 
 /// Builds the V7 hierarchy from description lengths (`ends[i]` = end offset of a header).
@@ -181,6 +213,18 @@ pub(crate) fn weight_mm(w: u32) -> f64 {
     0.1 * f64::from(1 + 2 * w)
 }
 
+/// Lineweight of a weight step: millimeters for 0..=31, `ByBlock` for `0xffff_fffe`;
+/// `None` leaves the model default (other values are kept in `dgn.weight` only).
+pub(crate) fn lineweight(w: u32) -> Option<Lineweight> {
+    if w <= 31 {
+        Some(Lineweight::Millimeters(weight_mm(w)))
+    } else if w == 0xffff_fffe {
+        Some(Lineweight::ByBlock)
+    } else {
+        None
+    }
+}
+
 /// Shared mapping state.
 pub(crate) struct Mapper {
     pub(crate) keep_raw: bool,
@@ -203,6 +247,8 @@ pub(crate) struct Mapper {
     pub(crate) xattributes: HashMap<u64, Vec<u32>>,
     /// Raster frame id -> image path.
     pub(crate) raster_paths: HashMap<u64, (Option<String>, Option<String>)>,
+    /// V8 file: property bit `0x0080` hides a graphic element (see [`Mapper::base`]).
+    pub(crate) v8: bool,
     /// Aggregated warnings: code -> (count, first message).
     counts: BTreeMap<String, (u64, String)>,
     pub(crate) warnings: Vec<Warning>,
@@ -224,6 +270,7 @@ impl Mapper {
             attached: HashSet::new(),
             xattributes: HashMap::new(),
             raster_paths: HashMap::new(),
+            v8: false,
             counts: BTreeMap::new(),
             warnings: Vec::new(),
         }
@@ -376,10 +423,8 @@ impl Mapper {
             e.color = self.color(h.color);
             p.insert("dgn.color_index".into(), Value::Int(i64::from(h.color)));
             p.insert("dgn.weight".into(), Value::Int(i64::from(h.weight)));
-            if h.weight <= 31 {
-                e.lineweight = Lineweight::Millimeters(weight_mm(h.weight));
-            } else if h.weight == 0xffff_fffe {
-                e.lineweight = Lineweight::ByBlock;
+            if let Some(w) = lineweight(h.weight) {
+                e.lineweight = w;
             }
             p.insert("dgn.style".into(), Value::Int(i64::from(h.style)));
             if h.style < 0x7fff_ff00 {
@@ -403,6 +448,12 @@ impl Mapper {
             }
             if h.properties & 0x8000 != 0 && matches!(h.type_code, 6 | 14) {
                 p.insert("dgn.hole".into(), Value::Bool(true));
+            }
+            // V8 property bit 0x0080 marks an element that is not drawn: hidden tags carry
+            // it (TreeText), and issue #25 reports that other DGN readers do not draw the
+            // graphics carrying it. GDAL dgnlib gives the V7 bit no meaning: V7 stays visible.
+            if self.v8 && h.properties & 0x0080 != 0 {
+                e.visible = false;
             }
         }
         // Element ids come from the file and may repeat: the XAttributes of an id are
@@ -629,6 +680,12 @@ impl Mapper {
                 if estimated {
                     e.props
                         .insert("dgn.text_length_estimated".into(), Value::Bool(true));
+                } else if !self.v8
+                    || crate::native::decode_v8::stored_text_length(item.raw).is_none()
+                {
+                    // Measured from the element range (V7 always; V8 when 0x80 is zero).
+                    e.props
+                        .insert("dgn.text_length_source".into(), Value::Text("range".into()));
                 }
                 e.props.insert(
                     "dgn.justification".into(),
@@ -660,6 +717,43 @@ impl Mapper {
             ElementData::Curve { points } => {
                 e.props
                     .insert("dgn.curve_points".into(), points_value(points, xf));
+                if let Some((start, end)) = curve_end_tangents(points) {
+                    for (key, t) in [
+                        ("dgn.curve_start_tangent", start),
+                        ("dgn.curve_end_tangent", end),
+                    ] {
+                        e.props.insert(
+                            key.into(),
+                            Value::List([t.x, t.y, t.z].map(Value::Float).to_vec()),
+                        );
+                    }
+                }
+            }
+            ElementData::Ellipse {
+                primary,
+                secondary,
+                rotation,
+                center,
+            } if is_degenerate_conic(*primary, *secondary) => {
+                degenerate_props(e, xf, *primary, *secondary, rotation, *center, None);
+            }
+            ElementData::Arc {
+                start,
+                sweep,
+                primary,
+                secondary,
+                rotation,
+                center,
+            } if is_degenerate_conic(*primary, *secondary) => {
+                degenerate_props(
+                    e,
+                    xf,
+                    *primary,
+                    *secondary,
+                    rotation,
+                    *center,
+                    Some((*start, *sweep)),
+                );
             }
             ElementData::PointString { .. } => {
                 e.props.insert("dgn.point_string".into(), Value::Bool(true));
@@ -955,8 +1049,14 @@ impl Mapper {
         let invisible = h.properties & 0x0080 != 0;
         let mut props = Props::new();
         let mut layer = None;
+        let mut color = None;
+        let mut weight = None;
         if h.has_display_header {
             layer = Some(self.level_name(h.level));
+            // Resolved like an entity's (file color table, else the default palette);
+            // `relative_to_owner` drops both when they equal the owner's.
+            color = Some(self.color(h.color));
+            weight = Some(lineweight(h.weight).unwrap_or_default());
             props.insert("dgn.color_index".into(), Value::Int(i64::from(h.color)));
             props.insert("dgn.weight".into(), Value::Int(i64::from(h.weight)));
             props.insert("dgn.style".into(), Value::Int(i64::from(h.style)));
@@ -990,7 +1090,7 @@ impl Mapper {
                 .with_style(self.font_style_name(t.font))
                 .with_halign(halign)
                 .with_valign(valign)
-                .with_rotation(tag_rotation(t.quaternion))
+                .with_rotation(tag_rotation(&t.display_rotation(h.is_3d)))
         });
         {
             let mut attribute = Attribute::new(tag, tag_value(&t.value))
@@ -1000,6 +1100,8 @@ impl Mapper {
             attribute.position = has_pos.then(|| xf.pt([ox + dx, oy + dy, oz + dz]));
             attribute.layer = layer;
             attribute.display = display;
+            attribute.color = color;
+            attribute.lineweight = weight;
             attribute
         }
     }
@@ -1105,7 +1207,61 @@ fn polyline(points: &[UorPoint], xf: &Xf, closed: bool) -> EntityKind {
     }
 }
 
-/// Type 11 curves: the first two and last two points only define the end tangents.
+/// End tangents of a type 11 curve, derived as GDAL dgnlib's `DGNStrokeCurve` (MIT/X)
+/// derives the slope at its first and last fit points: with `m[k]` the unit direction of
+/// the chord `P[k] -> P[k+1]` (zero for a zero-length chord), each component of the tangent
+/// at fit point `k` is the Akima weighted mean
+/// `(m[k-1]·|m[k+1] - m[k]| + m[k]·|m[k-1] - m[k-2]|) / (|m[k+1] - m[k]| + |m[k-1] - m[k-2]|)`,
+/// or `(m[k-1] + m[k]) / 2` when both weights are zero. The start tangent is taken at
+/// `P[2]` (it uses the two leading tangent points), the end tangent at `P[n-3]`.
+///
+/// The result is GDAL's slope of the position along the chord length: dimensionless and
+/// not normalised (each component mixes the same component of two unit chord directions,
+/// so it lies in [-1, 1]; the length is not 1 in general and may be 0). GDAL measures
+/// chords in XY only; 3D curves here use 3D chord lengths, which equals GDAL for 2D files.
+/// `None` below six points, the fewest GDAL strokes.
+pub(crate) fn curve_end_tangents(points: &[UorPoint]) -> Option<(Vec3, Vec3)> {
+    let n = points.len();
+    if n < 6 {
+        return None;
+    }
+    let chord = |k: usize| -> Option<Vec3> {
+        let [px, py, pz] = *points.get(k)?;
+        let [qx, qy, qz] = *points.get(k.checked_add(1)?)?;
+        Some(
+            Vec3::new(qx - px, qy - py, qz - pz)
+                .normalized()
+                .unwrap_or(Vec3::new(0.0, 0.0, 0.0)),
+        )
+    };
+    let akima = |a: f64, b: f64, c: f64, d: f64| {
+        // a = m[k-2], b = m[k-1], c = m[k], d = m[k+1] (one component each).
+        let (w1, w2) = ((d - c).abs(), (b - a).abs());
+        if w1 == 0.0 && w2 == 0.0 {
+            (c + b) / 2.0
+        } else {
+            (b * w1 + c * w2) / (w1 + w2)
+        }
+    };
+    let tangent = |k: usize| -> Option<Vec3> {
+        let (a, b, c, d) = (
+            chord(k.checked_sub(2)?)?,
+            chord(k.checked_sub(1)?)?,
+            chord(k)?,
+            chord(k.checked_add(1)?)?,
+        );
+        let t = Vec3::new(
+            akima(a.x, b.x, c.x, d.x),
+            akima(a.y, b.y, c.y, d.y),
+            akima(a.z, b.z, c.z, d.z),
+        );
+        t.is_finite().then(|| tidy(t))
+    };
+    Some((tangent(2)?, tangent(n.checked_sub(3)?)?))
+}
+
+/// Type 11 curves: the first two and last two points only define the end tangents (kept in
+/// `dgn.curve_start_tangent` / `dgn.curve_end_tangent`, see [`curve_end_tangents`]).
 fn curve(points: &[UorPoint], xf: &Xf) -> EntityKind {
     let fit: Vec<Point3> = if points.len() > 4 {
         points
@@ -1256,25 +1412,38 @@ pub(crate) fn justification(code: u16) -> (HAlign, VAlign, f64, f64) {
 }
 
 /// Keeps only what a tag element does not share with its owner: `layer` stays `None` on the
-/// owner's level, and symbology/flag props equal to the owner's are dropped.
+/// owner's level, `color` / `lineweight` stay `None` when the tag's color index / weight
+/// equal the owner's, and symbology/flag props equal to the owner's are dropped.
 fn relative_to_owner(mut a: Attribute, owner: &Entity) -> Attribute {
     if a.layer.is_some() && a.layer == owner.layer {
         a.layer = None;
+    }
+    let same = |a: &Attribute, key: &str| {
+        !a.props.contains_key(key) || a.props.get(key) == owner.props.get(key)
+    };
+    if same(&a, "dgn.color_index") {
+        a.color = None;
+    }
+    if same(&a, "dgn.weight") {
+        a.lineweight = None;
     }
     a.props
         .retain(|key, value| owner.props.get(key) != Some(value) || key == "dgn.font_number");
     a
 }
 
-/// Rotation of a displayed tag about +Z in radians, from its stored quaternion (same
-/// convention as text, see [`Rotation::matrix`]). An all-zero quaternion means none.
-pub(crate) fn tag_rotation(q: [f64; 4]) -> f64 {
-    if q.iter().all(|v| *v == 0.0) {
-        return 0.0;
-    }
-    let [m00, _, _, m10, ..] = Rotation::Quaternion(q).matrix();
+/// Rotation of a displayed tag about +Z in radians, in (-π, π], from its stored orientation
+/// (2D angle or 3D quaternion, same convention as text, see [`Rotation::matrix`]). An
+/// all-zero quaternion means none, and so does a non-finite angle (degraded to 0, as text
+/// angles are, so that one bad double does not fail an export).
+pub(crate) fn tag_rotation(rotation: &Rotation) -> f64 {
+    let [m00, _, _, m10, ..] = rotation.matrix();
     let a = m10.atan2(m00);
-    if a.abs() < 1e-12 { 0.0 } else { a }
+    if a.is_finite() && a.abs() >= 1e-12 {
+        a
+    } else {
+        0.0
+    }
 }
 
 /// Text length in UOR and whether it is estimated (`characters x character width`, the
@@ -1335,6 +1504,9 @@ pub(crate) fn conic(
         (start + sweep, start)
     };
     let (a, b) = (a.abs(), b.abs());
+    if is_degenerate_conic(a, b) {
+        return degenerate_conic(center, a, b, ux, uy, start, sweep, full);
+    }
     if (a - b).abs() <= 1e-9 * a.max(b) {
         if full {
             return EntityKind::Circle {
@@ -1373,6 +1545,118 @@ pub(crate) fn conic(
         start_param: s,
         end_param: e,
         normal,
+    }
+}
+
+/// An ellipse or arc whose smaller semi-axis is at most 1e-9 of the larger one (the relative
+/// tolerance [`conic`] uses for equal axes) has no area: its points lie on a segment.
+pub(crate) fn is_degenerate_conic(a: f64, b: f64) -> bool {
+    let (a, b) = (a.abs(), b.abs());
+    a.min(b) <= 1e-9 * a.max(b)
+}
+
+/// A flat ellipse or arc as the geometry it draws: the segment covered by the swept points
+/// along the non-zero axis, or a point at the center when both axes are zero (issue #24).
+///
+/// The point at parameter `t` is `center + a·cos t·ux + b·sin t·uy`; with `b` flat only
+/// `cos t` varies (`sin t` when `a` is the flat axis). Its extremes over the swept range
+/// are the values at both ends and ±1 where the range passes an axis end. The segment starts
+/// at the extreme nearer the arc's start point, so a flat arc that does not pass an axis end
+/// runs from its start to its end point, as a complex chain component must.
+#[allow(clippy::too_many_arguments)]
+fn degenerate_conic(
+    center: Point3,
+    a: f64,
+    b: f64,
+    ux: Vec3,
+    uy: Vec3,
+    start: f64,
+    sweep: f64,
+    full: bool,
+) -> EntityKind {
+    if a.max(b) == 0.0 {
+        return EntityKind::Point { position: center };
+    }
+    // (axis, length, f(t), parameter of f's maximum, parameter of f's minimum)
+    let (axis, len, f, t_max, t_min): (Vec3, f64, fn(f64) -> f64, f64, f64) = if a >= b {
+        (ux, a, f64::cos, 0.0, std::f64::consts::PI)
+    } else {
+        (uy, b, f64::sin, FRAC_PI_2, 3.0 * FRAC_PI_2)
+    };
+    let (lo, hi) = if full {
+        (-1.0, 1.0)
+    } else {
+        let (s, e) = if sweep >= 0.0 {
+            (start, start + sweep)
+        } else {
+            (start + sweep, start)
+        };
+        // The range [s, e] contains t + 2πk for some integer k.
+        let passes = |t: f64| t + TAU * ((s - t) / TAU).ceil() <= e;
+        let (fs, fe) = (f(s), f(e));
+        let lo = if passes(t_min) { -1.0 } else { fs.min(fe) };
+        let hi = if passes(t_max) { 1.0 } else { fs.max(fe) };
+        (lo, hi)
+    };
+    let at = |v: f64| center.translated(tidy(axis.scaled(len * v)));
+    let first = f(start);
+    let (p, q) = if (first - lo).abs() <= (hi - first).abs() {
+        (at(lo), at(hi))
+    } else {
+        (at(hi), at(lo))
+    };
+    if p == q {
+        EntityKind::Point { position: p }
+    } else {
+        EntityKind::Line { start: p, end: q }
+    }
+}
+
+/// The element data a flat ellipse or arc mapped to a `Line` / `Point` would otherwise
+/// lose: axes and center in document units, angles in radians as stored, and the stored
+/// orientation (2D: `dgn.rotation` angle; 3D: `dgn.quaternion` `(w, x, y, z)`).
+fn degenerate_props(
+    e: &mut Entity,
+    xf: &Xf,
+    primary: f64,
+    secondary: f64,
+    rotation: &Rotation,
+    center: UorPoint,
+    arc: Option<(f64, f64)>,
+) {
+    let p = &mut e.props;
+    p.insert("dgn.degenerate_ellipse".into(), Value::Bool(true));
+    p.insert("dgn.primary_axis".into(), Value::Float(xf.dist(primary)));
+    p.insert(
+        "dgn.secondary_axis".into(),
+        Value::Float(xf.dist(secondary)),
+    );
+    let c = xf.pt(center);
+    p.insert(
+        "dgn.center".into(),
+        Value::List([c.x, c.y, c.z].map(Value::Float).to_vec()),
+    );
+    if let Some((start, sweep)) = arc {
+        p.insert("dgn.start_angle".into(), Value::Float(start));
+        p.insert("dgn.sweep_angle".into(), Value::Float(sweep));
+    }
+    match rotation {
+        Rotation::Angle(a) => {
+            p.insert("dgn.rotation".into(), Value::Float(*a));
+        }
+        Rotation::Quaternion(q) => {
+            p.insert(
+                "dgn.quaternion".into(),
+                Value::List(q.iter().map(|v| Value::Float(*v)).collect()),
+            );
+        }
+        Rotation::Matrix(m) => {
+            p.insert(
+                "dgn.matrix".into(),
+                Value::List(m.iter().map(|v| Value::Float(*v)).collect()),
+            );
+        }
+        Rotation::None => {}
     }
 }
 
@@ -1560,6 +1844,416 @@ mod tests {
                 && close(p.y, 1.0 + 2.0 * 10f64.to_radians().sin())
         );
         assert!(close(end_param - start_param, std::f64::consts::PI));
+    }
+
+    fn line_ends(k: EntityKind) -> (Point3, Point3) {
+        match k {
+            EntityKind::Line { start, end } => (start, end),
+            other => panic!("not a line: {other:?}"),
+        }
+    }
+
+    fn near(p: Point3, x: f64, y: f64) -> bool {
+        close(p.x, x) && close(p.y, y) && close(p.z, 0.0)
+    }
+
+    #[test]
+    fn degenerate_conics_become_lines_or_points() {
+        let c = Point3::new(1.0, 1.0, 0.0);
+        let none = Rotation::None;
+        // Full flat ellipse: the whole diameter, from the extreme at the start point.
+        let (s, e) = line_ends(conic(c, 2.0, 0.0, &none, 0.0, TAU));
+        assert!(near(s, 3.0, 1.0) && near(e, -1.0, 1.0), "{s:?} {e:?}");
+        // Secondary axis of 6e-17 (issue #24) and exactly 1e-9 of the primary.
+        for b in [6e-17, 2e-9] {
+            let (s, e) = line_ends(conic(c, 2.0, b, &none, 0.0, TAU));
+            assert!(near(s, 3.0, 1.0) && near(e, -1.0, 1.0));
+        }
+        // Partial sweep inside (0, π): from the start point to the end point.
+        let (s, e) = line_ends(conic(c, 2.0, 0.0, &none, 0.5, 1.0));
+        assert!(near(s, 1.0 + 2.0 * 0.5f64.cos(), 1.0) && near(e, 1.0 + 2.0 * 1.5f64.cos(), 1.0));
+        // The same arc travelled clockwise keeps its travel direction.
+        let (s, e) = line_ends(conic(c, 2.0, 0.0, &none, 1.5, -1.0));
+        assert!(near(s, 1.0 + 2.0 * 1.5f64.cos(), 1.0) && near(e, 1.0 + 2.0 * 0.5f64.cos(), 1.0));
+        // A sweep passing the axis end (t = 0) reaches it.
+        let (s, e) = line_ends(conic(c, 2.0, 0.0, &none, -0.5, 1.0));
+        assert!(
+            near(s, 1.0 + 2.0 * 0.5f64.cos(), 1.0) && near(e, 3.0, 1.0),
+            "{s:?} {e:?}"
+        );
+        // A sweep from 2π + 1 that passes 3π and 4π spans the diameter, starting at the
+        // extreme nearer its start point; one that passes 3π only stops short of +X.
+        let (s, e) = line_ends(conic(c, 2.0, 0.0, &none, TAU + 1.0, 6.0));
+        assert!(near(s, 3.0, 1.0) && near(e, -1.0, 1.0), "{s:?} {e:?}");
+        let (s, e) = line_ends(conic(c, 2.0, 0.0, &none, TAU + 1.0, 4.0));
+        assert!(
+            near(s, 1.0 + 2.0 * 1f64.cos(), 1.0) && near(e, -1.0, 1.0),
+            "{s:?} {e:?}"
+        );
+        // Flat primary axis: the points move along the rotated local Y axis (sin t).
+        let rot = Rotation::Angle(FRAC_PI_2);
+        let (s, e) = line_ends(conic(c, 0.0, 3.0, &rot, 0.0, std::f64::consts::PI));
+        assert!(near(s, 1.0, 1.0) && near(e, -2.0, 1.0), "{s:?} {e:?}");
+        // Both axes zero, or a sweep too small to move: a point.
+        assert_eq!(
+            conic(c, 0.0, 0.0, &none, 0.0, TAU),
+            EntityKind::Point { position: c }
+        );
+        assert!(matches!(
+            conic(c, 2.0, 0.0, &none, 0.5, 0.0),
+            EntityKind::Point { .. }
+        ));
+        // Small but non-degenerate ratios stay ellipses.
+        assert!(matches!(
+            conic(c, 1.0, 1e-8, &none, 0.0, TAU),
+            EntityKind::Ellipse { ratio, .. } if close(ratio, 1e-8) && ratio > 0.0
+        ));
+        // A 3D quaternion: (cos 45°, sin 45°, 0, 0) turns local Y onto world -Z (matrix
+        // columns (1, 0, 0), (0, 0, -1), (0, 1, 0)), so a flat primary axis runs along -Z.
+        let r2 = std::f64::consts::FRAC_1_SQRT_2;
+        let about_x = Rotation::Quaternion([r2, r2, 0.0, 0.0]);
+        let (s, e) = line_ends(conic(c, 0.0, 3.0, &about_x, 0.0, std::f64::consts::PI));
+        assert!(
+            close(s.x, 1.0) && close(s.y, 1.0) && close(s.z, 0.0),
+            "{s:?}"
+        );
+        assert!(
+            close(e.x, 1.0) && close(e.y, 1.0) && close(e.z, -3.0),
+            "{e:?}"
+        );
+        // The +90° quaternion about Z of the text convention puts the primary axis on Y.
+        let about_z = Rotation::Quaternion([r2, 0.0, 0.0, -r2]);
+        let (s, e) = line_ends(conic(c, 2.0, 0.0, &about_z, 0.0, TAU));
+        assert!(near(s, 1.0, 3.0) && near(e, 1.0, -1.0), "{s:?} {e:?}");
+        // A NaN axis beside a zero one is a point at the center.
+        for (a, b) in [(f64::NAN, 0.0), (0.0, f64::NAN)] {
+            assert_eq!(
+                conic(c, a, b, &none, 0.0, TAU),
+                EntityKind::Point { position: c }
+            );
+        }
+    }
+
+    #[test]
+    fn degenerate_ellipses_keep_their_element_data() {
+        let mut m = Mapper::new(false, 64);
+        let xf = Xf {
+            origin: [0.0; 3],
+            scale: 0.5,
+        };
+        let header = ElementHeader {
+            type_code: 16,
+            has_display_header: true,
+            ..ElementHeader::default()
+        };
+        let arc = ElementData::Arc {
+            start: 0.25,
+            sweep: -1.0,
+            primary: 8.0,
+            secondary: 0.0,
+            rotation: Rotation::Angle(0.5),
+            center: [2.0, 4.0, 0.0],
+        };
+        let items = vec![item(header, arc)];
+        let e = m.entity(&items, &Node::leaf(0), &xf, 0).unwrap();
+        assert!(matches!(e.kind, EntityKind::Line { .. }));
+        assert_eq!(
+            e.props.get("dgn.degenerate_ellipse"),
+            Some(&Value::Bool(true))
+        );
+        assert_eq!(e.props.get("dgn.primary_axis"), Some(&Value::Float(4.0)));
+        assert_eq!(e.props.get("dgn.secondary_axis"), Some(&Value::Float(0.0)));
+        assert_eq!(e.props.get("dgn.start_angle"), Some(&Value::Float(0.25)));
+        assert_eq!(e.props.get("dgn.sweep_angle"), Some(&Value::Float(-1.0)));
+        assert_eq!(e.props.get("dgn.rotation"), Some(&Value::Float(0.5)));
+        assert_eq!(
+            e.props.get("dgn.center"),
+            Some(&Value::List(vec![
+                Value::Float(1.0),
+                Value::Float(2.0),
+                Value::Float(0.0)
+            ]))
+        );
+        // A regular ellipse gets none of them.
+        let header = ElementHeader {
+            type_code: 15,
+            has_display_header: true,
+            ..ElementHeader::default()
+        };
+        let ellipse = ElementData::Ellipse {
+            primary: 8.0,
+            secondary: 2.0,
+            rotation: Rotation::Quaternion([1.0, 0.0, 0.0, 0.0]),
+            center: [0.0; 3],
+        };
+        let e = m
+            .entity(&[item(header, ellipse)], &Node::leaf(0), &xf, 0)
+            .unwrap();
+        assert!(matches!(e.kind, EntityKind::Ellipse { .. }));
+        assert!(!e.props.contains_key("dgn.degenerate_ellipse"));
+    }
+
+    #[test]
+    fn v8_property_bit_0x0080_hides_graphics() {
+        let header = |properties: u32| ElementHeader {
+            type_code: 3,
+            has_display_header: true,
+            properties,
+            ..ElementHeader::default()
+        };
+        let kind = || EntityKind::Unknown {
+            type_name: "test".into(),
+        };
+        let mut v8 = Mapper::new(false, 64);
+        v8.v8 = true;
+        let hidden = v8.base(&item(header(0x0880), ElementData::Unknown), kind());
+        assert!(!hidden.visible);
+        // The raw word stays in props; the writer derives 0x0080 from `visible` only.
+        assert_eq!(
+            hidden.props.get("dgn.properties"),
+            Some(&Value::Int(0x0880))
+        );
+        assert!(
+            v8.base(&item(header(0x0800), ElementData::Unknown), kind())
+                .visible
+        );
+        // V7: GDAL dgnlib documents no meaning for the bit.
+        let mut v7 = Mapper::new(false, 64);
+        assert!(
+            v7.base(&item(header(0x0080), ElementData::Unknown), kind())
+                .visible
+        );
+    }
+
+    #[test]
+    fn chain_headers_close_open_chains_instead_of_nesting() {
+        // A cell of three chains that each declare three components but store one (the
+        // pattern of issue #27): every chain is a direct child of the cell.
+        let items = vec![
+            item(h(2, true, false), ElementData::Cell(cell(3))),
+            item(h(12, true, true), ElementData::Complex { children: 3 }),
+            item(h(3, false, true), ElementData::Unknown),
+            item(h(12, true, true), ElementData::Complex { children: 3 }),
+            item(h(3, false, true), ElementData::Unknown),
+            item(h(14, true, true), ElementData::Complex { children: 3 }),
+            item(h(3, false, true), ElementData::Unknown),
+            item(h(4, false, false), ElementData::Unknown),
+        ];
+        let (t, closed_early) = tree_v8_counted(&items, 64);
+        assert_eq!(closed_early, 2);
+        assert_eq!(t.len(), 2);
+        let chains: Vec<_> = t[0]
+            .children
+            .iter()
+            .map(|c| (c.idx, c.children.len()))
+            .collect();
+        assert_eq!(chains, vec![(1, 1), (3, 1), (5, 1)]);
+        // Correct counts are unaffected, and a B-spline curve header still nests in a chain.
+        let items = vec![
+            item(h(12, true, false), ElementData::Complex { children: 2 }),
+            item(h(3, false, true), ElementData::Unknown),
+            item(
+                h(27, true, true),
+                ElementData::BSplineCurve {
+                    children: 1,
+                    order: 4,
+                    flags: 0,
+                    curve_type: 0,
+                    closed: false,
+                    num_poles: 4,
+                    num_knots: 0,
+                },
+            ),
+            item(h(21, false, true), ElementData::Unknown),
+            item(h(12, true, false), ElementData::Complex { children: 1 }),
+            item(h(3, false, true), ElementData::Unknown),
+        ];
+        let (t, closed_early) = tree_v8_counted(&items, 64);
+        assert_eq!(closed_early, 0);
+        assert_eq!(t.len(), 2);
+        assert_eq!(t[0].children.len(), 2);
+        assert_eq!(t[0].children[1].children.len(), 1);
+        assert_eq!(t[1].children.len(), 1);
+        // An over-declared top-level chain followed by another top-level chain, a line or a
+        // cell: each closes it the same way, and none of them is an early close.
+        for next in [
+            item(h(12, true, false), ElementData::Complex { children: 1 }),
+            item(h(3, false, false), ElementData::Unknown),
+            item(h(2, true, false), ElementData::Cell(cell(1))),
+        ] {
+            let items = vec![
+                item(h(12, true, false), ElementData::Complex { children: 3 }),
+                item(h(3, false, true), ElementData::Unknown),
+                next,
+                item(h(3, false, true), ElementData::Unknown),
+            ];
+            let (t, closed_early) = tree_v8_counted(&items, 64);
+            assert_eq!(closed_early, 0);
+            assert_eq!(t[0].children.len(), 1);
+        }
+    }
+
+    #[test]
+    fn curve_end_tangents_follow_gdal_stroking() {
+        // Collinear points: every chord has the same direction, so both weights are zero and
+        // the tangent is that direction.
+        let line: Vec<UorPoint> = (0..6)
+            .map(|i| [3.0 * f64::from(i), 4.0 * f64::from(i), 0.0])
+            .collect();
+        let (s, e) = curve_end_tangents(&line).unwrap();
+        assert!(close(s.x, 0.6) && close(s.y, 0.8) && close(e.x, 0.6) && close(e.y, 0.8));
+        // Turning unit chords m0..m4 = +X, +X, +Y, -X, +Y (points worked by hand). GDAL's
+        // slope at P[k] per component is (m[k-1]·|m[k+1] - m[k]| + m[k]·|m[k-1] - m[k-2]|)
+        // / (|m[k+1] - m[k]| + |m[k-1] - m[k-2]|), the mean of m[k-1] and m[k] when both
+        // weights are 0. At P[2]: x = (1·1 + 0·0) / 1 = 1, y = (0·1 + 1·0) / 1 = 0. At P[3]:
+        // x = (0·1 + (-1)·1) / 2 = -0.5, y = (1·1 + 0·1) / 2 = 0.5.
+        let pts = [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+            [2.0, 1.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [1.0, 2.0, 0.0],
+        ];
+        let (s, e) = curve_end_tangents(&pts).unwrap();
+        assert!(close(s.x, 1.0) && close(s.y, 0.0), "{s:?}");
+        assert!(close(e.x, -0.5) && close(e.y, 0.5), "{e:?}");
+        // Equal neighbours on both sides (both weights 0): the mean of m1 = +X and m2 = +Y.
+        let pts = [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+            [2.0, 1.0, 0.0],
+            [2.0, 2.0, 0.0],
+            [2.0, 3.0, 0.0],
+        ];
+        let (s, _) = curve_end_tangents(&pts).unwrap();
+        assert!(close(s.x, 0.5) && close(s.y, 0.5), "{s:?}");
+        // Too few points, and a zero-length chord (direction 0, as GDAL treats it).
+        assert!(curve_end_tangents(&pts[..5]).is_none());
+        let mut dup = pts.to_vec();
+        dup[1] = dup[0];
+        let (s, _) = curve_end_tangents(&dup).unwrap();
+        assert!(s.x.is_finite() && s.y.is_finite());
+    }
+
+    fn tag(quaternion: [f64; 4]) -> TagData {
+        TagData {
+            set_id: None,
+            set_number: None,
+            tag_index: 1,
+            value_type: 1,
+            value: TagValue::Text("v".into()),
+            target: Some(7),
+            origin: [0.0; 3],
+            offset: [1.0, 0.0, 0.0],
+            size: [1.0, 1.0],
+            font: 0,
+            justification: 0,
+            quaternion,
+        }
+    }
+
+    #[test]
+    fn tag_rotation_is_an_angle_in_2d_and_a_quaternion_in_3d() {
+        let mut m = Mapper::new(false, 64);
+        let xf = Xf {
+            origin: [0.0; 3],
+            scale: 1.0,
+        };
+        let rotation = |m: &mut Mapper, q: [f64; 4], is_3d: bool| {
+            let h = ElementHeader {
+                type_code: 37,
+                has_display_header: true,
+                is_3d,
+                ..ElementHeader::default()
+            };
+            m.attribute(&tag(q), &h, &xf).display.unwrap().rotation
+        };
+        let pi = std::f64::consts::PI;
+        // 2D: the first double is the angle (issue #29 survey: π, π/2, ...; zeros unrotated).
+        assert!(close(rotation(&mut m, [pi, 0.0, 0.0, 0.0], false), pi));
+        assert!(close(
+            rotation(&mut m, [FRAC_PI_2, 0.0, 0.0, 0.0], false),
+            FRAC_PI_2
+        ));
+        assert!(close(
+            rotation(&mut m, [-1.1602, 0.0, 0.0, 0.0], false),
+            -1.1602
+        ));
+        assert_eq!(rotation(&mut m, [0.0; 4], false), 0.0);
+        // 2D tags written by cadkit up to 0.5.2 hold a quaternion: (-1, 0, 0, 0) unrotated and
+        // (cos θ/2, 0, 0, -sin θ/2) for θ. They are not read as the angle w.
+        assert_eq!(rotation(&mut m, [-1.0, 0.0, 0.0, 0.0], false), 0.0);
+        let q = |theta: f64| [(theta / 2.0).cos(), 0.0, 0.0, -(theta / 2.0).sin()];
+        for theta in [FRAC_PI_2, -0.75, 3.0] {
+            assert!(close(rotation(&mut m, q(theta), false), theta), "{theta}");
+        }
+        // Not that form: (w, 0, 0, z) off the unit circle, or x / y set, stays an angle.
+        assert!(close(rotation(&mut m, [0.5, 0.0, 0.0, 0.5], false), 0.5));
+        assert!(close(rotation(&mut m, [-0.5, 0.0, 0.0, 0.0], false), -0.5));
+        // A non-finite stored angle degrades to unrotated instead of a NaN rotation.
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert_eq!(rotation(&mut m, [bad, 0.0, 0.0, 0.0], false), 0.0);
+            assert_eq!(rotation(&mut m, [bad, 0.0, 0.0, 1.0], true), 0.0);
+        }
+        // 3D: a quaternion; (-1, 0, 0, 0) is unrotated, (cos 45°, 0, 0, -sin 45°) is +90°.
+        assert_eq!(rotation(&mut m, [-1.0, 0.0, 0.0, 0.0], true), 0.0);
+        let h = std::f64::consts::FRAC_PI_4;
+        assert!(close(
+            rotation(&mut m, [h.cos(), 0.0, 0.0, -h.sin()], true),
+            FRAC_PI_2
+        ));
+        assert_eq!(rotation(&mut m, [pi, 0.0, 0.0, 0.0], true), 0.0);
+    }
+
+    #[test]
+    fn tag_symbology_resolves_like_entities_and_is_kept_when_it_differs() {
+        let mut m = Mapper::new(false, 64);
+        m.palette[5] = [200, 0, 200];
+        let xf = Xf {
+            origin: [0.0; 3],
+            scale: 1.0,
+        };
+        let owner_header = ElementHeader {
+            type_code: 3,
+            has_display_header: true,
+            color: 3,
+            weight: 0,
+            ..ElementHeader::default()
+        };
+        let owner = m.base(
+            &item(owner_header.clone(), ElementData::Unknown),
+            EntityKind::Unknown {
+                type_name: "test".into(),
+            },
+        );
+        let own = ElementHeader {
+            type_code: 37,
+            color: 5,
+            weight: 2,
+            ..owner_header.clone()
+        };
+        let a = relative_to_owner(m.attribute(&tag([0.0; 4]), &own, &xf), &owner);
+        assert_eq!(
+            a.color,
+            Some(Color::Rgb {
+                r: 200,
+                g: 0,
+                b: 200
+            })
+        );
+        assert_eq!(a.lineweight, Some(Lineweight::Millimeters(weight_mm(2))));
+        assert_eq!(a.props.get("dgn.color_index"), Some(&Value::Int(5)));
+        assert_eq!(a.props.get("dgn.weight"), Some(&Value::Int(2)));
+        // Same index and weight as the owner: nothing of its own.
+        let same = ElementHeader {
+            type_code: 37,
+            ..owner_header
+        };
+        let a = relative_to_owner(m.attribute(&tag([0.0; 4]), &same, &xf), &owner);
+        assert_eq!((a.color, a.lineweight), (None, None));
+        assert!(!a.props.contains_key("dgn.color_index"));
     }
 
     #[test]

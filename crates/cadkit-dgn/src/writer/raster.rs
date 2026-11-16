@@ -3,13 +3,14 @@
 //! Control records (coordinate system, model settings, raster attachments) contain fields
 //! which are not yet decoded. Retaining them with their original IDs avoids fabricating
 //! those fields or leaving known dependencies pointing at regenerated graphic IDs. Control
-//! records that reference a seed graphic are only kept together with that graphic, which
-//! the writer can do for unchanged rasters alone. New attachments (images without an id)
+//! records whose dependency linkages reference a seed graphic are only kept together with
+//! that graphic, which the writer can do for unchanged rasters alone. New attachments (images without an id)
 //! are cloned from a seed attachment, or the built-in group, instead
 //! ([`super::raster_template`]).
 
 use super::raster_template::Template;
 use super::{WriteOptions, compressed, encode::*};
+use crate::native::linkage::{self, LinkageData};
 use crate::native::v8::{AuxPage, AuxRecord, PageHeader, RawElement, V8Model};
 use cadkit_core::LimitKind;
 use cadkit_core::{Document, Entity, EntityKind, Error, ReadOptions, Result};
@@ -33,11 +34,39 @@ pub(super) struct Preserved {
     pub objects: u64,
 }
 
-/// Whether a record body holds the 64-bit id of a seed graphic anywhere after its header.
+/// Whether a control record names a seed graphic as a root of one of its dependency
+/// linkages, the only stored element reference located in non-raster control records.
+///
+/// A dependency linkage whose root type is not decoded (roots other than 2, 3, 9, 10) is
+/// searched byte window by byte window instead. The record body is not searched: every byte
+/// window that equals a graphic id in the non-raster control records of the corpus is a field
+/// value that also occurs at that position in records of the same type and length where it
+/// is no graphic id (private corpus: 19 of 19 positions; TreeText and Water: the exponent
+/// bytes of doubles followed by zero bytes); none of these records holds a dependency
+/// linkage (FORMAT_NOTES, "Seed stripping"). Raster control records (90–93) are kept or
+/// dropped as a group instead (`Preserved::prepare`).
 fn references_graphics(raw: &RawElement, graphics: &BTreeSet<u64>) -> bool {
-    let b = &raw.bytes;
-    (0x18..b.len().saturating_sub(7))
-        .any(|o| crate::le::u64_at(b, o).is_some_and(|v| v != 0 && graphics.contains(&v)))
+    if graphics.is_empty() {
+        return false;
+    }
+    linkage::parse(
+        raw.attributes(),
+        raw.attribute_offset(),
+        true,
+        encoding_rs::UTF_8,
+    )
+    .iter()
+    .any(|l| match &l.data {
+        LinkageData::Dependency {
+            root_type: 2 | 3 | 9 | 10,
+            roots,
+            ..
+        } => roots.iter().any(|r| graphics.contains(r)),
+        LinkageData::Dependency { .. } => (0..l.bytes.len().saturating_sub(7)).any(|o| {
+            crate::le::u64_at(&l.bytes, o).is_some_and(|v| v != 0 && graphics.contains(&v))
+        }),
+        _ => false,
+    })
 }
 
 /// Images with a seed id, by id, and the number of new images (without an id).
@@ -272,22 +301,27 @@ impl Preserved {
     }
 
     /// Writes the retained control records followed by `new_controls` (the control records
-    /// of new attachments) to the control pages, and the retained auxiliary pages.
+    /// of new attachments) to the control pages, and the retained auxiliary pages. Returns
+    /// the number of control pages written, each of which holds records.
     pub fn write_auxiliary(
         &self,
         replacements: &mut BTreeMap<String, Option<Vec<u8>>>,
         new_controls: &[Vec<u8>],
-    ) -> Result<()> {
+    ) -> Result<u32> {
+        let mut pages = 0;
         if !self.controls.is_empty() || !new_controls.is_empty() {
             let controls: Vec<Vec<u8>> =
                 self.controls.iter().chain(new_controls).cloned().collect();
-            super::put_pages(
+            pages = super::put_pages(
                 replacements,
                 &self.control_prefix,
                 &controls,
                 self.control_version,
                 self.max_bytes,
-            )?;
+            )?
+            .last()
+            .copied()
+            .unwrap_or(0);
         }
         for page in &self.auxiliary {
             replacements.insert(
@@ -295,12 +329,13 @@ impl Preserved {
                 Some(aux_page(&page.records, page.header)?),
             );
         }
-        Ok(())
+        Ok(pages)
     }
 }
 
-/// An auxiliary page stream: the 16-byte page header (`{record count, format version, 0, 0}`
-/// as MicroStation writes every auxiliary page) and the zlib-compressed records, each a
+/// An auxiliary page stream: the 16-byte page header (`{record count, format version, 0, 0}`,
+/// as on every auxiliary page of the private corpus; the public Water sample stores page
+/// number and population instead) and the zlib-compressed records, each a
 /// 28-byte header (magic `0xA11B`, payload length, kind, reserved, element id, flags) +
 /// payload.
 pub(super) fn aux_page(records: &[AuxRecord], header: PageHeader) -> Result<Vec<u8>> {

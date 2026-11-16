@@ -122,7 +122,11 @@ pub struct V8Seed {
     palette: [[u8; 3]; 256],
     levels: BTreeMap<String, u32>,
     known_fonts: BTreeSet<String>,
+    /// Font names [`prepare_document`](Self::prepare_document) keeps as text styles: the
+    /// names the font table gives a single number.
+    resolvable_fonts: BTreeSet<String>,
     known_font_numbers: BTreeSet<u32>,
+    font_entries: Vec<(String, u32)>,
 }
 
 impl V8Seed {
@@ -268,14 +272,19 @@ impl V8Seed {
         );
         let palette = tables.palette;
         let levels = tables.levels.clone();
-        let known_font_numbers: BTreeSet<u32> = tables
-            .fonts
-            .values()
-            .copied()
+        let font_entries = tables.font_entries;
+        let known_font_numbers: BTreeSet<u32> = font_entries
+            .iter()
+            .map(|(_, number)| *number)
             .chain(tables.referenced_fonts.iter().copied())
             .chain(std::iter::once(0))
             .collect();
         let known_fonts: BTreeSet<String> = tables.fonts.into_keys().collect();
+        let resolvable_fonts = known_fonts
+            .iter()
+            .filter(|name| font_number_of(&font_entries, name, false).is_ok())
+            .cloned()
+            .collect();
 
         Ok(Self {
             bytes: bytes.to_vec(),
@@ -292,7 +301,9 @@ impl V8Seed {
             palette,
             levels,
             known_fonts,
+            resolvable_fonts,
             known_font_numbers,
+            font_entries,
         })
     }
 
@@ -338,6 +349,29 @@ impl V8Seed {
     /// Names of the fonts the seed's font table defines, in name order.
     pub fn fonts(&self) -> impl Iterator<Item = &str> {
         self.known_fonts.iter().map(String::as_str)
+    }
+
+    /// Every entry of the seed's font table as `(name, font number)`, in stored order, a
+    /// name stored twice included. [`fonts`](Self::fonts) lists each name once.
+    pub fn font_entries(&self) -> impl Iterator<Item = (&str, u32)> {
+        self.font_entries
+            .iter()
+            .map(|(name, n)| (name.as_str(), *n))
+    }
+
+    /// The font number the seed's font table gives `name`: an entry with exactly that name
+    /// first; when there is none, the entries whose names equal `name` after trimming
+    /// whitespace and ignoring ASCII case. The writer resolves a text style by its exact
+    /// name only, so a host that matches loosely passes the number on in
+    /// `dgn.font_number`.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Unsupported`] `"DGN font is absent from the seed font table"` when no entry
+    /// matches, and `"DGN font name is ambiguous in the seed font table"` when the matching
+    /// entries hold more than one number.
+    pub fn font_number(&self, name: &str) -> Result<u32> {
+        font_number_of(&self.font_entries, name, true)
     }
 
     /// Last-saved time from the seed's file header, in milliseconds since the Unix epoch;
@@ -494,7 +528,7 @@ impl V8Seed {
                     if let Some(e) = normalize_entity_for_dgn(
                         entity,
                         &self.palette,
-                        &self.known_fonts,
+                        &self.resolvable_fonts,
                         &self.known_font_numbers,
                         &out.linetypes,
                     ) {
@@ -875,6 +909,34 @@ fn sample_hatch_loop(lp: &HatchLoop) -> Vec<Point3> {
     out
 }
 
+/// See [`V8Seed::font_number`]; `loose` enables the trimmed, ASCII case-insensitive pass.
+fn font_number_of(entries: &[(String, u32)], name: &str, loose: bool) -> Result<u32> {
+    let numbers = |matches: &dyn Fn(&str) -> bool| -> BTreeSet<u32> {
+        entries
+            .iter()
+            .filter(|(entry, _)| matches(entry))
+            .map(|(_, number)| *number)
+            .collect()
+    };
+    let mut found = numbers(&|entry| entry == name);
+    if found.is_empty() && loose {
+        let wanted = name.trim();
+        found = numbers(&|entry| entry.trim().eq_ignore_ascii_case(wanted));
+    }
+    match (found.first(), found.len()) {
+        (Some(number), 1) => Ok(*number),
+        (None, _) => Err(Error::Unsupported(
+            "DGN font is absent from the seed font table".into(),
+        )),
+        _ => Err(Error::Unsupported(
+            "DGN font name is ambiguous in the seed font table".into(),
+        )),
+    }
+}
+
+/// [`super::encode::BY_LEVEL`] as a props value.
+const BY_LEVEL: i64 = super::encode::BY_LEVEL as i64;
+
 fn mm_to_dgn_weight(mm: f64) -> i64 {
     if !mm.is_finite() || mm <= 0.1 {
         0
@@ -883,27 +945,16 @@ fn mm_to_dgn_weight(mm: f64) -> i64 {
     }
 }
 
-fn nearest_palette_index(palette: &[[u8; 3]; 256], rgb: [u8; 3]) -> i64 {
-    let mut best_idx = 0usize;
-    let mut best_dist = u32::MAX;
-    for (i, &[pr, pg, pb]) in palette.iter().enumerate() {
-        let dr = i32::from(rgb[0]) - i32::from(pr);
-        let dg = i32::from(rgb[1]) - i32::from(pg);
-        let db = i32::from(rgb[2]) - i32::from(pb);
-        let dist = (dr * dr + dg * dg + db * db) as u32;
-        if dist < best_dist {
-            best_dist = dist;
-            best_idx = i;
-            if dist == 0 {
-                break;
-            }
-        }
-    }
-    best_idx as i64
-}
-
-fn resolve_color_to_palette(color: &mut Color, props: &mut Props, palette: &[[u8; 3]; 256]) {
-    if matches!(props.get("dgn.color_index"), Some(Value::Int(n)) if !(0..=255).contains(n)) {
+/// `element`: an element keeps the level sentinel `BY_LEVEL`, which the writer stores as
+/// read; a level drops it like any other index outside the palette.
+fn resolve_color_to_palette(
+    color: &mut Color,
+    props: &mut Props,
+    palette: &[[u8; 3]; 256],
+    element: bool,
+) {
+    if matches!(props.get("dgn.color_index"), Some(Value::Int(n)) if !(0..=255).contains(n) && !(element && *n == BY_LEVEL))
+    {
         props.remove("dgn.color_index");
     }
     if *color == Color::ByBlock {
@@ -920,13 +971,15 @@ fn resolve_color_to_palette(color: &mut Color, props: &mut Props, palette: &[[u8
         Color::ByLayer | Color::ByBlock => None,
     };
     if let Some(rgb) = rgb {
-        let idx = nearest_palette_index(palette, rgb);
+        let idx = i64::from(crate::palette::nearest_index(palette, rgb));
         props.insert("dgn.color_index".into(), Value::Int(idx));
     }
 }
 
-fn normalize_weight(lineweight: &mut Lineweight, props: &mut Props) {
-    if matches!(props.get("dgn.weight"), Some(Value::Int(n)) if !(0..=31).contains(n)) {
+/// `element` as for [`resolve_color_to_palette`].
+fn normalize_weight(lineweight: &mut Lineweight, props: &mut Props, element: bool) {
+    if matches!(props.get("dgn.weight"), Some(Value::Int(n)) if !(0..=31).contains(n) && !(element && *n == BY_LEVEL))
+    {
         props.remove("dgn.weight");
     }
     match *lineweight {
@@ -943,8 +996,8 @@ fn normalize_weight(lineweight: &mut Lineweight, props: &mut Props) {
 }
 
 fn normalize_layer_props(layer: &mut cadkit_core::Layer, palette: &[[u8; 3]; 256]) {
-    resolve_color_to_palette(&mut layer.color, &mut layer.props, palette);
-    normalize_weight(&mut layer.lineweight, &mut layer.props);
+    resolve_color_to_palette(&mut layer.color, &mut layer.props, palette, false);
+    normalize_weight(&mut layer.lineweight, &mut layer.props, false);
 }
 
 fn infer_dgn_style(name: &str, linetypes: &[cadkit_core::Linetype]) -> i64 {
@@ -1004,10 +1057,13 @@ fn normalize_attribute_for_dgn(
     known_fonts: &BTreeSet<String>,
     known_font_numbers: &BTreeSet<u32>,
 ) {
-    if matches!(attr.props.get("dgn.color_index"), Some(Value::Int(n)) if !(0..=255).contains(n)) {
+    // A tag is an element: it keeps the level sentinel as an entity does.
+    if matches!(attr.props.get("dgn.color_index"), Some(Value::Int(n)) if !(0..=255).contains(n) && *n != BY_LEVEL)
+    {
         attr.props.remove("dgn.color_index");
     }
-    if matches!(attr.props.get("dgn.weight"), Some(Value::Int(n)) if !(0..=31).contains(n)) {
+    if matches!(attr.props.get("dgn.weight"), Some(Value::Int(n)) if !(0..=31).contains(n) && *n != BY_LEVEL)
+    {
         attr.props.remove("dgn.weight");
     }
     if let Some(Value::Int(n)) = attr.props.get("dgn.font_number") {
@@ -1055,8 +1111,8 @@ fn normalize_entity_for_dgn(
     known_font_numbers: &BTreeSet<u32>,
     linetypes: &[cadkit_core::Linetype],
 ) -> Option<Entity> {
-    resolve_color_to_palette(&mut entity.color, &mut entity.props, palette);
-    normalize_weight(&mut entity.lineweight, &mut entity.props);
+    resolve_color_to_palette(&mut entity.color, &mut entity.props, palette, true);
+    normalize_weight(&mut entity.lineweight, &mut entity.props, true);
     if let Some(lt_name) = entity.linetype.as_deref()
         && !lt_name.eq_ignore_ascii_case("continuous")
         && !lt_name.eq_ignore_ascii_case("bylayer")

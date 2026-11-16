@@ -3,15 +3,18 @@
 mod container;
 mod encode;
 mod named;
+mod oleps;
 mod polyline;
 mod raster;
 mod raster_builtin;
 mod raster_template;
 mod seed_prepare;
+mod strip;
 mod tables;
 mod text;
 
 pub use seed_prepare::{DimensionPolicy, SeedPrepareOptions, V8Seed};
+pub use strip::{StripSeedOptions, StripSeedReport, StrippedSeed, strip_seed_v8};
 
 #[cfg(test)]
 use crate::native::v8::RawElement;
@@ -53,8 +56,11 @@ pub struct WriteOptions {
     /// built-in group when the seed has none (see [`seed_has_raster_template`]), whatever
     /// this option says.
     pub preserve_seed_rasters: bool,
-    /// Keep the seed model's control records that reference no seed graphic (coordinate
-    /// system, model settings and similar) with their auxiliary data, byte for byte.
+    /// Keep the seed model's control records (coordinate system, model settings and similar)
+    /// with their auxiliary data, byte for byte, except raster control records (kept only
+    /// with their unchanged attachment) and records whose dependency linkages name a seed
+    /// graphic as a root. Undecoded record bodies are not searched for ids (FORMAT_NOTES,
+    /// "Seed stripping").
     pub preserve_seed_controls: bool,
 }
 impl Default for WriteOptions {
@@ -168,12 +174,10 @@ fn compressed(bytes: &[u8]) -> Result<Vec<u8>> {
     encoder.write_all(bytes)?;
     Ok(encoder.finish()?)
 }
+/// A graphic or control page: the 16-byte header `{record count, version, 0, 0}`, then the
+/// zlib-compressed records. A page without records is the header alone, as every empty page
+/// of the observed files is (private corpus: 644 graphic and 1,087 dictionary pages).
 fn page(records: &[Vec<u8>], version: u32, _number: u32) -> Result<Vec<u8>> {
-    let mut data = vec![];
-    for b in records {
-        data.extend(0u32.to_le_bytes());
-        data.extend_from_slice(b);
-    }
     let mut out = vec![0; 16];
     u32_at(
         &mut out,
@@ -182,6 +186,14 @@ fn page(records: &[Vec<u8>], version: u32, _number: u32) -> Result<Vec<u8>> {
             .map_err(|_| Error::limit(LimitKind::Capacity, "DGN page records".into()))?,
     )?;
     u32_at(&mut out, 4, version)?;
+    if records.is_empty() {
+        return Ok(out);
+    }
+    let mut data = vec![];
+    for b in records {
+        data.extend(0u32.to_le_bytes());
+        data.extend_from_slice(b);
+    }
     out.extend(compressed(&data)?);
     Ok(out)
 }
@@ -356,7 +368,7 @@ pub fn write_v8_with_seed(
         version,
         options.limits.max_decompressed_bytes,
     )?;
-    rasters.write_auxiliary(&mut replacements, &new_controls)?;
+    let control_pages = rasters.write_auxiliary(&mut replacements, &new_controls)?;
     if let Some(template) = rasters
         .template
         .as_ref()
@@ -426,6 +438,22 @@ pub fn write_v8_with_seed(
         put(&mut mh, 0x90 + i * 8, &n.to_le_bytes())?;
     }
     let mut full_header = seed.mh_prefix.clone();
+    // The first prefix dword equals the number of graphic and control pages that hold
+    // records in 552 of 567 private files and all 3 public V8 files; the other 15 lie
+    // between that number and the page count (FORMAT_NOTES, "Model header"). The other
+    // prefix bytes keep the seed's values.
+    if full_header.len() >= 4 {
+        let graphic_pages = if records.is_empty() {
+            0
+        } else {
+            record_pages.last().copied().unwrap_or(0)
+        };
+        u32_at(
+            &mut full_header,
+            0,
+            graphic_pages.saturating_add(control_pages),
+        )?;
+    }
     full_header.extend(mh);
     replacements.insert(seed.mh_path.clone(), Some(compressed(&full_header)?));
     let mut data = seed.header_data.clone();
@@ -553,14 +581,24 @@ impl State<'_> {
         let mut b = encode::header(kind, size, id, level, time, entity, three, weight)?;
         if !entity.props.contains_key("dgn.color_index") {
             use cadkit_core::Color;
-            let color = if entity.color == Color::ByLayer {
-                self.layers
-                    .iter()
-                    .find(|l| Some(l.name.as_str()) == entity.layer.as_deref())
-                    .map(|l| l.color)
-                    .unwrap_or(Color::ByLayer)
-            } else {
-                entity.color
+            let layer = self
+                .layers
+                .iter()
+                .find(|l| Some(l.name.as_str()) == entity.layer.as_deref());
+            // A ByLayer entity takes the layer's palette index first, as it takes the layer's
+            // `dgn.weight`: a layer read from a 240-byte level entry carries the level's
+            // color index, which then survives a seed palette that repeats or lacks its RGB.
+            let layer_index = match layer.and_then(|l| l.props.get("dgn.color_index")) {
+                Some(Value::Int(n)) => u8::try_from(*n).ok(),
+                _ => None,
+            };
+            let color = match (entity.color, layer_index) {
+                (Color::ByLayer, Some(index)) => {
+                    u32_at(&mut b, 0x34, u32::from(index))?;
+                    Color::ByLayer
+                }
+                (Color::ByLayer, None) => layer.map_or(Color::ByLayer, |l| l.color),
+                (color, _) => color,
             };
             let rgb = match color {
                 Color::Aci { index } => {
@@ -578,8 +616,14 @@ impl State<'_> {
                 }
             };
             if let Some(rgb) = rgb {
-                let index=self.tables.palette.iter().position(|c|*c==rgb).ok_or_else(||Error::Unsupported("RGB color is absent from seed palette; provide dgn.color_index explicitly".into()))?;
-                u32_at(&mut b, 0x34, index as u32)?;
+                let index =
+                    crate::palette::exact_index(&self.tables.palette, rgb).ok_or_else(|| {
+                        Error::Unsupported(
+                        "RGB color is absent from seed palette; provide dgn.color_index explicitly"
+                            .into(),
+                    )
+                    })?;
+                u32_at(&mut b, 0x34, u32::from(index))?;
             }
         }
         if entity.linetype.as_deref().is_some_and(|s| {
@@ -594,12 +638,14 @@ impl State<'_> {
     }
 
     fn lineweight(&self, entity: &Entity) -> Result<u32> {
-        fn native(props: &cadkit_core::Props) -> Result<Option<u32>> {
+        // `element`: an element may hold `BY_LEVEL` as read; a level cannot take its weight
+        // from itself.
+        fn native(props: &cadkit_core::Props, element: bool) -> Result<Option<u32>> {
             match props.get("dgn.weight") {
                 Some(Value::Int(n)) => {
                     let weight = u32::try_from(*n)
                         .map_err(|_| Error::invalid(0, "DGN weight must be a nonnegative index"))?;
-                    if weight > 31 {
+                    if weight > 31 && !(element && weight == BY_LEVEL) {
                         return Err(Error::Unsupported("DGN lineweight indexes above 31".into()));
                     }
                     Ok(Some(weight))
@@ -608,7 +654,7 @@ impl State<'_> {
                 None => Ok(None),
             }
         }
-        if let Some(weight) = native(&entity.props)? {
+        if let Some(weight) = native(&entity.props, true)? {
             return Ok(weight);
         }
         let weight = if entity.lineweight == cadkit_core::Lineweight::ByLayer {
@@ -618,7 +664,7 @@ impl State<'_> {
                 .find(|layer| Some(layer.name.as_str()) == entity.layer.as_deref())
             {
                 Some(layer) => {
-                    if let Some(weight) = native(&layer.props)? {
+                    if let Some(weight) = native(&layer.props, false)? {
                         return Ok(weight);
                     }
                     layer.lineweight
@@ -794,17 +840,7 @@ impl State<'_> {
                         let mut child = Entity::new(EntityKind::Point {
                             position: Point3::default(),
                         });
-                        child.layer = e.layer.clone();
-                        child.color = e.color;
-                        child.linetype = e.linetype.clone();
-                        child.lineweight = e.lineweight;
-                        child.visible = e.visible;
-                        for key in ["dgn.color_index", "dgn.style", "dgn.weight"] {
-                            if let Some(value) = e.props.get(key) {
-                                child.props.insert(key.into(), value.clone());
-                            }
-                        }
-                        child.attributes.clear();
+                        copy_symbology(e, &mut child);
                         child.kind = EntityKind::Polyline {
                             vertices: ring.iter().copied().map(cadkit_core::Vertex::at).collect(),
                             closed: true,
@@ -854,8 +890,7 @@ impl State<'_> {
                         points,
                         filled: true,
                     });
-                    child.layer = e.layer.clone();
-                    child.color = e.color;
+                    copy_symbology(e, &mut child);
                     children.push(child);
                 }
                 self.group(e, id, level, flags, depth, &children, GroupKind::Cell, None)?;
@@ -1497,9 +1532,13 @@ impl State<'_> {
         }
         f64_at(b, 0xf0, display.width * uor / 0.006)?;
         f64_at(b, 0xf8, display.height * uor / 0.006)?;
-        // Unrotated tags store (-1, 0, 0, 0); otherwise the text convention (w, 0, 0, z)
-        // with z = sin(-θ/2), see native::element::Rotation::matrix.
-        let q = if display.rotation == 0.0 {
+        // A 2D tag stores its angle in the first double, as 2D text does (issue #29;
+        // MicroStation's unrotated 2D tags hold zeros). A 3D tag stores a quaternion:
+        // unrotated (-1, 0, 0, 0), otherwise the text convention (w, 0, 0, z) with
+        // z = sin(-θ/2), see native::element::Rotation::matrix.
+        let q = if !self.model.is_3d {
+            [display.rotation, 0.0, 0.0, 0.0]
+        } else if display.rotation == 0.0 {
             [-1.0, 0.0, 0.0, 0.0]
         } else {
             let half = display.rotation / 2.0;
@@ -1537,6 +1576,21 @@ impl State<'_> {
     }
 }
 
+/// Symbology a component written for `parent` inherits (polygon rings, mesh faces): level,
+/// colour, line style and weight, visibility and the native DGN indexes.
+fn copy_symbology(parent: &Entity, child: &mut Entity) {
+    child.layer = parent.layer.clone();
+    child.color = parent.color;
+    child.linetype = parent.linetype.clone();
+    child.lineweight = parent.lineweight;
+    child.visible = parent.visible;
+    for key in ["dgn.color_index", "dgn.style", "dgn.weight"] {
+        if let Some(value) = parent.props.get(key) {
+            child.props.insert(key.into(), value.clone());
+        }
+    }
+}
+
 /// First defining point of an entity, where MicroStation anchors a tag attached to it.
 fn first_vertex(e: &Entity) -> Option<Point3> {
     match &e.kind {
@@ -1571,18 +1625,27 @@ fn value_chars(v: &Value) -> usize {
     .max(1)
 }
 
-/// Symbology of a tag element: the owner's, with the attribute's own DGN values first.
+/// Symbology of a tag element: the attribute's own DGN indexes first, then its typed
+/// `color` / `lineweight` (resolved like an entity's: seed palette, `dgn.weight` rules),
+/// then the owner's indexes and values.
 fn attribute_symbology(owner: &Entity, a: &Attribute) -> Entity {
     let mut s = Entity::new(EntityKind::Point {
         position: Point3::default(),
     });
     s.layer = a.layer.clone().or_else(|| owner.layer.clone());
-    s.color = owner.color;
+    s.color = a.color.unwrap_or(owner.color);
     s.linetype = owner.linetype.clone();
-    s.lineweight = owner.lineweight;
-    s.visible = owner.visible;
-    for key in ["dgn.color_index", "dgn.weight", "dgn.style"] {
-        if let Some(v) = a.props.get(key).or_else(|| owner.props.get(key)) {
+    s.lineweight = a.lineweight.unwrap_or(owner.lineweight);
+    // The tag's hidden bit is the attribute's own (`a.invisible`); a hidden owner does not
+    // hide a displayed tag of it.
+    s.visible = true;
+    for (key, typed) in [
+        ("dgn.color_index", a.color.is_some()),
+        ("dgn.weight", a.lineweight.is_some()),
+        ("dgn.style", false),
+    ] {
+        let inherited = if typed { None } else { owner.props.get(key) };
+        if let Some(v) = a.props.get(key).or(inherited) {
             s.props.insert(key.into(), v.clone());
         }
     }

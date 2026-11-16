@@ -159,6 +159,16 @@ CADKIT_API cadkit_status cadkit_document_from_json(const char *json, cadkit_docu
 CADKIT_API cadkit_status cadkit_document_to_dgn(const cadkit_document *doc, const uint8_t *seed,
     size_t seed_len, const char *options_json, uint8_t **out, size_t *out_len);
 CADKIT_API void cadkit_bytes_free(uint8_t *data);
+/* Copies a DGN V8 seed without its model's drawing content and without the document properties
+ * that name people or organisations. options_json follows the Rust dgn::StripSeedOptions JSON
+ * contract (NULL = defaults; an unknown field is CADKIT_INVALID_ARGUMENT); options sets the
+ * read limits (NULL = defaults). On success
+ * *out / *out_len hold the seed (release with cadkit_bytes_free) and *report_json the
+ * dgn::StripSeedReport JSON (release with cadkit_string_free); on failure all are NULL / 0.
+ * Names in the kept tables remain and are counted in the report; the result is not anonymous. */
+CADKIT_API cadkit_status cadkit_dgn_strip_seed(const uint8_t *seed, size_t seed_len,
+    const char *options_json, const cadkit_options *options, uint8_t **out, size_t *out_len,
+    char **report_json);
 CADKIT_API cadkit_status cadkit_document_to_citygml(const cadkit_document *doc,
     const char *srs_name, uint8_t lod, char **out);
 /* Returns JSON {"xml":..., "report":...}; free with cadkit_string_free.

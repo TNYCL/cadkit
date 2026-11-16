@@ -209,6 +209,23 @@ fn prop_int(props: &Props, key: &str) -> Option<i64> {
     }
 }
 
+/// A `[x, y, z]` list prop as a unit vector; `None` when absent, malformed or zero.
+fn prop_direction(props: &Props, key: &str) -> Option<Point3> {
+    let Some(MValue::List(v)) = props.get(key) else {
+        return None;
+    };
+    let c = |i: usize| match v.get(i) {
+        Some(MValue::Float(f)) => Some(*f),
+        Some(MValue::Int(n)) => Some(*n as f64),
+        _ => None,
+    };
+    if v.len() != 3 {
+        return None;
+    }
+    let u = Vec3::new(c(0)?, c(1)?, c(2)?).normalized()?;
+    Some(Point3::new(u.x, u.y, u.z))
+}
+
 fn prop_f64(props: &Props, key: &str) -> Option<f64> {
     match props.get(key) {
         Some(MValue::Float(f)) => Some(*f),
@@ -671,6 +688,14 @@ impl Writer<'_> {
                         let mut child = seq_child.clone();
                         if let Some(layer) = at.layer.as_deref().filter(|l| !l.trim().is_empty()) {
                             child.layer = self.layers.add(layer);
+                        }
+                        // The attribute record's own symbology; `ByBlock` keeps its DXF
+                        // meaning (the INSERT's), `None` the INSERT's values.
+                        if let Some(color) = at.color {
+                            child.color = color;
+                        }
+                        if let Some(lineweight) = at.lineweight {
+                            child.lineweight = lineweight;
                         }
                         let (height, width_factor, style, halign, valign, rotation) =
                             match &at.display {
@@ -1251,6 +1276,18 @@ impl Writer<'_> {
         out.real(42, 1e-7);
         out.real(43, 1e-7);
         out.real(44, 1e-10);
+        // Fit-point end conditions: a DGN type 11 curve keeps the tangents its end points
+        // define (cadkit-dgn `dgn.curve_*_tangent`); without them the fit data has free ends.
+        if !fit.is_empty() {
+            for (code, key) in [
+                (12, "dgn.curve_start_tangent"),
+                (13, "dgn.curve_end_tangent"),
+            ] {
+                if let Some(t) = prop_direction(&e.props, key) {
+                    out.point(code, t);
+                }
+            }
+        }
         if have_ctrl {
             for k in &knot_vec {
                 out.real(40, *k);

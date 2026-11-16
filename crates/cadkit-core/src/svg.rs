@@ -886,7 +886,14 @@ impl<'a> Renderer<'a> {
             if self.layer_hidden(attr_layer) {
                 continue;
             }
-            let attr_color = if attr.layer.is_some() && e.color == Color::ByLayer {
+            // The attribute record's own color wins; otherwise the owner's, through the
+            // attribute's own layer when the owner's color is ByLayer.
+            let attr_color = if let Some(own) = attr.color {
+                let mut probe = Entity::new(EntityKind::Point { position: pos });
+                probe.layer = Some(attr_layer.to_owned());
+                probe.color = own;
+                with_contrast(probe.resolved_color_in(self.doc, ctx), self.background)
+            } else if attr.layer.is_some() && e.color == Color::ByLayer {
                 let lc = self
                     .layer_map
                     .get(attr_layer)
@@ -2282,6 +2289,39 @@ mod tests {
             ..SvgOptions::default()
         };
         assert!(!render(&doc(vec![t, line(0.0, 0.0, 1.0, 1.0)]), &o).contains("<text"));
+    }
+
+    #[test]
+    fn displayed_attributes_use_their_own_color_when_set() {
+        let mut owner = line(0.0, 0.0, 10.0, 0.0);
+        owner.color = Color::Rgb { r: 0, g: 0, b: 128 };
+        let display = crate::model::AttributeDisplay::new(1.0, 1.0);
+        owner.attributes.push(
+            crate::model::Attribute::new("OWN", "a")
+                .with_position(Point3::xy(1.0, 1.0))
+                .with_display(display.clone())
+                .with_color(Color::Rgb { r: 128, g: 0, b: 0 }),
+        );
+        owner.attributes.push(
+            crate::model::Attribute::new("INHERITED", "b")
+                .with_position(Point3::xy(2.0, 2.0))
+                .with_display(display),
+        );
+        let s = svg(vec![owner]);
+        let texts: Vec<&str> = s.lines().filter(|l| l.contains("<text")).collect();
+        assert_eq!(texts.len(), 2, "{s}");
+        assert!(
+            texts
+                .iter()
+                .any(|l| l.contains("fill=\"#800000\">a</text>")),
+            "{s}"
+        );
+        assert!(
+            texts
+                .iter()
+                .any(|l| l.contains("fill=\"#000080\">b</text>")),
+            "{s}"
+        );
     }
 
     #[test]

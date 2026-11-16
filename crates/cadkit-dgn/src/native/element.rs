@@ -117,7 +117,8 @@ pub struct TextData {
     /// Text bytes as stored.
     pub raw_text: Vec<u8>,
     /// Length of the text along its baseline in UOR, when the file stores it (V8 `0x80`)
-    /// or it can be derived from the range (unrotated V7 text). `None`: unknown.
+    /// or it can be derived from the range (unrotated V7 text; unrotated, non-empty V8 text
+    /// without property bit `0x1000`; both when the range starts at the origin). `None`: unknown.
     pub measured_length: Option<f64>,
 }
 
@@ -199,8 +200,34 @@ pub struct TagData {
     pub font: u32,
     /// V8: text justification code of the displayed value (`0x130`).
     pub justification: u16,
-    /// V8: display orientation quaternion `(w, x, y, z)` as stored (`0x100`).
+    /// V8: the four doubles at `0x100` as stored. A 3D tag (3D property flag) stores the
+    /// display orientation as a quaternion `(w, x, y, z)`; a 2D tag stores the rotation
+    /// angle in radians in the first double and zeros in the others, as 2D text does, except
+    /// the 2D tags cadkit up to 0.5.2 wrote, which hold a quaternion.
+    /// [`TagData::display_rotation`] interprets them.
     pub quaternion: [f64; 4],
+}
+
+impl TagData {
+    /// Orientation of the displayed value: `Rotation::Angle` (first double at `0x100`)
+    /// for a 2D tag element, `Rotation::Quaternion` for a 3D one, the same split as text
+    /// (type 17). `is_3d` is the tag element's own flag, [`ElementHeader::is_3d`].
+    ///
+    /// cadkit up to 0.5.2 wrote a quaternion into 2D tags too: `(-1, 0, 0, 0)` unrotated,
+    /// otherwise `(cos θ/2, 0, 0, -sin θ/2)`. A 2D tag whose doubles have exactly one of
+    /// these forms (`(-1, 0, 0, 0)`, or `(w, 0, 0, z)` with `z ≠ 0` and
+    /// `|w² + z² − 1| < 1e-9`) is read as a quaternion. An angle never stores a nonzero
+    /// fourth double, so only a 2D tag at exactly −1 rad would be misread (as unrotated).
+    pub fn display_rotation(&self, is_3d: bool) -> Rotation {
+        let [w, x, y, z] = self.quaternion;
+        let legacy_quaternion = [w, x, y, z] == [-1.0, 0.0, 0.0, 0.0]
+            || (x == 0.0 && y == 0.0 && z != 0.0 && (w * w + z * z - 1.0).abs() < 1e-9);
+        if is_3d || legacy_quaternion {
+            Rotation::Quaternion(self.quaternion)
+        } else {
+            Rotation::Angle(w)
+        }
+    }
 }
 
 /// One tag definition in a tag set.

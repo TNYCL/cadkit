@@ -239,6 +239,107 @@ fn rotated_and_tilted_text_range_encloses_its_measured_rectangle() {
     }
 }
 
+/// A centred text whose record stores no length (`0x80` zero) but whose range starts at its
+/// origin reads its length from the range (`dgn.text_length_source` = "range"); written back,
+/// the record stores that length, and anchor, origin and length read back unchanged.
+#[test]
+fn range_derived_text_length_keeps_the_anchor_through_a_round_trip() {
+    for three in [false, true] {
+        let mut source = text_entity(7, Vec3::Z, three);
+        if let EntityKind::Text { rotation, .. } = &mut source.kind {
+            *rotation = 0.;
+        }
+        let written = write_v8(
+            &document(three, vec![source]),
+            &seed(three),
+            &WriteOptions::default(),
+        )
+        .unwrap();
+        // Clear the stored length and narrow the range to 9 drawing units (1000 UOR each).
+        let native = v8::read(&written, &ReadOptions::default()).unwrap();
+        let records: Vec<Vec<u8>> = native.models[0].graphic_pages[0]
+            .elements
+            .iter()
+            .map(|r| {
+                let mut b = r.bytes.clone();
+                if r.type_code() == 17 {
+                    assert_eq!(le::i64_at(&b, 0x50), Some(12_500));
+                    f64_at(&mut b, 0x80, 0.0).unwrap();
+                    b[0x50..0x58].copy_from_slice(&9_000i64.to_le_bytes());
+                }
+                b
+            })
+            .collect();
+        let mut file = ::cfb::CompoundFile::open(Cursor::new(written)).unwrap();
+        file.create_stream("Dgn-Md/#000000/Dgn^G/$1")
+            .unwrap()
+            .write_all(&page(&records, 3, 1).unwrap())
+            .unwrap();
+        file.flush().unwrap();
+        let unmeasured = file.into_inner().into_inner();
+
+        let doc = crate::read(&unmeasured, &ReadOptions::default()).unwrap();
+        let text = &doc.models[0].entities[0];
+        assert_eq!(text.props["dgn.text_length"], Value::Float(9.0));
+        assert_eq!(
+            text.props["dgn.text_length_source"],
+            Value::Text("range".into())
+        );
+        assert!(!text.props.contains_key("dgn.text_length_estimated"));
+        let origin = match &text.props["dgn.origin"] {
+            Value::List(v) => v.clone(),
+            other => panic!("{other:?}"),
+        };
+        let (Value::Float(ox), Value::Float(oy)) = (&origin[0], &origin[1]) else {
+            panic!("origin")
+        };
+        let EntityKind::Text {
+            position, height, ..
+        } = text.kind
+        else {
+            panic!("text")
+        };
+        // Centre-middle: half the length along x, half the height along y.
+        assert!((position.x - (ox + 4.5)).abs() < 1e-9);
+        assert!((position.y - (oy + height / 2.)).abs() < 1e-9);
+
+        let back = write_v8(
+            &doc,
+            &unmeasured,
+            &WriteOptions::default().with_clear_seed_model(true),
+        )
+        .unwrap();
+        let native = v8::read(&back, &ReadOptions::default()).unwrap();
+        let record = native.models[0].graphic_pages[0]
+            .elements
+            .iter()
+            .find(|r| r.type_code() == 17)
+            .unwrap();
+        assert_eq!(le::f64_at(&record.bytes, 0x80), Some(9_000.));
+        let reread = crate::read(&back, &ReadOptions::default()).unwrap();
+        let again = &reread.models[0].entities[0];
+        let EntityKind::Text {
+            position: again_position,
+            ..
+        } = again.kind
+        else {
+            panic!("text")
+        };
+        for (a, b) in [
+            (again_position.x, position.x),
+            (again_position.y, position.y),
+            (again_position.z, position.z),
+        ] {
+            assert!((a - b).abs() < 1e-9);
+        }
+        assert_eq!(again.props["dgn.origin"], Value::List(origin));
+        assert_eq!(again.props["dgn.text_length"], Value::Float(9.0));
+        // The written record stores the length: it is no longer range-derived.
+        assert!(!again.props.contains_key("dgn.text_length_source"));
+        assert!(!again.props.contains_key("dgn.text_length_estimated"));
+    }
+}
+
 fn seed_with_fonts(fonts: &[(u32, &str)]) -> Vec<u8> {
     let mut records = vec![];
     for (index, (number, name)) in fonts.iter().enumerate() {
@@ -355,4 +456,72 @@ fn external_font_referenced_by_seed_graphics_is_retained_without_a_named_table()
         Value::Int(127)
     );
     assert!(write_v8(&source, &seed(false), &WriteOptions::default()).is_err());
+}
+
+#[test]
+fn a_font_name_with_two_numbers_is_ambiguous_until_a_number_picks_one() {
+    let seed = seed_with_fonts(&[(23, "Twin"), (41, "Twin"), (50, "Case"), (51, "case")]);
+    let parsed = V8Seed::from_bytes(&seed).unwrap();
+    assert_eq!(
+        parsed.font_entries().collect::<Vec<_>>(),
+        [("Twin", 23), ("Twin", 41), ("Case", 50), ("case", 51)]
+    );
+    // Each name once in `fonts`, every entry in `font_entries`.
+    assert_eq!(parsed.fonts().count(), 3);
+    let message = |r: Result<u32>| match r {
+        Err(Error::Unsupported(m)) => m,
+        other => panic!("{other:?}"),
+    };
+    let ambiguous = "DGN font name is ambiguous in the seed font table";
+    let absent = "DGN font is absent from the seed font table";
+    assert_eq!(message(parsed.font_number("Twin")), ambiguous);
+    // The exact name wins over the loose match; without one, the loose match decides.
+    assert_eq!(parsed.font_number("Case").unwrap(), 50);
+    assert_eq!(parsed.font_number("case").unwrap(), 51);
+    assert_eq!(message(parsed.font_number(" CASE ")), ambiguous);
+    assert_eq!(message(parsed.font_number("Other")), absent);
+
+    let mut source = text_entity(2, Vec3::Z, false);
+    let write = |entity: &Entity| {
+        write_v8(
+            &document(false, vec![entity.clone()]),
+            &seed,
+            &WriteOptions::default(),
+        )
+    };
+    if let EntityKind::Text { style, .. } = &mut source.kind {
+        *style = Some("Twin".into());
+    }
+    // The writer once took the last entry of a repeated name silently.
+    assert!(matches!(write(&source), Err(Error::Unsupported(m)) if m.contains("ambiguous")));
+    for number in [23, 41] {
+        source
+            .props
+            .insert("dgn.font_number".into(), Value::Int(number));
+        let bytes = write(&source).unwrap();
+        let parsed = crate::read(&bytes, &ReadOptions::default()).unwrap();
+        assert_eq!(
+            parsed.models[0].entities[0].props["dgn.font_number"],
+            Value::Int(number)
+        );
+    }
+    source
+        .props
+        .insert("dgn.font_number".into(), Value::Int(50));
+    assert!(write(&source).is_err(), "number and style disagree");
+    // A document prepared for the seed drops the ambiguous style and keeps the number.
+    source
+        .props
+        .insert("dgn.font_number".into(), Value::Int(23));
+    let prepared = parsed
+        .prepare_document(
+            &document(false, vec![source.clone()]),
+            &SeedPrepareOptions::default(),
+        )
+        .unwrap();
+    let EntityKind::Text { style, .. } = &prepared.models[0].entities[0].kind else {
+        panic!("text")
+    };
+    assert_eq!(style, &None);
+    assert!(write_v8_with_seed(&prepared, &parsed, &WriteOptions::default()).is_ok());
 }

@@ -62,8 +62,8 @@ With MinGW, link the DLL directly.
 | Object | Created by | Released by |
 |---|---|---|
 | `cadkit_document*` | `cadkit_read_file`, `cadkit_read_bytes`, `cadkit_document_from_json`, `_explode_inserts`, `_convert_units` | `cadkit_document_free` (once; `NULL` is a no-op) |
-| `char*` | `cadkit_document_to_json`, `_to_svg`, `_to_dxf`, `_to_citygml`, `_to_citygml_with_report`, `_info_json`, `cadkit_citygml_read_json`, `_write_json`, `_preflight_tkgm` | `cadkit_string_free` (once; `NULL` is a no-op) |
-| `uint8_t*` | `cadkit_document_to_dgn`, `_to_dxf_bytes` | `cadkit_bytes_free` (`NULL` or repeated free is a no-op; never pass to `cadkit_string_free`) |
+| `char*` | `cadkit_document_to_json`, `_to_svg`, `_to_dxf`, `_to_citygml`, `_to_citygml_with_report`, `_info_json`, `cadkit_citygml_read_json`, `_write_json`, `_preflight_tkgm`, the report of `cadkit_dgn_strip_seed` | `cadkit_string_free` (once; `NULL` is a no-op) |
+| `uint8_t*` | `cadkit_document_to_dgn`, `_to_dxf_bytes`, `cadkit_dgn_strip_seed` | `cadkit_bytes_free` (`NULL` or repeated free is a no-op; never pass to `cadkit_string_free`) |
 | `const char*` | `cadkit_version`, `cadkit_status_string`, `cadkit_last_error_message` | never freed |
 
 Freeing a document twice, or using one after it was freed, is detected through a registry of
@@ -89,7 +89,8 @@ the freed address is reused by a later document the stale pointer cannot be told
 | `cadkit_document_to_svg(doc, options, &s)` | One model rendered as SVG |
 | `cadkit_document_to_dxf(doc, version, &s)` | ASCII DXF of the given version |
 | `cadkit_document_to_dgn(doc, seed, seed_len, options_json, &bytes, &len)` | Seed-based DGN V8 binary output |
-| `cadkit_bytes_free(bytes)` | Release a binary buffer returned by `cadkit_document_to_dgn`, `_to_dxf_bytes` |
+| `cadkit_dgn_strip_seed(seed, seed_len, options_json, options, &bytes, &len, &report)` | DGN V8 seed without the model's drawing content and identifying document properties, plus its report JSON |
+| `cadkit_bytes_free(bytes)` | Release a binary buffer returned by `cadkit_document_to_dgn`, `_to_dxf_bytes`, `cadkit_dgn_strip_seed` |
 | `cadkit_document_to_citygml(doc, srs_name, lod, &s)` | Generic CityGML 2.0 XML with an explicit CRS and LoD |
 | `cadkit_document_to_citygml_with_report(doc, srs_name, lod, metadata_only, &s)` | Generic CityGML 2.0 XML + conversion `ExportReport` as JSON (`{"xml", "report"}`) |
 | `cadkit_citygml_read_json(data, len, options, &s)` | Read native CityGML 2.0 bytes into editable object-graph JSON |
@@ -201,6 +202,16 @@ values or struct layouts. New entry points are declared in `cadkit.h`:
 - `cadkit_document_to_citygml_with_report` returns JSON `{"xml": ..., "report": ...}`
   (release with `cadkit_string_free`). `metadata_only` must be `0` (reject
   unsupported geometry) or `1` (retain unsupported entities as JSON metadata).
+- `cadkit_dgn_strip_seed(seed, seed_len, options_json, options, &bytes, &len, &report)`
+  copies a DGN V8 seed without the drawing content of its model and without the document
+  properties that name people or organisations (`dgn::strip_seed_v8`). `options_json`
+  follows Rust `dgn::StripSeedOptions` JSON (every field optional; an unknown field returns
+  `CADKIT_INVALID_ARGUMENT`) and `options` sets the read limits (NULL selects the defaults
+  of either). Release the seed with `cadkit_bytes_free` and the
+  `dgn::StripSeedReport` JSON with `cadkit_string_free`; all outputs are NULL / 0 on
+  failure. Names in the kept tables remain and are counted in the report; the result is
+  not anonymous. C++: `cadkit::strip_dgn_seed(seed, options_json, read_options)` returns a
+  `StrippedDgnSeed { seed, report_json }`.
 - `cadkit_citygml_read_json` / `cadkit_citygml_write_json` expose the native
   CityGML tree without losing semantic relationships through neutral geometry.
   Write options follow Rust `gml::ValidationOptions` JSON.

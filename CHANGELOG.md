@@ -12,6 +12,189 @@ All notable changes are recorded here. The format follows
   and JSON conversion, reports shortened previews, omits raw properties and
   rejects exhausted output/work budgets. Legacy `pickEntity` remains compatible
   and now copies metadata only after selecting the winning entity.
+- `cadkit_dgn::check_structure` (also `native::structure`, and `cadkit::dgn::check_structure`
+  through the facade) returns a `StructureReport` of a DGN V8 file without the `write`
+  feature: sibling trees that are ordered red-black trees and that have the writer's
+  top-down shape, unused directory slots outside the MS-CFB free form, the writer's slot
+  order, pages with a page number or population, records without a time and split
+  dictionary pages, with the stable warning codes `dgn.cfb_tree_unordered`,
+  `dgn.cfb_tree_unbalanced`, `dgn.cfb_tree_shared` (a sibling tree reaching entries another
+  storage's tree holds; analysed once, so the work stays proportional to the directory),
+  `dgn.cfb_free_entry`, `dgn.record_time`, `dgn.dictionary_page_split` and
+  `dgn.model_page_counter`. CLI: `cadkit check-dgn file.dgn` prints it as JSON (exit 1 when
+  it has warnings). Not exposed in Python, WASM or C.
+- `cadkit_dgn::strip_seed_v8` (facade `cadkit::strip_dgn_seed`) copies a single-model DGN V8
+  seed without the drawing content of its model and without the document properties that
+  name people or organisations, for use as the seed of `write_v8`: graphic records and
+  their XAttributes go, so do by default the model's control records (model settings,
+  model-level tag sets, raster groups) and every property set stream, replaced by a
+  `\u{5}SummaryInformation` with code page, application and times only and a
+  `\u{5}DocumentSummaryInformation` with the code page only. The dictionary (levels, fonts,
+  colour table, tag sets, text styles, views, settings, cell definitions), units and
+  undecoded streams stay byte for byte; the file header and model times are normalised from
+  `StripSeedOptions::timestamp_ms` and the container is built anew (storages carry that
+  time, the root entry its modification time only, as MS-CFB 2.6.1 requires), so no byte of
+  a removed stream stays in free space. The application name is written as `VT_LPSTR`, the
+  type MS-OLEPS 2.25.1 gives `PIDSI_APPNAME` (the observed files store `VT_LPWSTR`; the
+  reader reads both). `StripSeedOptions` (`keep_controls`, `keep_raster_template`,
+  `keep_cell_definitions`, `model_name`, `timestamp_ms`, `application`; JSON with
+  defaults, unknown fields rejected) and the returned `StrippedSeed` / `StripSeedReport`,
+  which counts what was removed and what remains that may identify the source (named
+  levels, tag sets, cell definitions, model name and description, kept controls, raster
+  file references, undecoded streams). The result is not anonymous: names in the kept tables remain and must
+  be reviewed. Equal input and options give equal bytes; stripping a result again changes
+  nothing. Bindings: CLI `cadkit strip-seed in.dgn out.dgn [--keep-controls]
+  [--keep-raster-template] [--drop-cell-definitions] [--model-name NAME] [--timestamp-ms MS]
+  [--application NAME] [--report]` (refuses to overwrite its input, also through a symbolic
+  link or, on Unix, a hard link), Python
+  `cadkit.strip_dgn_seed(seed, **options) -> (bytes, dict)`, WASM
+  `stripDgnSeed(seed, options?, readOptions?) -> { seed, report }`, C
+  `cadkit_dgn_strip_seed` (seed bytes via `cadkit_bytes_free`, report JSON via
+  `cadkit_string_free`) and C++ `cadkit::strip_dgn_seed`. No stripped seed has been opened
+  in another application.
+- `Attribute::color` and `Attribute::lineweight` (optional, with `with_color` /
+  `with_lineweight`): the attribute record's own symbology when it differs from the
+  owning entity's; `None` means the owner's. The DGN reader resolves a tag element's
+  color through the file color table (or the default palette) and its weight as it does
+  for entities, keeping `dgn.color_index` / `dgn.weight`; the SVG renderer draws a
+  displayed attribute in its own color; the DGN writer uses them when the attribute has
+  no explicit `dgn.color_index` / `dgn.weight` (the explicit index still wins; a typed
+  color must exist in the seed palette, as for entities); `Document::explode_inserts` and the
+  DXF writer's ATTRIB records use them too (`ByBlock` and `None` take the insert's). Both
+  fields are omitted from JSON when unset, so `schema_version` stays 1 and older JSON reads
+  unchanged (#30).
+- DGN type 11 curves carry their end conditions as `dgn.curve_start_tangent` /
+  `dgn.curve_end_tangent` (GDAL dgnlib's slope at the first and last fit points, not
+  normalised); the DXF writer emits them, normalised, as SPLINE groups 12/13 of fit-point
+  splines (#28). `Entity::transformed` keeps them under a translation and positive uniform
+  scale only and drops them otherwise (they would describe the untransformed curve).
+- `cadkit_dgn::native::TagData::display_rotation` interprets the orientation doubles of
+  a tag element by its 3D flag, and reads the quaternions cadkit up to 0.5.2 wrote into 2D
+  tags as such.
+- Warning `dgn.complex_count`: a complex chain or shape declared more components than it
+  stores and was closed by the next chain or shape header that is itself a component (the
+  pattern reported in #27).
+- `cadkit_dgn::palette::exact_index` (the writer's palette match) and `nearest_index` (the
+  match `V8Seed::prepare_document` uses for off-palette colors).
+- `V8Seed::font_entries` (the seed's font table in stored order, repeated names included)
+  and `V8Seed::font_number` (exact name, then trimmed ASCII case-insensitive; absent and
+  ambiguous names are distinct `Unsupported` errors).
+- `dgn.text_length_source = "range"` on DGN text whose length comes from its element range
+  (V7, and V8 as under Changed).
+- `dgn.level_weight_raw` / `dgn.level_style_raw` on layers read from 240-byte level entries:
+  the two fields that presumably hold the level's weight (`0x44`) and style (`0x40`), kept
+  raw; they set no lineweight or linetype.
+- DGN acceptance kit: `cargo run -p cadkit --example interchange -- SEED [DIR]` writes small
+  synthetic DGN V8 files into a public seed (repacked and stripped seed, every supported
+  geometry kind on new levels, justified, Turkish UTF-16 and windows-1254 and rotated text,
+  a tag set with displayed, rotated and hidden tags, a hidden element, a 2D document in a 3D
+  seed, large coordinates, a new raster attachment with a synthetic 1-bit TIFF beside it, a
+  chained write, ByLayer colour), each read back and compared, checked with
+  `check_structure` and opened with `cfb` in strict mode before it is written, plus
+  `MANIFEST.json` and `README.md`. `docs/dgn/ACCEPTANCE.md` is the protocol for opening
+  them in another application; no external acceptance is claimed. The example replaces the
+  former three-file output (`01-repacked.dgn`, `02-new-geometry.dgn`,
+  `03-moved-and-tagged.dgn`); `synthetic.gml` stays.
+- `docs/dgn/FORMAT_NOTES.md` ("Built-in blank seed") and `tests/blank_seed_evidence.rs`
+  record why cadkit ships no built-in blank seed: `Dgn~H` and `Dgn~Mh` hold undecoded
+  fields whose values differ between the public writers.
+
+### Changed
+
+- DGN flat ellipses and arcs (smaller semi-axis at most 1e-9 of the larger one) are read as
+  `Line` (the segment the sweep covers along the non-zero axis) or `Point` (both axes
+  zero) instead of `Ellipse { ratio: 0 }`, which broke the documented `(0, 1]` range. The
+  element data stays in `dgn.degenerate_ellipse`, `dgn.primary_axis`,
+  `dgn.secondary_axis`, `dgn.center`, `dgn.start_angle`, `dgn.sweep_angle` and
+  `dgn.rotation` / `dgn.quaternion`; the DGN writer writes such an entity back as a line
+  (#24).
+- DGN V8 graphic elements with property bit `0x0080` are read with `Entity::visible = false`
+  instead of `true`, following the report in #25 that other readers do not draw them; the
+  raw word stays in `dgn.properties`. In the corpora only TreeText's tags carry the bit, so
+  graphics are covered by synthetic records only. V7 elements are unchanged. Written tags
+  take their hidden bit from `Attribute::invisible` only, so a displayed tag of a hidden
+  entity stays displayed in the file (SVG output skips it with its owner).
+- A complex chain or shape header that follows an unfinished chain or shape closes it
+  instead of becoming its component, so chains in cells no longer nest into each other when
+  a chain declares more components than it stores, the cause of the nesting reported in
+  #27 (the reporter's files were not available; every chain and shape of the corpora
+  declares exactly the components it stores; the pattern is reproduced synthetically).
+- The bytes of every DGN file `write_v8` writes change: the first dword of the model header
+  stream prefix (`Dgn~Mh`) is the number of graphic and control pages the output holds with
+  records, the relation observed in 552 of 567 private and 3 of 3 public V8 files (it was
+  the seed's value); a page without records is its 16-byte header (no empty zlib stream).
+  `write_v8` and `repack_v8` write unused directory slots in the MS-CFB 2.6.3 free form
+  (the `cfb` crate's form had a name length of 2). Slot order and the page headers of
+  unchanged seed pages are unchanged.
+- The DGN writer gives a `ByLayer` entity without its own `dgn.color_index` the layer's
+  `dgn.color_index` (0–255) before trying the layer color, as it does for `dgn.weight`.
+  Documents read from a file write the same bytes as before (their elements carry their own
+  index); a new `ByLayer` entity on a colored level is written with that level's index
+  instead of 0, also into a seed whose palette lacks the layer's RGB.
+- DGN V8 layers read from 240-byte level entries (the only layout of the private corpus;
+  the three public V8 samples use 104-byte entries) carry the level color:
+  `Layer.color` is the file palette color of the entry's color index (`0x48`), kept in the
+  layer's `dgn.color_index` (before, `Layer.color` stayed `ByLayer`), so `ByLayer` entities on
+  them resolve to it (`Entity::resolved_color`, SVG). Layers from 104-byte entries are
+  unchanged. Evidence: 807 of 853 by-level colored elements of the private corpus sit on the
+  2.7 % of levels with a nonzero index.
+- DGN V8 text without a stored length (`0x80` zero) takes its length from the element range
+  when it is unrotated, not empty, has property bit `0x1000` clear and its range starts at
+  the origin (as V7 text already did), instead of `characters × character width`; it is no
+  longer marked `dgn.text_length_estimated`. MicroStation's stored lengths equal the range
+  width within 1e-3 on 303 of 303 such texts of the private corpus; the change affects
+  test_dgnv8's three ODA texts (no private text: the unmeasured ones are empty), and a
+  rewrite stores the range-derived length.
+- A text style naming a font that the seed's font table stores with two different numbers
+  is rejected ("text font style is ambiguous in seed") unless `dgn.font_number` picks one;
+  before, the last entry won silently. The writer now knows the numbers of every entry of a
+  repeated name, not only the last. `prepare_document` drops such a style like an unknown
+  one.
+- A non-integer `dgn.style` is rejected instead of being ignored.
+- `WriteOptions::preserve_seed_controls` (default on) drops a seed control record only when
+  a dependency linkage of it names a seed graphic as a root. Before, every 8-byte window of
+  the record equal to a graphic id dropped it; on the observed files such windows only hit
+  field values (the exponent bytes of doubles, small constants), so writes that replace the
+  model lost TreeText's and Water's model settings record and 83 of the 5,018 non-raster
+  control records of the private corpus, among them 6 type 99 components of type 100 groups
+  whose header stayed. Writes into a seed whose model holds no graphic are unchanged.
+  Raster control groups keep their rules.
+
+### Fixed
+
+- DGN V8 names stored as UTF-16LE after an `ff fe` byte-order mark (string linkages:
+  level, model, cell and tag set names, descriptions, unit labels; UTF-16 model index and
+  font names) are decoded as UTF-16 instead of byte-wise `"ÿþ…"` text cut at the first
+  NUL byte. `ff fe 01 00` keeps its meaning (8-bit text follows) (#26).
+- DGN 2D tag elements store their display rotation as an angle at `0x100`, as reported in
+  #29 (the reporter's files were not available; the only 2D tags of the corpora, TreeText's,
+  are unrotated); it was read as a quaternion, so `[π, 0, 0, 0]` came out unrotated. 3D
+  tags keep the quaternion, and the writer now stores an angle for tags written into a 2D
+  seed. The 2D tags cadkit up to 0.5.2 wrote hold a quaternion and still read with their
+  rotation: a 2D tag storing exactly `(-1, 0, 0, 0)` or `(w, 0, 0, z)` with `z ≠ 0` and
+  `w² + z² = 1` (within 1e-9) is read as a quaternion, so only a 2D angle of exactly −1 rad
+  would be misread. A non-finite stored angle reads as 0 instead of failing a later export.
+- Documents read from DGN files whose elements take color or weight from their level
+  (`dgn.color_index` / `dgn.weight` `0xFFFFFFFF`, style `0x7FFFFFFF`) are written back with
+  those values instead of failing with "extended DGN color table entries" or a weight
+  above 31 (51 of 54 such private files failed; 52 now write back, the other two fail on
+  unrelated content). `prepare_document` keeps them on elements and tags.
+- Mesh faces written by `write_v8` inherit the mesh's line style, lineweight, visibility and
+  `dgn.style` / `dgn.weight` / `dgn.color_index`, as polygon rings do (they kept level
+  and color only).
+- The writer's raw CFB directory walk stops at the header's FAT sector count and at a
+  repeated DIFAT sector, and walks a sibling subtree that several storages share once.
+- `write_v8` and `repack_v8` order rebuilt sibling trees as the `cfb` crate does (MS-CFB
+  2.6.4 simple case conversion: a character maps to its uppercase only when that is one
+  character, `ᾀ`-type Greek letters to their titlecase form, supplementary characters by
+  code point). Before, the first character of the full uppercase was compared per UTF-16
+  unit, so a seed with a stream named, say, `ß…` beside `T…` was rewritten into a file the
+  `cfb` crate rejects. ASCII names order as before.
+- `write_v8` on a version 4 seed (4096-byte sectors) no longer corrupts the FAT. The
+  directory rebalancing added in 0.3.6 placed sector `n` at `512 + n * 4096` instead of
+  `(n + 1) * 4096` (a version 4 header fills a whole sector), so it read FAT entries as
+  directory entries, wrote colour flags into the FAT and left the real directory
+  unbalanced. The output could not be opened again as a seed ("Malformed FAT").
 
 ## [0.5.2] - 2026-11-01
 

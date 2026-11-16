@@ -46,8 +46,41 @@ WASM viewer uses SVG and does not expose these Rust renderers.
 The host application supplies a neutral `Document`, a compatible DGN V8 seed, and
 `dgn::WriteOptions` to `cadkit::to_dgn`. Bindings expose the same operation; the
 JSON options accept `preserve_seed_rasters` without a separate C ABI function.
-Units, dimension, palette, and font tables must match the seed. A production seed
+Units, dimension, palette, and font tables must match the seed
+(`V8Seed::prepare_document` converts units, promotes a 2D document to a 3D seed and maps
+symbology when asked). A production seed
 should be an approved blank template rather than an arbitrary client drawing.
+
+### Obtaining a seed
+
+cadkit ships no seed: the file header and model header streams every seed needs hold
+undecoded fields whose values differ between the writers of the public samples, so a
+built-in seed would have to copy a vendor template's values or guess them
+([format notes](dgn/FORMAT_NOTES.md#built-in-blank-seed-not-built)). Make one from a drawing whose tables you are allowed to hand on (your
+organisation's own template, a drawing you produced): `dgn::strip_seed_v8`
+(`cadkit::strip_dgn_seed`, `cadkit strip-seed in.dgn seed.dgn --report`, Python
+`strip_dgn_seed`, WASM `stripDgnSeed`, C `cadkit_dgn_strip_seed`) removes the model's
+graphic records, by default its control records and raster attachments, and every property
+set (author, last author, company, manager, title, comments, thumbnail and user-defined
+sets), writes minimal property sets and normalised times, and rebuilds the container so no
+removed byte survives in free space. It keeps what a seed is for byte for byte: levels,
+fonts, colour table, tag sets, text styles, views and settings records, cell definitions
+(unless `keep_cell_definitions` is false), units, and streams cadkit does not decode.
+
+The result is not anonymous. Level names and descriptions, tag set and tag names, cell
+names, font and style names, the model name (unless `model_name` replaces it) and
+description, kept control records, kept raster file paths and undecoded streams remain.
+`StripSeedReport` counts them (`named_levels`, `tag_sets`, `cell_definitions`,
+`model_name_from_seed`, `model_description`, `kept_control_records`,
+`raster_file_references`, `unknown_streams`); review them before handing the seed to anyone:
+`cadkit layers` and `cadkit blocks` list level and cell names, and `cadkit dump --json` shows
+the rest (tag sets and tag names in the document's `dgn.tag_sets`, the model description in
+the model's `dgn.description`, raster file names and paths in the image entities'
+`dgn.raster_file` / `dgn.raster_path`). A seed made from a client drawing
+carries that client's level and tag names. Stripping is deterministic for equal input and
+options (`timestamp_ms` fixes the stored times) and idempotent. The stripped seed is checked
+locally (`check_structure`, `V8Seed::parse`, `write_v8`); it has not been opened in another
+application, so confirm acceptance in the target software before relying on it.
 
 When opening and rewriting an existing DGN, passing its original bytes as the
 seed preserves unchanged raster attachments (`preserve_seed_rasters`, enabled by
@@ -60,8 +93,37 @@ rewrite all attachments as new `Image` entities or keep the seed's attachments
 unchanged. Callers must retain external image files alongside or at the referenced
 paths, as DGN raster attachments reference external files rather than embedding pixel data.
 
+A host needs no compound-file or page code of its own to check or prepare a write:
+
+- `dgn::check_structure(bytes, &ReadOptions)` returns a `StructureReport` of any V8 file (Rust
+  and `cadkit check-dgn file.dgn`; the Python, WASM and C bindings do not expose it): sibling tree order and shape, unused directory slots, the
+  writer's slot order, page headers, record times, split dictionary pages and the model
+  header's page count, with stable warning codes. The writer does not run it on its output;
+  tests check that writes and repacks of the public samples and of synthetic seeds, and
+  writes into 274 private plan seeds, report no warning when the write has a time
+  (`WriteOptions::timestamp_ms` or the seed's own). A slot order or a page number/population
+  other than the writer's is not a defect: observed files differ.
+- `dgn::V8Seed` gives the seed's palette, levels (reader names), font table
+  (`font_entries` in stored order; `font_number` resolves a name exactly, then trimmed and
+  ASCII case-insensitive, and tells an absent name from an ambiguous one) and file header
+  time. `dgn::palette::exact_index` is the writer's color match, `nearest_index` the
+  mapping `prepare_document` uses.
+- `dgn::native::v8::read` and `native::decode_v8::decode` expose pages, page headers, raw
+  records (type, id, complex flags) and decoded tables (`ColorTable`, `Font`, `Level`).
+
+Policies stay with the host: loose or locale-aware matching of level, tag and font names
+(pass the resolved `dgn.font_number` / exact names on), resolving `ByBlock` from a parent,
+how far an RGB may move to a palette entry, and which time to give new records. The writer
+keeps unchanged seed pages byte for byte and writes level-sentinel symbology
+(`dgn.color_index` / `dgn.weight` `0xFFFFFFFF`) back as read. Layers read from 240-byte
+level entries (the only layout of the private corpus; the three public V8 samples use
+104-byte entries, which give no color) carry the level color (`Layer.color`, `dgn.color_index`);
+a `ByLayer` entity without its own index is written with the layer's `dgn.color_index`.
+
 Center/right text requires measured `dgn.text_length` in drawing units. The
-application must update that value when text or its font metrics change.
+application must update that value when text or its font metrics change. A read
+text's length is stored in the file, derived from its range
+(`dgn.text_length_source = "range"`) or estimated (`dgn.text_length_estimated`).
 Identifier attributes should use the receiving profile's declared data type;
 numeric identifiers must not be routed through an inexact floating-point type.
 
@@ -130,7 +192,9 @@ XSD checks; the receiving TKGM system remains the final acceptance authority.
 Local write/read comparisons, independent CFB opening and official XSD checks
 are necessary checks. They do not establish recipient acceptance. Release gates
 also need files created by the consuming application, inspection in the target
-CAD application, save/reopen checks, and validation by the receiving system.
+CAD application, save/reopen checks, and validation by the receiving system. For DGN,
+[dgn/ACCEPTANCE.md](dgn/ACCEPTANCE.md) is the protocol for such a pass with a generated kit
+of synthetic files; none has been recorded yet.
 See [implementation status](INTERCHANGE_STATUS.md) and the
 [DGN](dgn/FORMAT_NOTES.md) / [CityGML](gml/FORMAT_NOTES.md) contracts for current
 coverage and unresolved cases.

@@ -70,7 +70,7 @@ fn aux_record(id: u64, payload: &[u8]) -> Vec<u8> {
 
 /// A seed holding one complete attachment of an 800 x 400 pixel raster, 2.5 UOR per
 /// pixel, at UOR (1000, 2000), and a line.
-fn template_seed(three: bool) -> Vec<u8> {
+pub(super) fn template_seed(three: bool) -> Vec<u8> {
     let mut frame = prefix(0x10c0_005e, 0x400, FRAME, 7, 1.5e12).unwrap();
     mark(&mut frame, 0x20, 0x38);
     u32_at(&mut frame, 0x28, 0x0a00).unwrap();
@@ -153,7 +153,7 @@ fn template_seed(three: bool) -> Vec<u8> {
     file.into_inner().into_inner()
 }
 
-fn image(path: &str, position: Point3, u: Vec3, v: Vec3, size: [u32; 2]) -> Entity {
+pub(super) fn image(path: &str, position: Point3, u: Vec3, v: Vec3, size: [u32; 2]) -> Entity {
     let mut e = Entity::new(EntityKind::Image {
         path: Some(path.into()),
         position,

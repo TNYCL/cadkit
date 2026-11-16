@@ -825,6 +825,8 @@ mod tests {
             invisible: false,
             layer: None,
             display: None,
+            color: None,
+            lineweight: None,
             props: Props::new(),
         };
         assert_eq!(
@@ -863,6 +865,24 @@ mod tests {
             serde_json::to_string(&Lineweight::Millimeters(0.25)).unwrap(),
             r#"{"type":"millimeters","value":0.25}"#
         );
+    }
+
+    #[test]
+    fn attribute_color_and_lineweight_are_optional_json_fields() {
+        // JSON written before the fields existed reads with both unset.
+        let old = r#"{"tag":"T","value":1,"set":null,"position":null,"invisible":false}"#;
+        let a: Attribute = serde_json::from_str(old).unwrap();
+        assert_eq!((a.color, a.lineweight), (None, None));
+        assert_eq!(serde_json::to_string(&a).unwrap(), old);
+        let typed = Attribute::new("T", 1i64)
+            .with_color(Color::Rgb { r: 1, g: 2, b: 3 })
+            .with_lineweight(Lineweight::Millimeters(0.5));
+        let json = serde_json::to_string(&typed).unwrap();
+        assert_eq!(
+            json,
+            r#"{"tag":"T","value":1,"set":null,"position":null,"invisible":false,"color":{"type":"rgb","r":1,"g":2,"b":3},"lineweight":{"type":"millimeters","value":0.5}}"#
+        );
+        assert_eq!(serde_json::from_str::<Attribute>(&json).unwrap(), typed);
     }
 
     #[test]

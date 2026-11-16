@@ -374,3 +374,297 @@ fn a_second_level_table_with_repeated_codes_cannot_capture_new_elements() {
     // The second table's levels are kept under fresh codes.
     assert!(parsed.layers.iter().any(|l| l.name.starts_with("Temp")));
 }
+
+/// A file whose graphics carry the level sentinels (color and weight `0xFFFF_FFFF`, style
+/// `0x7FFF_FFFF`), as 854 records of the private corpus do for color, reads into a document
+/// that writes back into the same seed with the sentinels as stored. Before, the writer
+/// rejected the color as an extended color and the weight as an index above 31.
+#[test]
+fn level_sentinels_from_a_read_file_are_written_back() {
+    const COLOR: u32 = 0xffff_ffff;
+    const WEIGHT: u32 = 0xffff_ffff;
+    const STYLE: u32 = 0x7fff_ffff;
+    let mut shape = line();
+    shape.kind = EntityKind::Polyline {
+        vertices: [(0., 0.), (4., 0.), (4., 3.)]
+            .into_iter()
+            .map(|(x, y)| cadkit_core::Vertex::at(Point3::xy(x, y)))
+            .collect(),
+        closed: true,
+        normal: Vec3::Z,
+    };
+    let mut cell = Entity::new(EntityKind::Group {
+        group_kind: GroupKind::Cell,
+        name: None,
+        origin: None,
+        children: vec![line()],
+    });
+    cell.attributes.push(
+        Attribute::new("Note", Value::Text("tagged".into()))
+            .with_set("Set A")
+            .with_invisible(true),
+    );
+    let options = WriteOptions::default().with_timestamp_ms(1.7e12);
+    let written = write_v8(
+        &document(false, vec![line(), shape, cell]),
+        &seed(false),
+        &options,
+    )
+    .unwrap();
+    // Every graphic record of the file takes its symbology from its level.
+    let native = v8::read(&written, &ReadOptions::default()).unwrap();
+    let records: Vec<Vec<u8>> = native.models[0].graphic_pages[0]
+        .elements
+        .iter()
+        .map(|r| {
+            let mut b = r.bytes.clone();
+            u32_at(&mut b, 0x2c, STYLE).unwrap();
+            u32_at(&mut b, 0x30, WEIGHT).unwrap();
+            u32_at(&mut b, 0x34, COLOR).unwrap();
+            b
+        })
+        .collect();
+    let mut file = ::cfb::CompoundFile::open(Cursor::new(written)).unwrap();
+    file.create_stream("Dgn-Md/#000000/Dgn^G/$1")
+        .unwrap()
+        .write_all(&page(&records, 3, 1).unwrap())
+        .unwrap();
+    file.flush().unwrap();
+    let source_file = file.into_inner().into_inner();
+
+    let sentinels = |doc: &Document| -> Vec<(Value, Value, Value)> {
+        let mut out = vec![];
+        let mut todo: Vec<&Entity> = doc.models[0].entities.iter().collect();
+        while let Some(e) = todo.pop() {
+            out.push((
+                e.props["dgn.color_index"].clone(),
+                e.props["dgn.weight"].clone(),
+                e.props["dgn.style"].clone(),
+            ));
+            if let EntityKind::Group { children, .. } = &e.kind {
+                todo.extend(children);
+            }
+        }
+        out
+    };
+    let expected = (
+        Value::Int(i64::from(COLOR)),
+        Value::Int(i64::from(WEIGHT)),
+        Value::Int(i64::from(STYLE)),
+    );
+    let source = crate::read(&source_file, &ReadOptions::default()).unwrap();
+    let read = sentinels(&source);
+    assert_eq!(read.len(), 4);
+    assert!(read.iter().all(|s| *s == expected));
+    assert!(
+        source.models[0]
+            .entities
+            .iter()
+            .all(|e| e.color == cadkit_core::Color::ByLayer)
+    );
+    let back = write_v8(
+        &source,
+        &source_file,
+        &options.clone().with_clear_seed_model(true),
+    )
+    .unwrap();
+    let reread = crate::read(&back, &ReadOptions::default()).unwrap();
+    assert_eq!(sentinels(&reread), read);
+    // Preparing the document for the seed keeps them as well.
+    let parsed = V8Seed::from_bytes(&source_file).unwrap();
+    let prepared = parsed
+        .prepare_document(&source, &SeedPrepareOptions::default())
+        .unwrap();
+    let back =
+        write_v8_with_seed(&prepared, &parsed, &options.with_clear_seed_model(true)).unwrap();
+    let reread = crate::read(&back, &ReadOptions::default()).unwrap();
+    assert_eq!(sentinels(&reread), read);
+    // A level cannot take its weight from itself: the sentinel on a layer is rejected.
+    let mut layered = document(false, vec![line().on_layer("Walls")]);
+    let mut layer = cadkit_core::Layer::new("Walls");
+    layer
+        .props
+        .insert("dgn.weight".into(), Value::Int(i64::from(WEIGHT)));
+    layered.layers.push(layer);
+    assert!(write_v8(&layered, &seed(false), &WriteOptions::default()).is_err());
+}
+
+/// Seed palette for the level color checks: entry `i` is `[i, 3i, 200]` (a color table,
+/// type 5 in level slot 1, stores color 255 first).
+fn level_color_seed() -> Vec<u8> {
+    use super::dictionary::{level, table};
+    let mut colors = prefix(5, 0x22 + 768 + 2, 200, 1, 0.).unwrap();
+    for (k, i) in std::iter::once(255usize).chain(0..255).enumerate() {
+        colors[0x22 + 3 * k..0x25 + 3 * k].copy_from_slice(&[i as u8, (i * 3) as u8, 200]);
+    }
+    let colors = finish(colors, &[]).unwrap();
+    let mut colored = level(212, 1, 1, "Colored");
+    // 0x40 style (weak), 0x44 weight (weak), 0x48 and 0x4C color (equal in every corpus entry).
+    for (offset, value) in [(0x40, u32::MAX), (0x44, 2), (0x48, 3), (0x4c, 3)] {
+        u32_at(&mut colored, offset, value).unwrap();
+    }
+    // A 104-byte entry: its fields are not located, so 0x48 must not be read.
+    let mut short = prefix(0x4440_0000 | 95, 0x68, 213, 1, 0.).unwrap();
+    u32_at(&mut short, 0x20, 2).unwrap();
+    u32_at(&mut short, 0x24, u32::MAX).unwrap();
+    u32_at(&mut short, 0x48, 5).unwrap();
+    let short = finish(short, &string_link(1, "Short").unwrap()).unwrap();
+    let levels = [
+        table(210, 1, 3),
+        level(211, 64, 0, "Default"),
+        colored,
+        short,
+    ];
+    let mut file = ::cfb::CompoundFile::open(Cursor::new(seed(false))).unwrap();
+    file.create_storage_all("Dgn^Nm").unwrap();
+    for (n, records) in [(1, vec![colors]), (2, levels.to_vec())] {
+        file.create_stream(format!("Dgn^Nm/${n}"))
+            .unwrap()
+            .write_all(&page(&records, 3, n).unwrap())
+            .unwrap();
+    }
+    file.flush().unwrap();
+    file.into_inner().into_inner()
+}
+
+/// The color index of the only graphic record of a written file.
+fn written_color(bytes: &[u8]) -> u32 {
+    let native = v8::read(bytes, &ReadOptions::default()).unwrap();
+    let records: Vec<_> = native.models[0]
+        .graphic_pages
+        .iter()
+        .flat_map(|p| &p.elements)
+        .collect();
+    assert_eq!(records.len(), 1);
+    le::u32_at(&records[0].bytes, 0x34).unwrap()
+}
+
+/// A 240-byte level entry's color index (`0x48`) becomes the layer's color through the file
+/// palette, with the raw fields in props; 104-byte entries are unchanged. An element with
+/// the by-level sentinel stays `ByLayer` and is written back with the sentinel, and the
+/// new layer data does not change what an unchanged document writes.
+#[test]
+fn level_color_comes_from_240_byte_level_entries() {
+    const BY_LEVEL: i64 = 0xffff_ffff;
+    let options = WriteOptions::default()
+        .with_clear_seed_model(true)
+        .with_timestamp_ms(1.7e12);
+    let mut by_level = line().on_layer("Colored");
+    by_level
+        .props
+        .insert("dgn.color_index".into(), Value::Int(BY_LEVEL));
+    let source_file = write_v8(
+        &document(false, vec![by_level]),
+        &level_color_seed(),
+        &options,
+    )
+    .unwrap();
+    assert_eq!(written_color(&source_file), 0xffff_ffff);
+    let source = crate::read(&source_file, &ReadOptions::default()).unwrap();
+    let layer =
+        |doc: &Document, name: &str| doc.layers.iter().find(|l| l.name == name).unwrap().clone();
+    let colored = layer(&source, "Colored");
+    assert_eq!(colored.color, Color::Rgb { r: 3, g: 9, b: 200 });
+    assert_eq!(colored.props["dgn.color_index"], Value::Int(3));
+    assert_eq!(colored.props["dgn.level_weight_raw"], Value::Int(2));
+    assert_eq!(colored.props["dgn.level_style_raw"], Value::Int(-1));
+    // The weak fields set no typed symbology.
+    assert_eq!(colored.lineweight, cadkit_core::Lineweight::default());
+    assert_eq!(colored.linetype, None);
+    assert!(!colored.props.contains_key("dgn.weight"));
+    assert!(!colored.props.contains_key("dgn.style"));
+    let default = layer(&source, "Default");
+    assert_eq!(default.color, Color::Rgb { r: 0, g: 0, b: 200 });
+    assert_eq!(default.props["dgn.color_index"], Value::Int(0));
+    let short = layer(&source, "Short");
+    assert_eq!(short.color, Color::ByLayer);
+    for key in [
+        "dgn.color_index",
+        "dgn.level_weight_raw",
+        "dgn.level_style_raw",
+    ] {
+        assert!(!short.props.contains_key(key), "{key}");
+    }
+    let element = &source.models[0].entities[0];
+    assert_eq!(element.color, Color::ByLayer);
+    assert_eq!(element.props["dgn.color_index"], Value::Int(BY_LEVEL));
+
+    // Written back into its own file, the element keeps the sentinel, and the output is the
+    // one the document gives without the layer data (what the reader produced before).
+    let back = write_v8(&source, &source_file, &options).unwrap();
+    assert_eq!(written_color(&back), 0xffff_ffff);
+    let mut without = source.clone();
+    for l in &mut without.layers {
+        l.color = Color::ByLayer;
+        for key in [
+            "dgn.color_index",
+            "dgn.level_weight_raw",
+            "dgn.level_style_raw",
+        ] {
+            l.props.remove(key);
+        }
+    }
+    assert!(back == write_v8(&without, &source_file, &options).unwrap());
+    let seed = V8Seed::from_bytes(&source_file).unwrap();
+    let prepared = seed
+        .prepare_document(&source, &SeedPrepareOptions::default())
+        .unwrap();
+    let back = write_v8_with_seed(&prepared, &seed, &options).unwrap();
+    assert_eq!(written_color(&back), 0xffff_ffff);
+
+    // A new ByLayer entity on the level takes the level's index, even when the layer's RGB
+    // is not in the seed palette; without an index the RGB must still match exactly.
+    let mut doc = source.clone();
+    doc.models[0].entities = vec![line().on_layer("Colored")];
+    assert_eq!(
+        written_color(&write_v8(&doc, &source_file, &options).unwrap()),
+        3
+    );
+    let colored = doc.layers.iter_mut().find(|l| l.name == "Colored").unwrap();
+    colored.color = Color::Rgb { r: 1, g: 2, b: 3 };
+    assert_eq!(
+        written_color(&write_v8(&doc, &source_file, &options).unwrap()),
+        3
+    );
+    let colored = doc.layers.iter_mut().find(|l| l.name == "Colored").unwrap();
+    colored.props.remove("dgn.color_index");
+    assert!(write_v8(&doc, &source_file, &options).is_err());
+}
+
+/// Mesh faces inherit the mesh's symbology as polygon rings do: level, color, line style,
+/// weight, visibility and the native indexes (before, faces kept only level and color).
+#[test]
+fn mesh_faces_inherit_the_full_symbology() {
+    let mut mesh = Entity::new(EntityKind::Mesh {
+        vertices: vec![
+            Point3::xy(0., 0.),
+            Point3::xy(1., 0.),
+            Point3::xy(1., 1.),
+            Point3::xy(0., 1.),
+        ],
+        faces: vec![vec![0, 1, 2], vec![0, 2, 3]],
+    });
+    mesh.layer = Some("Mesh level".into());
+    mesh.visible = false;
+    for (key, value) in [("dgn.color_index", 5), ("dgn.weight", 4), ("dgn.style", 2)] {
+        mesh.props.insert(key.into(), Value::Int(value));
+    }
+    let bytes = write_v8(
+        &document(false, vec![mesh]),
+        &seed(false),
+        &WriteOptions::default(),
+    )
+    .unwrap();
+    let doc = crate::read(&bytes, &ReadOptions::default()).unwrap();
+    let EntityKind::Group { children, .. } = &doc.models[0].entities[0].kind else {
+        panic!("a cell")
+    };
+    assert_eq!(children.len(), 2);
+    for face in children {
+        assert_eq!(face.layer.as_deref(), Some("Mesh level"));
+        assert!(!face.visible);
+        for (key, value) in [("dgn.color_index", 5), ("dgn.weight", 4), ("dgn.style", 2)] {
+            assert_eq!(face.props[key], Value::Int(value), "{key}");
+        }
+    }
+}

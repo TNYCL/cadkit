@@ -5,6 +5,7 @@
 //! - [`v7`]: V7 records; [`v7::decode`] decodes one record.
 //! - [`element`]: decoded element data shared by both versions (coordinates in UOR).
 //! - [`linkage`]: attribute linkages.
+//! - [`structure`]: [`structure::check_structure`], a structural report of a V8 file.
 //!
 //! Use [`v8::read`] / [`v7::read`] to inspect everything a file contains, including
 //! records the document mapping does not model.
@@ -12,6 +13,7 @@
 pub mod decode_v8;
 pub mod element;
 pub mod linkage;
+pub mod structure;
 pub mod v7;
 pub mod v8;
 

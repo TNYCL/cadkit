@@ -4,6 +4,12 @@ use crate::native::v8::ModelHeader;
 use cadkit_core::LimitKind;
 use cadkit_core::{Entity, Error, Point3, Result, Value, Vec3};
 
+/// The color index and line weight `0xFFFF_FFFF` the reader keeps for elements that take
+/// their color or weight from their level (FORMAT_NOTES, "Mapping decisions"): 854 graphic
+/// records of 54 private files store it as color, 42 records of 2 files as weight (with
+/// line style `0x7FFF_FFFF`).
+pub(super) const BY_LEVEL: u32 = 0xffff_ffff;
+
 pub(super) fn put(b: &mut [u8], offset: usize, value: &[u8]) -> Result<()> {
     let end = offset
         .checked_add(value.len())
@@ -113,18 +119,30 @@ pub(super) fn header(
         }
         _ => 0,
     };
-    if color > 255 {
+    // The reader maps `BY_LEVEL` to `Color::ByLayer` and keeps it in `dgn.color_index`;
+    // written back as stored, the element keeps what the source file had.
+    if color > 255 && color != BY_LEVEL {
         return Err(Error::Unsupported(
             "extended DGN color table entries".into(),
         ));
     }
     u32_at(&mut b, 0x34, color)?;
-    if let Some(Value::Int(n)) = entity.props.get("dgn.style") {
-        u32_at(
+    // Any u32 is written as given: 0..=7 are the standard styles, other numbers are not
+    // checked against the seed, whose line style table has not been located (FORMAT_NOTES,
+    // "Open questions").
+    match entity.props.get("dgn.style") {
+        Some(Value::Int(n)) => u32_at(
             &mut b,
             0x2c,
             u32::try_from(*n).map_err(|_| Error::invalid(0, "DGN style"))?,
-        )?;
+        )?,
+        Some(_) => {
+            return Err(Error::invalid(
+                0,
+                "DGN style must be an integer line style number",
+            ));
+        }
+        None => {}
     }
     u32_at(&mut b, 0x30, weight)?;
     Ok(b)

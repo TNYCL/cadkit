@@ -73,6 +73,7 @@ except cadkit.UnknownFormatError:
 | `Document.explode_inserts(max_depth=32) -> Document` | New document with expanded block references; missing, cyclic or deeper inserts remain. |
 | `Document.convert_units(unit) -> Document` | New document with converted geometry and unit metadata (`"mm"`, `"meter"`, `"ft"`, etc.); the source is unchanged. |
 | `V8Seed(source, *, codepage=None, max_input_bytes=None, max_decompressed_bytes=None, max_objects=None, max_depth=None)` | Reusable parsed single-design-model V8 seed; accepts paths, buffers, or another `V8Seed`. Properties: `is_3d`, `units`, `is_nonempty`, `has_raster_template`; methods: `to_bytes()`, `prepare_document(doc, options_json=None)`. |
+| `strip_dgn_seed(seed, *, keep_controls=None, keep_raster_template=None, keep_cell_definitions=None, model_name=None, timestamp_ms=None, application=None, codepage=None, max_input_bytes=None, max_decompressed_bytes=None, max_objects=None, max_depth=None) -> tuple[bytes, dict]` | Copies a DGN V8 seed (`bytes`-like or `V8Seed`) without its model's drawing content and identifying document properties; returns `(seed_bytes, report_dict)` (`dgn::StripSeedOptions` / `StripSeedReport`; `None` keeps a default). Names in the kept tables remain: review them. |
 | `Document.to_citygml(srs_name: str, lod: int = 1) -> bytes` | Writes generic CityGML 2.0 XML bytes with an explicit CRS and LoD. |
 | `Document.to_citygml_with_report(srs_name: str, lod: int = 1, metadata_only: bool = False) -> tuple[bytes, dict]` | Writes generic CityGML 2.0 XML bytes and returns `(xml_bytes, report_dict)`; `metadata_only=True` retains unsupported entities as JSON metadata instead of raising `UnsupportedError`. |
 | `Document.entities(model=0)` | Iterator of entity dicts (`{"id", "layer", "color", "kind": {"type": ...}, "props", ...}`). |
@@ -143,6 +144,18 @@ seed = cadkit.V8Seed("blank.dgn")
 prepared = seed.prepare_document(cadkit.read("plan.dxf"))
 output = prepared.to_dgn(seed)  # reuses the parsed seed
 ```
+
+To make a seed from a drawing of your own:
+
+```python
+seed_bytes, report = cadkit.strip_dgn_seed(open("template.dgn", "rb").read(), timestamp_ms=1.7e12)
+print(report["named_levels"], report["tag_sets"], report["model_name_from_seed"])
+seed = cadkit.V8Seed(seed_bytes)  # empty: no clear_seed_model needed
+```
+
+The report counts what was removed and what remains (level, tag set and cell names, the
+model name and description, undecoded streams); the result is not anonymous. See
+[obtaining a seed](CADKIT_INTEGRATION.md#obtaining-a-seed).
 
 `prepare_document` returns a copy adjusted to seed units/dimensions/symbology; its optional
 JSON follows Rust `dgn::SeedPrepareOptions`. Existing non-empty-seed write checks still

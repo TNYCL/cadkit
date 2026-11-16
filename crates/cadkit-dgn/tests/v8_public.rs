@@ -10,7 +10,7 @@
 mod common;
 
 use cadkit_core::{EntityKind, GroupKind, HAlign, ReadOptions, VAlign, Value};
-use common::{corpus, prop_int, prop_point};
+use common::{corpus, prop_int, prop_point, walk};
 
 #[test]
 fn tree_labels_with_tags() {
@@ -136,4 +136,80 @@ fn water_mains_line_strings() {
     assert_eq!((strings, lines), (66_035, 18));
     assert!(m.entities.iter().all(|e| e.layer.is_some()));
     assert!(doc.warnings.is_empty(), "{:?}", doc.warnings);
+}
+
+/// The public V8 samples written back into themselves give the same bytes with and without
+/// the layer data the reader takes from 240-byte level entries (their entries are 104 bytes,
+/// so the reader adds none; the check guards the writer's use of it).
+#[cfg(feature = "write")]
+#[test]
+fn write_back_ignores_level_colors() {
+    let options = cadkit_dgn::WriteOptions::default()
+        .with_clear_seed_model(true)
+        .with_timestamp_ms(1.7e12);
+    for rel in [
+        "public/gdal/test_dgnv8.dgn",
+        "public/safe/TreeTextNodeLabelsWithTags.dgn",
+        "public/safe/Water_distribution_mains.dgn",
+    ] {
+        let Some(bytes) = corpus(rel) else {
+            continue;
+        };
+        let doc = cadkit_dgn::read(&bytes, &ReadOptions::default()).unwrap();
+        assert!(
+            doc.layers
+                .iter()
+                .all(|l| l.color == cadkit_core::Color::ByLayer
+                    && !l.props.contains_key("dgn.color_index"))
+        );
+        let mut without = doc.clone();
+        for l in &mut without.layers {
+            l.color = cadkit_core::Color::ByLayer;
+            for key in [
+                "dgn.color_index",
+                "dgn.level_weight_raw",
+                "dgn.level_style_raw",
+            ] {
+                l.props.remove(key);
+            }
+        }
+        match (
+            cadkit_dgn::write_v8(&doc, &bytes, &options),
+            cadkit_dgn::write_v8(&without, &bytes, &options),
+        ) {
+            (Ok(a), Ok(b)) => assert!(a == b, "{rel}"),
+            (Err(a), Err(b)) => assert_eq!(a.to_string(), b.to_string()),
+            _ => panic!("{rel}: level colors changed whether a write-back succeeds"),
+        }
+    }
+}
+
+/// The end tangents of the two type 11 curves of test_dgnv8 (8 stored points each) equal
+/// the slopes of GDAL dgnlib's `DGNStrokeCurve` at the third and third-last point,
+/// computed from the stored points by an independent port of that routine outside this
+/// repository: (0.5, -0.5) and (0.5, 0.5) for both.
+#[test]
+fn curve_end_tangents_match_gdal_stroking() {
+    let Some(bytes) = corpus("public/gdal/test_dgnv8.dgn") else {
+        return;
+    };
+    let doc = cadkit_dgn::read(&bytes, &ReadOptions::default()).unwrap();
+    let mut all = Vec::new();
+    for e in &doc.models[0].entities {
+        walk(e, &mut all);
+    }
+    let curves: Vec<_> = all
+        .into_iter()
+        .filter(|e| e.props.contains_key("dgn.curve_start_tangent"))
+        .collect();
+    assert_eq!(curves.len(), 2);
+    let close = |p: cadkit_core::Point3, x: f64, y: f64| {
+        (p.x - x).abs() < 1e-9 && (p.y - y).abs() < 1e-9 && p.z.abs() < 1e-9
+    };
+    for curve in curves {
+        let start = prop_point(curve, "dgn.curve_start_tangent");
+        let end = prop_point(curve, "dgn.curve_end_tangent");
+        assert!(close(start, 0.5, -0.5), "{start:?}");
+        assert!(close(end, 0.5, 0.5), "{end:?}");
+    }
 }

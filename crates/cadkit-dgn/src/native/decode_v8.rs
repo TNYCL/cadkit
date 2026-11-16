@@ -17,6 +17,13 @@ use crate::text::{self, TextDecoder};
 
 const HEADER_LEN: usize = 0x68;
 const FLAG_3D: u32 = 0x0800;
+/// Property bit `0x1000` (meaning not established). A MicroStation text carrying it stores
+/// a range that is not its text box (private corpus: 101 of 102 such ranges are the square
+/// origin ± stored length), so the range cannot give its length.
+const PROP_0X1000: u32 = 0x1000;
+/// Attribute offset in words of a 240-byte level entry, the layout whose symbology fields
+/// are located (FORMAT_NOTES, "Level entry symbology").
+const LEVEL_ENTRY_240_WORDS: u32 = 120;
 /// Text size multipliers are stored in 1/1000 of 6 UOR (GDAL dgnlib, ezdgn).
 const TEXT_MULT_TO_UOR: f64 = 6.0 / 1000.0;
 /// Dependency application ids observed on tag elements.
@@ -161,16 +168,75 @@ pub(crate) fn decode_with(raw: &RawElement, enc: TextDecoder, limits: &Limits) -
             .ok_or_else(short),
         _ => Ok(ElementData::Unknown),
     };
-    let (data, problem) = match result {
+    let (mut data, problem) = match result {
         Ok(data) => (data, None),
         Err(p) => (ElementData::Unknown, Some(p)),
     };
+    if let ElementData::Text(t) = &mut data
+        && t.measured_length.is_none()
+        && properties & PROP_0X1000 == 0
+    {
+        t.measured_length = length_from_range(t, header.range);
+    }
     Element {
         header,
         data,
         linkages,
         problem,
     }
+}
+
+/// Text length stored at `0x80` of a V8 text element (`element` from the element start);
+/// `None` when it is zero (the writer did not measure) or missing.
+pub(crate) fn stored_text_length(element: &[u8]) -> Option<f64> {
+    le::f64_at(element, 0x80).filter(|v| *v > 0.0)
+}
+
+/// Length of an unmeasured text from its range: the x extent of a MicroStation text's range
+/// equals its stored `0x80` length (private corpus: 303 of 303 unrotated texts whose range
+/// starts at the origin, relative difference at most 1e-3, the range being rounded outwards
+/// to whole UOR). Applies, like the V7 rule, only to unrotated text whose range starts at the
+/// origin (the lower-left corner); an empty text keeps no length, its range is the empty box
+/// rounded outwards to 1 UOR (501 of 501 empty private texts).
+fn length_from_range(t: &TextData, range: Option<[UorPoint; 2]>) -> Option<f64> {
+    const IDENTITY: [f64; 9] = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
+    let [lo, hi] = range?;
+    let unrotated = t
+        .rotation
+        .matrix()
+        .iter()
+        .zip(IDENTITY)
+        .all(|(a, b)| (a - b).abs() <= 1e-9);
+    let [ox, ..] = t.origin;
+    let [lx, ..] = lo;
+    let [hx, ..] = hi;
+    (!t.text.is_empty() && unrotated && (lx - ox).abs() <= 1.0 && hx > lx).then_some(hx - lx)
+}
+
+/// Symbology fields of a level entry (type 95, table 1) with a 240-byte fixed part, the only
+/// layout of the private corpus (FORMAT_NOTES, "Level entry symbology"). Other layouts (the
+/// 104-byte entries of the three public V8 samples) give `None`: their fields are not
+/// located.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LevelSymbology {
+    /// `0x48`: color index of the level (strong evidence).
+    pub(crate) color: u32,
+    /// `0x44`: presumably the level's line weight (weak evidence, kept raw).
+    pub(crate) weight_raw: u32,
+    /// `0x40`: presumably the level's line style (weak evidence, kept raw).
+    pub(crate) style_raw: i32,
+}
+
+/// [`LevelSymbology`] of a level entry, `element` from the element start.
+pub(crate) fn level_symbology(element: &[u8]) -> Option<LevelSymbology> {
+    if le::u32_at(element, 0x08)? != LEVEL_ENTRY_240_WORDS {
+        return None;
+    }
+    Some(LevelSymbology {
+        color: le::u32_at(element, 0x48)?,
+        weight_raw: le::u32_at(element, 0x44)?,
+        style_raw: i32::from_le_bytes(le::array::<4>(element, 0x40)?),
+    })
 }
 
 fn short() -> String {
@@ -305,7 +371,7 @@ impl Decoder<'_> {
         let (text, encoding) = text::decode_dgn_string(&raw_text, self.enc);
         // 0x80: text length along the baseline in UOR, written by MicroStation (TreeText:
         // 583.33 for 12 characters of width 50); zero when the writer did not measure.
-        let measured_length = le::f64_at(self.b, 0x80).filter(|v| *v > 0.0);
+        let measured_length = stored_text_length(self.b);
         Ok(TextData {
             font,
             justification,
@@ -462,7 +528,7 @@ impl Decoder<'_> {
                 let number = le::u32_at(self.b, 0x28).ok_or_else(short)?;
                 let n = usize::from(le::u16_at(self.b, 0x2c).unwrap_or(0));
                 let name = le::bytes(self.whole, 0x2e, n)
-                    .map(text::decode_utf16)
+                    .map(text::decode_utf16_name)
                     .unwrap_or_default();
                 Ok(ElementData::Font { number, name })
             }
@@ -675,6 +741,118 @@ pub(crate) mod tests {
         assert!((t.height - 10_000.0).abs() < 1e-6);
         assert_eq!(t.origin, [0.0, 10000.0, 0.0]);
         assert_eq!(t.rotation, Rotation::Angle(-0.785));
+    }
+
+    /// A text element: `flags` at 0x28, range low x / x extent at 0x38 / 0x50, 2D angle
+    /// or 3D quaternion at 0x90 (by `rotation.len()`), origin x at 0x98 / 0xB0, stored
+    /// length at 0x80.
+    fn text_record(
+        flags: u32,
+        rotation: &[f64],
+        low_x: i64,
+        span_x: i64,
+        stored: f64,
+        text: &[u8],
+    ) -> RawElement {
+        let three = rotation.len() == 4;
+        let mut body = header(64, 0x29, flags | if three { FLAG_3D } else { 0 }, 0);
+        body[0x38 - 0x0c..0x40 - 0x0c].copy_from_slice(&low_x.to_le_bytes());
+        body[0x50 - 0x0c..0x58 - 0x0c].copy_from_slice(&span_x.to_le_bytes());
+        body[0x58 - 0x0c..0x60 - 0x0c].copy_from_slice(&500i64.to_le_bytes());
+        body.extend(&1024u32.to_le_bytes());
+        body.extend(&7u16.to_le_bytes());
+        body.extend(&(text.len() as u16).to_le_bytes());
+        // Width and height multipliers (UOR = value x 6/1000: 100 and 500), stored length
+        // and height.
+        body.extend(f64s(&[100_000.0 / 6.0, 500_000.0 / 6.0, stored, 0.0]));
+        body.extend(f64s(rotation));
+        body.extend(f64s(if three {
+            &[2000.0, 3000.0, 0.0]
+        } else {
+            &[2000.0, 3000.0]
+        }));
+        body.extend(&0u16.to_le_bytes());
+        body.extend(text);
+        raw(element(17, &body, &[]))
+    }
+
+    fn length_of(raw: &RawElement) -> Option<f64> {
+        let ElementData::Text(t) = decode(raw, enc(), &lim()).data else {
+            panic!("text")
+        };
+        t.measured_length
+    }
+
+    /// V8 text without a stored length takes it from the range when the range starts at
+    /// the (lower-left) origin of an unrotated, non-empty text whose property bit 0x1000 is
+    /// clear; otherwise the length stays unknown (estimated by the mapping).
+    #[test]
+    fn unmeasured_text_length_comes_from_the_range() {
+        let half = std::f64::consts::FRAC_PI_8;
+        for rotation in [&[0.0][..], &[1.0, 0.0, 0.0, 0.0], &[-1.0, 0.0, 0.0, 0.0]] {
+            assert_eq!(
+                length_of(&text_record(0, rotation, 2000, 1234, 0.0, b"Text")),
+                Some(1234.0)
+            );
+            // Within one UOR of the origin (ranges are whole UOR).
+            assert_eq!(
+                length_of(&text_record(0, rotation, 1999, 1234, 0.0, b"Text")),
+                Some(1234.0)
+            );
+        }
+        // A stored length wins over the range.
+        assert_eq!(
+            length_of(&text_record(0, &[0.0], 2000, 1234, 583.5, b"Text")),
+            Some(583.5)
+        );
+        for raw in [
+            // Bit 0x1000: the range is not the text box.
+            text_record(0x1000, &[0.0], 2000, 1234, 0.0, b"Text"),
+            // Rotated (2D angle, 3D quaternion of 45 degrees about Z).
+            text_record(0, &[0.5], 2000, 1234, 0.0, b"Text"),
+            text_record(
+                0,
+                &[half.cos(), 0.0, 0.0, half.sin()],
+                2000,
+                1234,
+                0.0,
+                b"Text",
+            ),
+            // The range does not start at the origin.
+            text_record(0, &[0.0], 2002, 1234, 0.0, b"Text"),
+            // An empty range, and an empty text (its range is the empty box rounded out).
+            text_record(0, &[0.0], 2000, 0, 0.0, b"Text"),
+            text_record(0, &[0.0], 2000, 1, 0.0, b""),
+        ] {
+            assert_eq!(length_of(&raw), None);
+        }
+        assert_eq!(
+            stored_text_length(&text_record(0, &[0.0], 2000, 1, 0.0, b"").bytes),
+            None
+        );
+    }
+
+    /// The symbology fields of a 240-byte level entry; other entry sizes give none.
+    #[test]
+    fn level_symbology_reads_240_byte_entries_only() {
+        let mut body = vec![0u8; 0xf0 - 0x0c];
+        body[0x20 - 0x0c..0x24 - 0x0c].copy_from_slice(&5u32.to_le_bytes());
+        body[0x40 - 0x0c..0x44 - 0x0c].copy_from_slice(&(-435i32).to_le_bytes());
+        body[0x44 - 0x0c..0x48 - 0x0c].copy_from_slice(&2u32.to_le_bytes());
+        body[0x48 - 0x0c..0x4c - 0x0c].copy_from_slice(&114u32.to_le_bytes());
+        body[0x4c - 0x0c..0x50 - 0x0c].copy_from_slice(&114u32.to_le_bytes());
+        let entry = element(95, &body, &[]);
+        assert_eq!(
+            level_symbology(&entry),
+            Some(LevelSymbology {
+                color: 114,
+                weight_raw: 2,
+                style_raw: -435
+            })
+        );
+        let short = element(95, &body[..0x68 - 0x0c], &[]);
+        assert_eq!(level_symbology(&short), None);
+        assert_eq!(level_symbology(&entry[..0x40]), None);
     }
 
     #[test]

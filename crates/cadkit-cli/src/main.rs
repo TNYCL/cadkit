@@ -156,12 +156,49 @@ enum Command {
         #[arg(long)]
         tkgm_profile: Option<cadkit::gml::tkgm::Profile>,
     },
+    /// Print the structural report of a DGN V8 file as JSON (exits 1 if it has warnings).
+    /// Use - for stdin. The report states what the file holds, not acceptance elsewhere.
+    CheckDgn {
+        /// Input DGN V8 file.
+        file: PathBuf,
+    },
     /// Repack DGN V8 streams into a fresh CFB container without altering stream contents.
     RepackDgn {
         /// Input DGN V8 file.
         input: PathBuf,
         /// Output DGN V8 file.
         output: PathBuf,
+    },
+    /// Copy a DGN V8 seed without its model's drawing content and without the document
+    /// properties that name people or organisations. Names in the kept tables (levels, fonts,
+    /// tag sets, cell definitions) remain: review them (--report counts them). The result is
+    /// not anonymous.
+    StripSeed {
+        /// Input DGN V8 seed (a drawing whose tables you may hand on). Use - for stdin.
+        input: PathBuf,
+        /// Output DGN V8 seed; must not be the input file.
+        output: PathBuf,
+        /// Keep the model's control records (model settings), except those whose dependency linkages name a removed graphic.
+        #[arg(long)]
+        keep_controls: bool,
+        /// Keep the seed's raster attachments (all of them) as templates for new ones.
+        #[arg(long)]
+        keep_raster_template: bool,
+        /// Remove the shared cell definitions from the dictionary.
+        #[arg(long)]
+        drop_cell_definitions: bool,
+        /// New model name.
+        #[arg(long, value_name = "NAME")]
+        model_name: Option<String>,
+        /// Time to store, in milliseconds since 1970 (default: the seed's file header time).
+        #[arg(long, value_name = "MS")]
+        timestamp_ms: Option<f64>,
+        /// Application name in the summary property set (default "cadkit"; "" leaves it out).
+        #[arg(long, value_name = "NAME")]
+        application: Option<String>,
+        /// Print the report (what was removed, what remains) as JSON on stdout.
+        #[arg(long)]
+        report: bool,
     },
     /// Print one line per entity, or the full document as JSON.
     Dump {
@@ -493,11 +530,64 @@ fn run(cli: &Cli) -> Result<(), CliError> {
                 ));
             }
         }
+        Command::CheckDgn { file } => {
+            let options = read_options(cli);
+            let bytes = load_bytes(file, options.limits.max_input_bytes)?;
+            let report =
+                cadkit::dgn::check_structure(&bytes, &options).map_err(|e| failure(file, &e))?;
+            print_json(&serde_json::json!(report))?;
+            if !report.is_clean() {
+                return Err(CliError::Failure(
+                    "DGN structure report has warnings".into(),
+                ));
+            }
+        }
         Command::RepackDgn { input, output } => {
             let options = read_options(cli);
             let bytes = load_bytes(input, options.limits.max_input_bytes)?;
             let bytes = cadkit::dgn::repack_v8(&bytes, &options).map_err(|e| failure(input, &e))?;
             std::fs::write(output, bytes).map_err(|e| failure(output, &e))?;
+        }
+        Command::StripSeed {
+            input,
+            output,
+            keep_controls,
+            keep_raster_template,
+            drop_cell_definitions,
+            model_name,
+            timestamp_ms,
+            application,
+            report,
+        } => {
+            if *report && output == Path::new("-") {
+                return Err(CliError::Usage(
+                    "--report prints on stdout; write the seed to a file".into(),
+                ));
+            }
+            if same_file(input, output) {
+                return Err(CliError::Usage(
+                    "strip-seed does not overwrite its input; choose another output".into(),
+                ));
+            }
+            let options = read_options(cli);
+            let bytes = load_bytes(input, options.limits.max_input_bytes)?;
+            let mut strip = cadkit::dgn::StripSeedOptions::new()
+                .with_keep_controls(*keep_controls)
+                .with_keep_raster_template(*keep_raster_template)
+                .with_keep_cell_definitions(!*drop_cell_definitions)
+                .with_model_name(model_name.clone());
+            if let Some(ms) = timestamp_ms {
+                strip = strip.with_timestamp_ms(*ms);
+            }
+            if let Some(name) = application {
+                strip = strip.with_application(name.clone());
+            }
+            let stripped =
+                cadkit::strip_dgn_seed(&bytes, &strip, &options).map_err(|e| failure(input, &e))?;
+            write_output(output, &stripped.bytes)?;
+            if *report {
+                print_json(&serde_json::json!(stripped.report))?;
+            }
         }
         Command::Dump {
             file,
@@ -515,6 +605,29 @@ fn run(cli: &Cli) -> Result<(), CliError> {
         }
     }
     Ok(())
+}
+
+/// Whether `a` and `b` name one existing file (stdin and stdout are never files here):
+/// the same canonical path (symbolic links and other spellings), or on Unix the same device
+/// and inode (hard links too).
+fn same_file(a: &Path, b: &Path) -> bool {
+    if a == Path::new("-") || b == Path::new("-") {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if let (Ok(a), Ok(b)) = (std::fs::metadata(a), std::fs::metadata(b))
+            && a.dev() == b.dev()
+            && a.ino() == b.ino()
+        {
+            return true;
+        }
+    }
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
 }
 
 fn failure(path: &Path, e: &dyn std::fmt::Display) -> CliError {
@@ -1113,9 +1226,8 @@ fn apply_transforms(doc: &mut Document, options: &TransformOptions) -> Result<()
 }
 
 fn completions(shell: &str) -> String {
-    let commands =
-        "inspect info layers blocks convert dump validate-gml repack-dgn completions help";
-    let flags = "--help --version --keep-raw --codepage --max-input-bytes --max-decompressed-bytes --max-objects --planarity-tolerance --json --warnings --max-warnings --to --output-codepage --explode-inserts --units --layer --kind --model --dxf-version --width --pretty --seed --clear-seed-model --crs --lod --preserve-invalid-geometry --gml-metadata-only --tkgm-profile";
+    let commands = "inspect info layers blocks convert dump validate-gml check-dgn repack-dgn strip-seed completions help";
+    let flags = "--help --version --keep-raw --codepage --max-input-bytes --max-decompressed-bytes --max-objects --planarity-tolerance --json --warnings --max-warnings --to --output-codepage --explode-inserts --units --layer --kind --model --dxf-version --width --pretty --seed --clear-seed-model --crs --lod --preserve-invalid-geometry --gml-metadata-only --tkgm-profile --keep-controls --keep-raster-template --drop-cell-definitions --model-name --timestamp-ms --application --report";
     match shell {
         "bash" => format!(
             "_cadkit() {{ local cur=\"${{COMP_WORDS[COMP_CWORD]}}\"; COMPREPLY=( $(compgen -W '{commands} {flags}' -- \"$cur\") ); if [[ $cur != -* ]]; then COMPREPLY+=( $(compgen -f -- \"$cur\") ); fi; }}\ncomplete -F _cadkit cadkit\n"

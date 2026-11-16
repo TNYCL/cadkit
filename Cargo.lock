@@ -159,6 +159,7 @@ dependencies = [
  "cadkit-dwg",
  "cadkit-dxf",
  "cadkit-gml",
+ "cfb",
  "serde_json",
 ]
 

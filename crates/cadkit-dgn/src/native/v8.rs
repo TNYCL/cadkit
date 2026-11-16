@@ -774,10 +774,10 @@ fn parse_model_index(
         let name_len = usize::from(name_len);
         let desc_len = usize::try_from(desc_len).unwrap_or(usize::MAX);
         let name = le::bytes(b, off + 32, name_len)
-            .map(text::decode_utf16)
+            .map(text::decode_utf16_name)
             .unwrap_or_default();
         let description = le::bytes(b, off + 32 + name_len, desc_len)
-            .map(text::decode_utf16)
+            .map(text::decode_utf16_name)
             .unwrap_or_default();
         out.push(ModelIndexEntry {
             storage_index: (raw & 0xffff) as u16,
@@ -850,6 +850,7 @@ fn parse_summary(b: &[u8]) -> SummaryInfo {
         return s;
     };
     let count = at(section, 4).and_then(|o| le::u32_at(b, o)).unwrap_or(0) as usize;
+    let mut application: Option<(bool, &[u8])> = None;
     for i in 0..count.min(256) {
         let entry = at(section, 8 + 8 * i);
         let (Some(pid), Some(rel)) = (
@@ -869,21 +870,26 @@ fn parse_summary(b: &[u8]) -> SummaryInfo {
         match (pid, vt) {
             (1, 2) => s.codepage = le::u16_at(b, v4),
             (0x8000_0000, 19 | 3) => s.locale = le::u32_at(b, v4),
-            (0x12, 30) => {
-                s.application = le::bytes(b, v8, n.min(4096)).map(|v| {
-                    text::decode_8bit(v, encoding_rs::WINDOWS_1252)
-                        .trim()
-                        .to_owned()
-                });
-            }
+            // VT_LPSTR: a size in bytes; VT_LPWSTR: a size in UTF-16 characters.
+            (0x12, 30) => application = le::bytes(b, v8, n.min(4096)).map(|v| (false, v)),
             (0x12, 31) => {
-                s.application = le::bytes(b, v8, n.min(4096).saturating_mul(2))
-                    .map(|v| text::decode_utf16(v).trim().to_owned());
+                application = le::bytes(b, v8, n.min(4096).saturating_mul(2)).map(|v| (true, v));
             }
             _ => {}
         }
     }
-    s.application = s.application.filter(|a| !a.is_empty());
+    // [MS-OLEPS] 2.5: a VT_LPSTR string holds UTF-16LE characters when the set's code page
+    // is CP_WINUNICODE (1200, as in every observed DGN file), 8-bit characters otherwise.
+    s.application = application
+        .map(|(wide, v)| {
+            if wide || s.codepage == Some(1200) {
+                text::decode_utf16(v)
+            } else {
+                text::decode_8bit(v, encoding_rs::WINDOWS_1252)
+            }
+        })
+        .map(|a| a.trim().to_owned())
+        .filter(|a| !a.is_empty());
     s
 }
 
@@ -1081,6 +1087,45 @@ pub(crate) mod tests {
         b.extend_from_slice(&2u32.to_le_bytes());
         b.extend_from_slice(&[b'X', 0, b'Y', 0]);
         assert_eq!(parse_summary(&b).application.as_deref(), Some("XY"));
+        // VT_LPSTR: a size in bytes, UTF-16LE under code page 1200 (the form cadkit writes),
+        // 8-bit text under another code page; the code page may follow the string.
+        let set = |codepage: u16, vt: u32, size: u32, chars: &[u8]| {
+            let mut b = vec![0u8; 48];
+            b[44..48].copy_from_slice(&48u32.to_le_bytes());
+            let value = 8 + 16;
+            let mut set = Vec::new();
+            for v in [
+                0u32,
+                2,
+                0x12,
+                value as u32,
+                1,
+                (value + 8 + chars.len().div_ceil(4) * 4) as u32,
+            ] {
+                set.extend_from_slice(&v.to_le_bytes());
+            }
+            set.extend_from_slice(&vt.to_le_bytes());
+            set.extend_from_slice(&size.to_le_bytes());
+            set.extend_from_slice(chars);
+            set.resize(set.len().div_ceil(4) * 4, 0);
+            set.extend_from_slice(&2u32.to_le_bytes());
+            set.extend_from_slice(&u32::from(codepage).to_le_bytes());
+            b.extend(set);
+            b
+        };
+        let wide: Vec<u8> = "cadkit\0"
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect();
+        for (codepage, vt, size, chars, want) in [
+            (1200, 30, 14, wide.as_slice(), "cadkit"),
+            (1200, 31, 7, wide.as_slice(), "cadkit"),
+            (1252, 30, 7, b"cadkit\0".as_slice(), "cadkit"),
+        ] {
+            let parsed = parse_summary(&set(codepage, vt, size, chars));
+            assert_eq!(parsed.codepage, Some(codepage));
+            assert_eq!(parsed.application.as_deref(), Some(want), "{vt} {codepage}");
+        }
     }
 
     #[test]

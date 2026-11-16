@@ -1,5 +1,9 @@
 //! CFB container writer that preserves streams, directory metadata, and resource limits.
 
+use crate::cfb_tree::{
+    CHILD, COLOR, ENTRY_LEN, LEFT, NOSTREAM, OBJECT_TYPE, RIGHT, directory_entry_offsets,
+    free_entry, reachable_slots, top_down_shape, tree_slots, u32_le, writer_slot_rank,
+};
 use cadkit_core::LimitKind;
 use cadkit_core::{Error, ReadOptions, Result};
 use std::{
@@ -122,7 +126,8 @@ pub(super) fn rewrite(
                 .map(|bytes| Item::New(name.as_str(), bytes))
         }))
         .collect();
-    items.sort_by(|a, b| microstation_rank(a.key()).cmp(&microstation_rank(b.key())));
+    // Slot order is one seed lineage's (`writer_slot_rank`); lookups use the sibling trees.
+    items.sort_by(|a, b| writer_slot_rank(a.key()).cmp(&writer_slot_rank(b.key())));
     let mut bytes = (|| -> std::io::Result<Vec<u8>> {
         let mut output = ::cfb::CompoundFile::create_with_version(
             source.version(),
@@ -202,20 +207,6 @@ pub(super) fn rewrite(
     Ok(bytes)
 }
 
-const NOSTREAM: u32 = 0xffff_ffff;
-
-fn u16_le(data: &[u8], offset: usize) -> Option<u16> {
-    data.get(offset..offset.checked_add(2)?)
-        .and_then(|s| s.try_into().ok())
-        .map(u16::from_le_bytes)
-}
-
-fn u32_le(data: &[u8], offset: usize) -> Option<u32> {
-    data.get(offset..offset.checked_add(4)?)
-        .and_then(|s| s.try_into().ok())
-        .map(u32::from_le_bytes)
-}
-
 fn put_u32_le(data: &mut [u8], offset: usize, value: u32) -> Result<()> {
     let end = offset
         .checked_add(4)
@@ -226,404 +217,59 @@ fn put_u32_le(data: &mut [u8], offset: usize, value: u32) -> Result<()> {
     Ok(())
 }
 
-/// Byte offsets of every 128-byte directory entry in `data`, following the CFB FAT chain.
-fn directory_entry_offsets(data: &[u8]) -> Result<Vec<usize>> {
-    let shift = u16_le(data, 0x1e).ok_or_else(|| Error::invalid(0, "short CFB header"))?;
-    if !matches!(shift, 9 | 12) {
-        return Err(Error::invalid(0x1e, "unsupported CFB sector shift"));
-    }
-    let ss = 1usize << shift;
-    let n_fat =
-        u32_le(data, 0x2c).ok_or_else(|| Error::invalid(0x2c, "short CFB header"))? as usize;
-    let mut dir_sec = u32_le(data, 0x30).ok_or_else(|| Error::invalid(0x30, "short CFB header"))?;
-    let mut difat_sec =
-        u32_le(data, 0x44).ok_or_else(|| Error::invalid(0x44, "short CFB header"))?;
-    let n_difat =
-        u32_le(data, 0x48).ok_or_else(|| Error::invalid(0x48, "short CFB header"))? as usize;
-    let mut fat_sectors = Vec::new();
-    for i in 0..109usize {
-        if let Some(sec) = u32_le(data, 0x4c + i * 4).filter(|&s| s < 0xffff_fffa) {
-            fat_sectors.push(sec);
-        }
-    }
-    let per_difat = (ss / 4).saturating_sub(1);
-    for _ in 0..n_difat {
-        if difat_sec >= 0xffff_fffa {
-            break;
-        }
-        let base = 512usize
-            .checked_add(
-                (difat_sec as usize)
-                    .checked_mul(ss)
-                    .ok_or_else(|| Error::invalid(0x44, "CFB DIFAT sector offset overflow"))?,
-            )
-            .ok_or_else(|| Error::invalid(0x44, "CFB DIFAT sector offset overflow"))?;
-        for i in 0..per_difat {
-            if let Some(sec) = u32_le(data, base + i * 4).filter(|&s| s < 0xffff_fffa) {
-                fat_sectors.push(sec);
-            }
-        }
-        difat_sec = u32_le(data, base + per_difat * 4).unwrap_or(NOSTREAM);
-    }
-    fat_sectors.truncate(n_fat);
-    let mut fat = Vec::new();
-    for sec in fat_sectors {
-        let base = 512usize
-            .checked_add(
-                (sec as usize)
-                    .checked_mul(ss)
-                    .ok_or_else(|| Error::invalid(0x2c, "CFB FAT sector offset overflow"))?,
-            )
-            .ok_or_else(|| Error::invalid(0x2c, "CFB FAT sector offset overflow"))?;
-        for i in 0..(ss / 4) {
-            fat.push(
-                u32_le(data, base + i * 4)
-                    .ok_or_else(|| Error::invalid(base as u64, "truncated CFB FAT sector"))?,
-            );
-        }
-    }
-    let mut offsets = Vec::new();
-    let mut visited = BTreeSet::new();
-    while dir_sec < 0xffff_fffa && visited.insert(dir_sec) {
-        let base = 512usize
-            .checked_add(
-                (dir_sec as usize)
-                    .checked_mul(ss)
-                    .ok_or_else(|| Error::invalid(0x30, "CFB directory sector offset overflow"))?,
-            )
-            .ok_or_else(|| Error::invalid(0x30, "CFB directory sector offset overflow"))?;
-        for slot in 0..(ss / 128) {
-            let off = base + slot * 128;
-            if off.checked_add(128).is_none_or(|end| end > data.len()) {
-                return Err(Error::invalid(off as u64, "truncated CFB directory sector"));
-            }
-            offsets.push(off);
-        }
-        dir_sec = fat.get(dir_sec as usize).copied().unwrap_or(NOSTREAM);
-    }
-    Ok(offsets)
-}
-
-fn entry_utf16_name(data: &[u8], off: usize) -> Vec<u16> {
-    let byte_len = usize::from(u16_le(data, off + 64).unwrap_or(0))
-        .saturating_sub(2)
-        .min(62);
-    let mut out = Vec::with_capacity(byte_len / 2);
-    for i in (0..byte_len).step_by(2) {
-        if let Some(unit) = u16_le(data, off + i) {
-            out.push(unit);
-        }
-    }
-    out
-}
-
-/// Returns the root entry's `color_flag` from `seed` (0 in MicroStation V8 files).
-fn seed_root_color(seed: &[u8]) -> u8 {
+/// Returns the root entry's `color_flag` from `seed`; it is 0 in every observed V8 file
+/// (567 private, 3 public), whose writers leave the root entry red.
+pub(super) fn seed_root_color(seed: &[u8]) -> u8 {
     directory_entry_offsets(seed)
         .ok()
         .and_then(|offsets| offsets.first().copied())
-        .and_then(|off| seed.get(off + 67).copied())
+        .and_then(|off| seed.get(off + COLOR).copied())
         .unwrap_or(0)
 }
 
-/// Directory slot rank observed across MicroStation V8 files (`Dgn~H` at slot 1, `Dgn~S` at
-/// slot 2, `Dgn-Md` at slot 3, every storage before its children, and `^AH` before `$1` in
-/// `Dgn^GA`/`Dgn^CA`).
-fn microstation_rank(path: &str) -> (usize, &str, usize, &str) {
-    let fixed = match path {
-        "" => 0,
-        "Dgn~H" => 1,
-        "Dgn~S" => 2,
-        "Dgn-Md" => 3,
-        "Dgn-Md/#000000" => 4,
-        "Dgn-Md/#000000/Dgn^C" => 5,
-        "Dgn-Md/#000000/Dgn^C/$1" => 6,
-        "Dgn-Md/#000000/Dgn^G" => 7,
-        "Dgn-Md/#000000/Dgn^CA" => 8,
-        "Dgn-Md/#000000/Dgn^CA/^AH" => 9,
-        "Dgn-Md/#000000/Dgn~Mh" => 10,
-        "Dgn^Ix" => 11,
-        "Dgn^Ix/Dgn~Mix" => 12,
-        "Dgn^Nm" => 13,
-        "Dgn^Nm/$1" => 14,
-        "Dgn^Nm/$2" => 15,
-        "Dgn^Nm/$3" => 16,
-        "Dgn~Mf" => 17,
-        "Dgn^NmA" => 18,
-        "Dgn^NmA/$1" => 19,
-        "Dgn^NmA/$2" => 20,
-        "Dgn^NmA/$3" => 21,
-        "Dgn^NmA/^AH" => 22,
-        "\u{5}SummaryInformation" => 23,
-        "\u{5}DocumentSummaryInformation" => 24,
-        "Dgn-Md/#000000/Dgn^GA" => 25,
-        "Dgn-Md/#000000/Dgn^G/$1" => 26,
-        "Dgn^Nm/$4" => 27,
-        "Dgn-Md/#000000/Dgn^GA/^AH" => 28,
-        "Dgn-Md/#000000/Dgn^GA/$1" => 29,
-        _ => usize::MAX,
-    };
-    let parent = path.rsplit_once('/').map(|(p, _)| p).unwrap_or("");
-    let page_num = path
-        .rsplit_once("/$")
-        .and_then(|(_, n)| n.parse::<usize>().ok())
-        .unwrap_or(usize::MAX);
-    (fixed, parent, page_num, path)
-}
-
-#[derive(Clone)]
-struct RbNode {
-    left: Option<u32>,
-    right: Option<u32>,
-    parent: Option<u32>,
-    red: bool,
-    key: Vec<u16>,
-}
-
-fn u16_upper(unit: u16) -> u16 {
-    char::from_u32(u32::from(unit))
-        .and_then(|c| c.to_uppercase().next())
-        .and_then(|up| u16::try_from(u32::from(up)).ok())
-        .unwrap_or(unit)
-}
-
-fn cmp_cfb_name(a: &[u16], b: &[u16]) -> std::cmp::Ordering {
-    a.len().cmp(&b.len()).then_with(|| {
-        a.iter()
-            .copied()
-            .map(u16_upper)
-            .cmp(b.iter().copied().map(u16_upper))
-    })
-}
-
-fn rb_left(nodes: &BTreeMap<u32, RbNode>, x: u32) -> Option<u32> {
-    nodes.get(&x).and_then(|n| n.left)
-}
-
-fn rb_right(nodes: &BTreeMap<u32, RbNode>, x: u32) -> Option<u32> {
-    nodes.get(&x).and_then(|n| n.right)
-}
-
-fn rb_parent(nodes: &BTreeMap<u32, RbNode>, x: u32) -> Option<u32> {
-    nodes.get(&x).and_then(|n| n.parent)
-}
-
-fn rb_red(nodes: &BTreeMap<u32, RbNode>, x: Option<u32>) -> bool {
-    x.and_then(|id| nodes.get(&id)).is_some_and(|n| n.red)
-}
-
-fn set_red(nodes: &mut BTreeMap<u32, RbNode>, x: Option<u32>, red: bool) {
-    if let Some(node) = x.and_then(|id| nodes.get_mut(&id)) {
-        node.red = red;
-    }
-}
-
-fn rotate_left(nodes: &mut BTreeMap<u32, RbNode>, root: &mut Option<u32>, x: u32) {
-    let Some(y) = rb_right(nodes, x) else {
-        return;
-    };
-    let y_left = rb_left(nodes, y);
-    let x_parent = rb_parent(nodes, x);
-    if let Some(nx) = nodes.get_mut(&x) {
-        nx.right = y_left;
-        nx.parent = Some(y);
-    }
-    if let Some(yl) = y_left.and_then(|id| nodes.get_mut(&id)) {
-        yl.parent = Some(x);
-    }
-    if let Some(ny) = nodes.get_mut(&y) {
-        ny.left = Some(x);
-        ny.parent = x_parent;
-    }
-    match x_parent {
-        None => *root = Some(y),
-        Some(p) => {
-            if let Some(np) = nodes.get_mut(&p) {
-                if np.left == Some(x) {
-                    np.left = Some(y);
-                } else {
-                    np.right = Some(y);
-                }
-            }
-        }
-    }
-}
-
-fn rotate_right(nodes: &mut BTreeMap<u32, RbNode>, root: &mut Option<u32>, x: u32) {
-    let Some(y) = rb_left(nodes, x) else {
-        return;
-    };
-    let y_right = rb_right(nodes, y);
-    let x_parent = rb_parent(nodes, x);
-    if let Some(nx) = nodes.get_mut(&x) {
-        nx.left = y_right;
-        nx.parent = Some(y);
-    }
-    if let Some(yr) = y_right.and_then(|id| nodes.get_mut(&id)) {
-        yr.parent = Some(x);
-    }
-    if let Some(ny) = nodes.get_mut(&y) {
-        ny.right = Some(x);
-        ny.parent = x_parent;
-    }
-    match x_parent {
-        None => *root = Some(y),
-        Some(p) => {
-            if let Some(np) = nodes.get_mut(&p) {
-                if np.right == Some(x) {
-                    np.right = Some(y);
-                } else {
-                    np.left = Some(y);
-                }
-            }
-        }
-    }
-}
-
-fn rb_fixup(nodes: &mut BTreeMap<u32, RbNode>, root: &mut Option<u32>, mut z: u32) {
-    while rb_red(nodes, rb_parent(nodes, z)) {
-        let Some(mut p) = rb_parent(nodes, z) else {
-            break;
-        };
-        let Some(mut gp) = rb_parent(nodes, p) else {
-            break;
-        };
-        if Some(p) == rb_left(nodes, gp) {
-            if Some(z) == rb_right(nodes, p) {
-                z = p;
-                rotate_left(nodes, root, z);
-                let Some(next_p) = rb_parent(nodes, z) else {
-                    break;
-                };
-                let Some(next_gp) = rb_parent(nodes, next_p) else {
-                    break;
-                };
-                p = next_p;
-                gp = next_gp;
-            }
-            set_red(nodes, Some(p), false);
-            set_red(nodes, Some(gp), true);
-            rotate_right(nodes, root, gp);
-        } else {
-            if Some(z) == rb_left(nodes, p) {
-                z = p;
-                rotate_right(nodes, root, z);
-                let Some(next_p) = rb_parent(nodes, z) else {
-                    break;
-                };
-                let Some(next_gp) = rb_parent(nodes, next_p) else {
-                    break;
-                };
-                p = next_p;
-                gp = next_gp;
-            }
-            set_red(nodes, Some(p), false);
-            set_red(nodes, Some(gp), true);
-            rotate_left(nodes, root, gp);
-        }
-    }
-    set_red(nodes, *root, false);
-}
-
 /// Rebalances every storage's child sibling tree in `data` using Sedgewick's top-down 2-3-4
-/// red-black insertion in directory slot order, matching Windows Structured Storage (`ole32`).
+/// red-black insertion in directory slot order, matching Windows Structured Storage (`ole32`),
+/// and writes every slot the root does not reach in the free entry form of [MS-CFB] 2.6.3.
 fn balance_directory(data: &mut [u8], root_color: u8) -> Result<()> {
     let offsets = directory_entry_offsets(data)?;
     if let Some(&root_off) = offsets.first()
-        && let Some(color_byte) = data.get_mut(root_off + 67)
+        && let Some(color_byte) = data.get_mut(root_off + COLOR)
     {
         *color_byte = root_color;
     }
     for &storage_off in &offsets {
-        let kind = data.get(storage_off + 66).copied().unwrap_or(0);
+        let kind = data.get(storage_off + OBJECT_TYPE).copied().unwrap_or(0);
         if !matches!(kind, 1 | 5) {
             continue;
         }
-        let first_child = u32_le(data, storage_off + 76).unwrap_or(NOSTREAM);
+        let first_child = u32_le(data, storage_off + CHILD).unwrap_or(NOSTREAM);
         if first_child == NOSTREAM {
             continue;
         }
-        let mut children = BTreeSet::new();
-        let mut stack = vec![first_child];
-        while let Some(idx) = stack.pop() {
-            if idx == NOSTREAM || (idx as usize) >= offsets.len() || !children.insert(idx) {
-                continue;
-            }
-            if let Some(&off) = offsets.get(idx as usize) {
-                let left = u32_le(data, off + 68).unwrap_or(NOSTREAM);
-                let right = u32_le(data, off + 72).unwrap_or(NOSTREAM);
-                if left != NOSTREAM {
-                    stack.push(left);
-                }
-                if right != NOSTREAM {
-                    stack.push(right);
-                }
-            }
-        }
-        let mut nodes: BTreeMap<u32, RbNode> = BTreeMap::new();
-        let mut root: Option<u32> = None;
-        for z in children {
-            let Some(&z_off) = offsets.get(z as usize) else {
-                continue;
-            };
-            let z_key = entry_utf16_name(data, z_off);
-            let mut y: Option<u32> = None;
-            let mut x = root;
-            while let Some(curr) = x {
-                let l = rb_left(&nodes, curr);
-                let r = rb_right(&nodes, curr);
-                if rb_red(&nodes, l) && rb_red(&nodes, r) {
-                    set_red(&mut nodes, l, false);
-                    set_red(&mut nodes, r, false);
-                    set_red(&mut nodes, Some(curr), true);
-                    rb_fixup(&mut nodes, &mut root, curr);
-                }
-                y = Some(curr);
-                let ord = nodes
-                    .get(&curr)
-                    .map(|n| cmp_cfb_name(&z_key, &n.key))
-                    .unwrap_or(std::cmp::Ordering::Greater);
-                x = if ord.is_lt() {
-                    rb_left(&nodes, curr)
-                } else {
-                    rb_right(&nodes, curr)
-                };
-            }
-            nodes.insert(
-                z,
-                RbNode {
-                    left: None,
-                    right: None,
-                    parent: y,
-                    red: true,
-                    key: z_key.clone(),
-                },
-            );
-            match y {
-                None => root = Some(z),
-                Some(p) => {
-                    if let Some(np) = nodes.get_mut(&p) {
-                        if cmp_cfb_name(&z_key, &np.key).is_lt() {
-                            np.left = Some(z);
-                        } else {
-                            np.right = Some(z);
-                        }
-                    }
-                }
-            }
-            rb_fixup(&mut nodes, &mut root, z);
-            set_red(&mut nodes, root, false);
-        }
-        put_u32_le(data, storage_off + 76, root.unwrap_or(NOSTREAM))?;
-        for (id, node) in nodes {
+        let children = tree_slots(data, &offsets, first_child);
+        let shape = top_down_shape(data, &offsets, &children);
+        put_u32_le(data, storage_off + CHILD, shape.root.unwrap_or(NOSTREAM))?;
+        for (id, (left, right, red)) in shape.nodes {
             if let Some(&off) = offsets.get(id as usize) {
-                if let Some(color_byte) = data.get_mut(off + 67) {
-                    *color_byte = u8::from(!node.red);
+                if let Some(color_byte) = data.get_mut(off + COLOR) {
+                    *color_byte = u8::from(!red);
                 }
-                put_u32_le(data, off + 68, node.left.unwrap_or(NOSTREAM))?;
-                put_u32_le(data, off + 72, node.right.unwrap_or(NOSTREAM))?;
+                put_u32_le(data, off + LEFT, left.unwrap_or(NOSTREAM))?;
+                put_u32_le(data, off + RIGHT, right.unwrap_or(NOSTREAM))?;
             }
         }
+    }
+    // The `cfb` crate writes unused slots with a name length of 2; MS-CFB 2.6.3 requires all
+    // zeroes except the three ids, the form 823 of the 829 unused slots of the private
+    // corpus and the 3 of the public TreeText sample (saved by MicroStation 8.11) have.
+    let reachable = reachable_slots(data, &offsets);
+    for (slot, &off) in offsets.iter().enumerate() {
+        if u32::try_from(slot).is_ok_and(|s| reachable.contains(&s)) {
+            continue;
+        }
+        data.get_mut(off..off.saturating_add(ENTRY_LEN))
+            .ok_or_else(|| Error::invalid(off as u64, "CFB directory entry out of bounds"))?
+            .copy_from_slice(&free_entry());
     }
     Ok(())
 }
@@ -655,9 +301,194 @@ pub(super) fn stream(seed: &[u8], name: &str, max: u64) -> Result<Vec<u8>> {
     Ok(data)
 }
 
+/// Directory metadata of a container built without a seed by [`build`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct BuildMeta {
+    /// Colour flag of the root entry: 0 (red) in every observed V8 file (567 private, 3
+    /// public), as [`seed_root_color`] reads it.
+    pub root_color: u8,
+    /// Modification time (FILETIME, 100 ns since 1601) of the root and of every storage, and
+    /// creation time of every storage; 0 writes the zero form. The root's creation time is
+    /// zero and streams keep zero times, as [MS-CFB] 2.6.1 requires: the `cfb` crate reads
+    /// a stream's times as zero (and its strict mode rejects others), so the seed-based
+    /// [`rewrite`] writes them zero too, although the observed MicroStation files store a
+    /// time on every entry.
+    pub filetime: u64,
+}
+
+/// Offsets of the creation and modification times in a directory entry ([MS-CFB] 2.6.1).
+const CREATED: usize = 0x64;
+const MODIFIED: usize = 0x6c;
+
+/// Builds a version 3 compound file from `streams` without a seed. Keys are entry names
+/// joined by `/` without a leading slash (as [`stream_key`] gives them); every parent path
+/// becomes a storage, and so does every key of `storages` (a storage without streams, which
+/// the seed-based [`rewrite`] keeps from its seed). Entries are created in [`writer_slot_rank`] order, every sibling tree
+/// is rebuilt by top-down red-black insertion and unused slots take the [MS-CFB] 2.6.3 free
+/// form ([`balance_directory`]), as [`rewrite`] does; CLSIDs are null and state bits 0 (every
+/// observed V8 file has null CLSIDs). Only the given bytes are written, so no byte of a stream
+/// left out reaches the output. The output is limited to `max_input_bytes` of `options`.
+pub(super) fn build(
+    streams: &BTreeMap<String, Vec<u8>>,
+    extra_storages: &BTreeSet<String>,
+    meta: BuildMeta,
+    options: &ReadOptions,
+) -> Result<Vec<u8>> {
+    if (streams.len() as u64).saturating_add(extra_storages.len() as u64)
+        >= options.limits.max_objects
+    {
+        return Err(Error::limit(LimitKind::Objects, "CFB entries".into()));
+    }
+    let valid = |key: &str| !key.is_empty() && !key.split('/').any(str::is_empty);
+    let mut total = 0u64;
+    let mut storages: BTreeSet<&str> = BTreeSet::new();
+    for key in streams.keys().chain(extra_storages) {
+        if !valid(key) {
+            return Err(Error::invalid(0, "empty CFB entry name"));
+        }
+        for (i, c) in key.char_indices() {
+            if c == '/'
+                && let Some(parent) = key.get(..i)
+            {
+                storages.insert(parent);
+            }
+        }
+    }
+    storages.extend(extra_storages.iter().map(String::as_str));
+    for data in streams.values() {
+        total = total
+            .checked_add(data.len() as u64)
+            .ok_or_else(|| Error::limit(LimitKind::Output, "CFB streams".into()))?;
+    }
+    if total > options.limits.max_input_bytes {
+        return Err(Error::limit(LimitKind::Output, "CFB streams".into()));
+    }
+    if storages.iter().any(|s| streams.contains_key(*s)) {
+        return Err(Error::invalid(0, "CFB path is both a storage and a stream"));
+    }
+    enum Item<'a> {
+        Storage(&'a str),
+        Stream(&'a str, &'a [u8]),
+    }
+    impl Item<'_> {
+        fn key(&self) -> &str {
+            match self {
+                Self::Storage(k) | Self::Stream(k, _) => k,
+            }
+        }
+    }
+    let mut items: Vec<Item<'_>> = storages
+        .iter()
+        .map(|s| Item::Storage(s))
+        .chain(streams.iter().map(|(k, d)| Item::Stream(k, d)))
+        .collect();
+    items.sort_by(|a, b| writer_slot_rank(a.key()).cmp(&writer_slot_rank(b.key())));
+    let mut bytes = (|| -> std::io::Result<Vec<u8>> {
+        let mut output = ::cfb::CompoundFile::create_with_version(
+            ::cfb::Version::V3,
+            BoundedCursor::new(options.limits.max_input_bytes),
+        )?;
+        for item in &items {
+            match item {
+                Item::Storage(key) => output.create_storage_all(format!("/{key}"))?,
+                Item::Stream(key, data) => {
+                    if let Some((parent, _)) = key.rsplit_once('/') {
+                        output.create_storage_all(format!("/{parent}"))?;
+                    }
+                    output.create_stream(format!("/{key}"))?.write_all(data)?;
+                }
+            }
+        }
+        output.flush()?;
+        Ok(output.into_inner().bytes())
+    })()
+    .map_err(map_cfb_io)?;
+    balance_directory(&mut bytes, meta.root_color)?;
+    let offsets = directory_entry_offsets(&bytes)?;
+    for slot in reachable_slots(&bytes, &offsets) {
+        let Some(&off) = offsets.get(slot as usize) else {
+            continue;
+        };
+        match bytes.get(off + OBJECT_TYPE) {
+            // [MS-CFB] 2.6.1: the root storage's creation time MUST be all zeroes.
+            Some(5) => {
+                put_u64_le(&mut bytes, off + CREATED, 0)?;
+                put_u64_le(&mut bytes, off + MODIFIED, meta.filetime)?;
+            }
+            Some(1) => {
+                put_u64_le(&mut bytes, off + CREATED, meta.filetime)?;
+                put_u64_le(&mut bytes, off + MODIFIED, meta.filetime)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(bytes)
+}
+
+fn put_u64_le(data: &mut [u8], offset: usize, value: u64) -> Result<()> {
+    let end = offset
+        .checked_add(8)
+        .ok_or_else(|| Error::invalid(offset as u64, "CFB directory offset overflow"))?;
+    data.get_mut(offset..end)
+        .ok_or_else(|| Error::invalid(offset as u64, "CFB directory offset out of bounds"))?
+        .copy_from_slice(&value.to_le_bytes());
+    Ok(())
+}
+
+/// Every stream of the compound file `bytes` by [`stream_key`], read within the limits of
+/// `options` (input bytes, entry count, total stream bytes) like [`rewrite`].
+pub(super) fn read_streams(
+    bytes: &[u8],
+    options: &ReadOptions,
+) -> Result<BTreeMap<String, Vec<u8>>> {
+    if bytes.len() as u64 > options.limits.max_input_bytes {
+        return Err(Error::limit(LimitKind::InputBytes, "DGN seed bytes".into()));
+    }
+    let mut cf = ::cfb::CompoundFile::open(Cursor::new(bytes))?;
+    let mut entries = vec![];
+    let mut budget = 0u64;
+    for entry in cf.walk() {
+        if entries.len() as u64 >= options.limits.max_objects {
+            return Err(Error::limit(LimitKind::Objects, "CFB entries".into()));
+        }
+        if !entry.is_stream() {
+            continue;
+        }
+        budget = budget
+            .checked_add(entry.len())
+            .ok_or_else(|| Error::limit(LimitKind::Objects, "CFB streams".into()))?;
+        if budget > options.limits.max_decompressed_bytes {
+            return Err(Error::limit(
+                LimitKind::DecompressedBytes,
+                "CFB streams".into(),
+            ));
+        }
+        entries.push((entry.path().to_owned(), entry.len()));
+    }
+    let mut out = BTreeMap::new();
+    for (path, len) in entries {
+        let mut data = vec![];
+        cf.open_stream(&path)?.take(len).read_to_end(&mut data)?;
+        out.insert(stream_key(&path), data);
+    }
+    Ok(out)
+}
+
+/// Every storage of the compound file `bytes` by [`stream_key`].
+#[cfg(test)]
+pub(super) fn read_storages(bytes: &[u8]) -> Result<BTreeSet<String>> {
+    let cf = ::cfb::CompoundFile::open(Cursor::new(bytes))?;
+    Ok(cf
+        .walk()
+        .filter(|e| e.is_storage() && !e.is_root())
+        .map(|e| stream_key(e.path()))
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cfb_tree::{cmp_cfb_name, entry_utf16_name, is_free_entry};
     use std::path::PathBuf;
 
     #[test]
@@ -672,11 +503,157 @@ mod tests {
         assert_eq!(stream_key(Path::new("/Dgn~H")), "Dgn~H");
     }
 
+    /// Clears the times of every entry (and the CLSID and state bits, which the rewrite copies
+    /// from the seed) so two containers compare by layout alone.
+    fn without_entry_metadata(mut data: Vec<u8>) -> Vec<u8> {
+        let offsets = directory_entry_offsets(&data).unwrap();
+        for off in offsets {
+            data[off + 0x50..off + 0x74].fill(0);
+        }
+        data
+    }
+
+    /// [`build`] given the streams of a rewritten file lays them out as [`rewrite`] did:
+    /// the same sectors, directory slots, trees and free entries.
+    fn assert_build_matches_rewrite(seed: &[u8]) {
+        let read = ReadOptions::default();
+        let rewritten = rewrite(seed, &BTreeMap::new(), &read).unwrap();
+        let streams = read_streams(&rewritten, &read).unwrap();
+        let meta = BuildMeta {
+            root_color: seed_root_color(&rewritten),
+            filetime: 0,
+        };
+        let storages = read_storages(&rewritten).unwrap();
+        let built = build(&streams, &storages, meta, &read).unwrap();
+        ::cfb::CompoundFile::open_strict(Cursor::new(built.clone())).expect("valid CFB");
+        let (built, rewritten) = (
+            without_entry_metadata(built),
+            without_entry_metadata(rewritten),
+        );
+        let first_difference = built.iter().zip(&rewritten).position(|(a, b)| a != b);
+        assert_eq!(
+            (first_difference, built.len()),
+            (None, rewritten.len()),
+            "first differing byte"
+        );
+    }
+
+    #[test]
+    fn build_lays_out_streams_as_the_rewrite_does() {
+        assert_build_matches_rewrite(&balances_directory(::cfb::Version::V3));
+        for rel in [
+            "public/gdal/test_dgnv8.dgn",
+            "public/safe/TreeTextNodeLabelsWithTags.dgn",
+            "public/safe/Water_distribution_mains.dgn",
+        ] {
+            let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../corpus")
+                .join(rel);
+            if let Ok(seed) = std::fs::read(path) {
+                assert_build_matches_rewrite(&seed);
+            }
+        }
+    }
+
+    #[test]
+    fn build_writes_the_given_times_and_rejects_bad_paths() {
+        let read = ReadOptions::default();
+        let mut streams = BTreeMap::new();
+        streams.insert("Dgn~H".to_string(), vec![1u8; 100]);
+        streams.insert("Dgn-Md/#000000/Dgn^G/$1".to_string(), vec![2u8; 5000]);
+        streams.insert("Dgn^Nm/$1".to_string(), vec![3u8; 16]);
+        let meta = BuildMeta {
+            root_color: 0,
+            filetime: 0x01d9_0000_0000_0000,
+        };
+        let built = build(&streams, &BTreeSet::new(), meta, &read).unwrap();
+        ::cfb::CompoundFile::open_strict(Cursor::new(built.clone())).expect("valid CFB");
+        assert_eq!(read_streams(&built, &read).unwrap(), streams);
+        let offsets = directory_entry_offsets(&built).unwrap();
+        let reachable = reachable_slots(&built, &offsets);
+        // Root, 3 streams and the storages Dgn-Md, #000000, Dgn^G and Dgn^Nm.
+        assert_eq!(reachable.len(), 8);
+        for (slot, &off) in offsets.iter().enumerate() {
+            if reachable.contains(&(slot as u32)) {
+                // MS-CFB 2.6.1: storages carry the time, the root its modification time
+                // only (its creation time MUST be zero), streams none.
+                let (created, modified) = match built[off + OBJECT_TYPE] {
+                    5 => (0, meta.filetime),
+                    1 => (meta.filetime, meta.filetime),
+                    _ => (0, 0),
+                };
+                assert_eq!(crate::le::u64_at(&built, off + CREATED), Some(created));
+                assert_eq!(crate::le::u64_at(&built, off + MODIFIED), Some(modified));
+            } else {
+                assert!(is_free_entry(&built[off..off + ENTRY_LEN]));
+            }
+        }
+        assert_eq!(
+            String::from_utf16_lossy(&entry_utf16_name(&built, offsets[1])),
+            "Dgn~H"
+        );
+        assert_eq!(
+            build(&streams, &BTreeSet::new(), meta, &read).unwrap(),
+            built,
+            "deterministic"
+        );
+
+        let mut bad = streams.clone();
+        bad.insert("Dgn^Nm".to_string(), vec![]);
+        assert!(
+            build(&bad, &BTreeSet::new(), meta, &read).is_err(),
+            "storage and stream"
+        );
+        let mut bad = streams.clone();
+        bad.insert("Dgn^Nm//$2".to_string(), vec![]);
+        assert!(
+            build(&bad, &BTreeSet::new(), meta, &read).is_err(),
+            "empty name"
+        );
+        let mut tight = ReadOptions::default();
+        tight.limits.max_input_bytes = 4000;
+        assert!(matches!(
+            build(&streams, &BTreeSet::new(), meta, &tight),
+            Err(Error::LimitExceeded { .. })
+        ));
+        // A storage without streams is kept when asked for.
+        let empty = BTreeSet::from(["Dgn^GA".to_string()]);
+        let with_empty = build(&streams, &empty, meta, &read).unwrap();
+        assert!(read_storages(&with_empty).unwrap().contains("Dgn^GA"));
+        assert!(matches!(
+            read_streams(&built, &tight),
+            Err(Error::LimitExceeded { .. })
+        ));
+    }
+
     #[test]
     fn rewrite_balances_cfb_directory_as_red_black_trees() {
+        let seed = balances_directory(::cfb::Version::V3);
+
+        // Replacing a stream with data larger than `max_input_bytes` yields LimitExceeded.
+        let mut tight = ReadOptions::default();
+        tight.limits.max_input_bytes = seed.len() as u64;
+        let mut replacements = BTreeMap::new();
+        replacements.insert("Dgn~H".into(), Some(vec![0u8; 64 * 1024]));
+        assert!(matches!(
+            rewrite(&seed, &replacements, &tight),
+            Err(Error::LimitExceeded { .. })
+        ));
+    }
+
+    /// Version 4 files have 4096-byte sectors, and the header fills a whole one: the rewrite
+    /// once took sector `n` to start at `512 + n * 4096`, so it rebalanced FAT bytes as if they
+    /// were directory entries and wrote colour flags into the FAT (an output `cfb` refused to
+    /// open as a seed: "Malformed FAT").
+    #[test]
+    fn rewrite_balances_cfb_v4_directory_and_leaves_the_fat_alone() {
+        balances_directory(::cfb::Version::V4);
+    }
+
+    /// Rewrites a small seed of `version` and checks every sibling tree; returns the seed.
+    fn balances_directory(version: ::cfb::Version) -> Vec<u8> {
         let mut cf =
-            ::cfb::CompoundFile::create_with_version(::cfb::Version::V3, Cursor::new(Vec::new()))
-                .unwrap();
+            ::cfb::CompoundFile::create_with_version(version, Cursor::new(Vec::new())).unwrap();
         for name in ["Dgn~H", "Dgn~S", "Dgn~Mf"] {
             cf.create_stream(name).unwrap().write_all(b"hdr").unwrap();
         }
@@ -691,7 +668,34 @@ mod tests {
         cf.flush().unwrap();
         let seed = cf.into_inner().into_inner();
         let out = rewrite(&seed, &BTreeMap::new(), &ReadOptions::default()).unwrap();
+        ::cfb::CompoundFile::open_strict(Cursor::new(out.clone())).expect("output is a valid CFB");
         let offsets = directory_entry_offsets(&out).unwrap();
+        // Unused slots: the `cfb` crate writes them with a name length of 2, the output holds
+        // the MS-CFB 2.6.3 free form, and both `cfb` and cadkit's reader accept it, again
+        // as a seed too.
+        let unused = |data: &[u8]| -> Vec<bool> {
+            let offsets = directory_entry_offsets(data).unwrap();
+            let reachable = reachable_slots(data, &offsets);
+            (0..offsets.len() as u32)
+                .filter(|s| !reachable.contains(s))
+                .map(|s| is_free_entry(&data[offsets[s as usize]..][..ENTRY_LEN]))
+                .collect()
+        };
+        let before = unused(&seed);
+        assert!(!before.is_empty() && before.iter().any(|free| !free));
+        let after = unused(&out);
+        assert_eq!(after.len(), before.len());
+        assert!(after.iter().all(|free| *free));
+        let paths: Vec<String> = crate::cfb::CompoundFile::parse(&out)
+            .unwrap()
+            .paths()
+            .iter()
+            .map(|p| p.path.clone())
+            .collect();
+        assert!(paths.iter().any(|p| p == "Dgn^Nm/$13"));
+        let again = rewrite(&out, &BTreeMap::new(), &ReadOptions::default()).unwrap();
+        ::cfb::CompoundFile::open_strict(Cursor::new(again.clone())).expect("reseeded output");
+        assert_eq!(again, out, "rewriting an output changes nothing");
         let name_at =
             |idx: u32| String::from_utf16_lossy(&entry_utf16_name(&out, offsets[idx as usize]));
         assert_eq!(name_at(1), "Dgn~H");
@@ -738,15 +742,6 @@ mod tests {
                 }
             }
         }
-
-        // Replacing a stream with data larger than `max_input_bytes` yields LimitExceeded.
-        let mut tight = ReadOptions::default();
-        tight.limits.max_input_bytes = seed.len() as u64;
-        let mut replacements = BTreeMap::new();
-        replacements.insert("Dgn~H".into(), Some(vec![0u8; 64 * 1024]));
-        assert!(matches!(
-            rewrite(&seed, &replacements, &tight),
-            Err(Error::LimitExceeded { .. })
-        ));
+        seed
     }
 }

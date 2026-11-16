@@ -81,7 +81,15 @@ pub fn read(bytes: &[u8], options: &ReadOptions) -> Result<Document>; // full re
 ```
 
 `cadkit-dxf` exposes `write(&Document, DxfVersion) -> Result<String>`.
-`cadkit-dgn` exposes `write_v8(&Document, seed, &WriteOptions)` and `repack_v8`.
+`cadkit-dgn` exposes, with its default `write` feature, `write_v8(&Document, seed,
+&WriteOptions)` and `write_v8_with_seed(&Document, &V8Seed, &WriteOptions)` (a parsed seed
+with `prepare_document`, palette, level and font table accessors), `repack_v8`,
+`seed_has_raster_template` and `strip_seed_v8(seed, &StripSeedOptions, &ReadOptions) ->
+StrippedSeed` (the seed bytes and a `StripSeedReport` of what was removed and which names
+remain); without that feature, `check_structure(bytes, &ReadOptions) -> StructureReport`
+(compound file directory and pages of a V8 file, stable warning codes) and the
+`palette::exact_index` / `nearest_index` colour matches. The facade re-exports the crate as
+`cadkit::dgn` and adds `to_dgn`, `to_dgn_with_seed`, `write_dgn_to` and `strip_dgn_seed`.
 `cadkit-gml` exposes bounded native XML read/write (`CityGmlDocument`), a neutral
 geometry bridge, and optional local structural TKGM preflight (`cadkit-gml::tkgm`);
 the facade offers `to_dgn` and `to_citygml` (plus `gml::write_document_with_report`).
@@ -115,8 +123,13 @@ Format crates are layered internally:
 - References by name (layer, block, linetype, style).
 - DGN levels → `Layer`; shared cell definitions → `Block`; shared cell instances → `Insert`;
   normal cells, complex chains/shapes and text nodes → `Group` with children.
-- DGN tags / item-type properties and DWG ATTRIBs → `Entity::attributes`.
+- DGN tags / item-type properties and DWG ATTRIBs → `Entity::attributes`. A DGN tag
+  element's own level, display, color and weight → `Attribute::layer`, `display`,
+  `color` and `lineweight` (`None` = the owner's; the native values stay in the
+  attribute's `dgn.color_index` / `dgn.weight` props).
 - DGN palette colors resolve to `Color::Rgb`; the index goes to `props["dgn.color_index"]`.
+  An element storing the by-level value `0xFFFFFFFF` reads as `Color::ByLayer` with that
+  value kept; hidden V8 graphics (property bit `0x0080`) read with `visible = false`.
 - Anything decoded without a typed home goes to `props` with a format prefix.
 - `Entity::raw` is filled only when `ReadOptions::keep_raw` is set.
 
@@ -148,20 +161,31 @@ the result; the SVG cap is not a total-process-memory cap.
 
 ## Bindings
 
+- **cadkit-cli**: `inspect`, `info`, `layers`, `blocks`, `dump`, `convert` (JSON, SVG, DXF,
+  seed-based DGN, CityGML), `validate-gml`, `check-dgn` (the `StructureReport` as JSON, exit 1
+  on warnings), `repack-dgn`, `strip-seed` (`StripSeedOptions` as flags, `--report`) and
+  `completions`.
 - **cadkit-py**: `cadkit.read(bytes|path) -> Document`, `cadkit.read_citygml(bytes) -> CityGmlDocument`
   (Python classes and dicts via JSON), `doc.to_svg()`, `doc.to_dxf()`, `doc.to_dgn()`,
-  `doc.to_citygml()` / `doc.to_citygml_with_report()`, `doc.to_json()`, and
-  `CityGmlDocument.preflight_tkgm()`; built with maturin, abi3 wheels.
+  `doc.to_citygml()` / `doc.to_citygml_with_report()`, `doc.to_json()`,
+  `CityGmlDocument.preflight_tkgm()`, `V8Seed` (parsed seed, `prepare_document`) and
+  `cadkit.strip_dgn_seed(seed, **options) -> (bytes, dict)`; built with maturin, abi3 wheels.
 - **cadkit-wasm**: `read(Uint8Array) -> CadDocument`, `readCityGml(Uint8Array) -> CityGmlDocument`,
-  `toSvg`, `toDxf`, `toDgn`, `toCityGml` / `toCityGmlWithReport`, `preflightTkgm`; plus a static
+  `toSvg`, `toDxf`, `toDgn`, `toCityGml` / `toCityGmlWithReport`, `preflightTkgm`,
+  `stripDgnSeed(seed, options?, readOptions?) -> { seed, report }`; plus a static
   drag-and-drop viewer page in `crates/cadkit-wasm/www/`.
 - **cadkit-capi**: opaque `cadkit_document*` (live-handle registry: double free returns
   `CADKIT_INVALID_HANDLE`), `cadkit_status` return codes, thread-local last-error message,
-  `cadkit_document_info` struct + JSON/SVG/DXF/DGN/CityGML exporters, native CityGML JSON I/O
-  and TKGM preflight, `cadkit_status_string`, `cadkit_version`; hand-written `include/cadkit.h`
-  (a test fails on missing exports) and a header-only C++17 RAII wrapper `include/cadkit.hpp`.
-  No panic crosses the boundary.
+  `cadkit_document_info` struct + JSON/SVG/DXF/DGN/CityGML exporters, `cadkit_dgn_strip_seed`
+  (seed bytes and report JSON), native CityGML JSON I/O and TKGM preflight,
+  `cadkit_status_string`, `cadkit_version`; hand-written `include/cadkit.h`
+  (a test fails on missing exports) and a header-only C++17 RAII wrapper `include/cadkit.hpp`
+  (`cadkit::strip_dgn_seed`). No panic crosses the boundary.
 
+`check_structure`, `repack_v8` (CLI: `check-dgn`, `repack-dgn`), the `V8Seed` font table
+accessors, the palette matches and the native record layer are Rust-only. The new
+`Attribute::color` / `lineweight` fields reach Python, WASM and C through document JSON
+(omitted when unset, `schema_version` 1).
 
 Bindings expose header-only inspection and neutral document operations. Python and C/C++
 unit conversion/block expansion return new immutable documents; WASM performs the same

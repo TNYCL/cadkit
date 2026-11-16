@@ -14,6 +14,7 @@ from cadkit._cadkit import (
     detect,
     read,
     read_citygml,
+    strip_dgn_seed,
 )
 
 __all__ = [
@@ -30,4 +31,5 @@ __all__ = [
     "detect",
     "read",
     "read_citygml",
+    "strip_dgn_seed",
 ]

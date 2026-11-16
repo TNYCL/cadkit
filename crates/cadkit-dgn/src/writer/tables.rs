@@ -63,6 +63,9 @@ pub(super) struct Tables {
     /// Dictionary records in stored order, seed records first.
     pub records: Vec<NamedRecord>,
     pub fonts: BTreeMap<String, u32>,
+    /// Every font table entry in stored order, repeated names included (`fonts` keeps the
+    /// last number of a name only).
+    pub font_entries: Vec<(String, u32)>,
     pub palette: [[u8; 3]; 256],
     pub levels: BTreeMap<String, u32>,
     pub sets: BTreeMap<Option<String>, (u64, TagSetData)>,
@@ -88,6 +91,7 @@ impl Tables {
         let mut out = Self {
             records: vec![],
             fonts: BTreeMap::new(),
+            font_entries: vec![],
             palette: crate::palette::DEFAULT_PALETTE,
             levels: BTreeMap::new(),
             sets: BTreeMap::new(),
@@ -172,6 +176,7 @@ impl Tables {
             }
             match e.data {
                 ElementData::Font { number, name } => {
+                    out.font_entries.push((name.clone(), number));
                     out.fonts.insert(name, number);
                 }
                 ElementData::ColorTable { colors } => {
@@ -310,24 +315,32 @@ impl Tables {
         };
         let known = |number| {
             number == 0
-                || self.fonts.values().any(|n| *n == number)
+                || self.font_entries.iter().any(|(_, n)| *n == number)
                 || self.referenced_fonts.contains(&number)
         };
-        let named = match style {
-            Some(name) => Some(
-                self.fonts
-                    .get(name)
-                    .copied()
-                    .or_else(|| {
-                        name.strip_prefix("DGN_FONT_")?
-                            .parse()
-                            .ok()
-                            .filter(|n| known(*n))
-                    })
-                    .ok_or_else(|| {
-                        Error::Unsupported("text font style is absent from seed".into())
-                    })?,
-            ),
+        // Every number the seed's font table gives `name`: a name stored twice with two
+        // numbers is ambiguous, unless the text names one of them explicitly.
+        let named: Option<BTreeSet<u32>> = match style {
+            Some(name) => {
+                let numbers: BTreeSet<u32> = self
+                    .font_entries
+                    .iter()
+                    .filter(|(entry, _)| entry == name)
+                    .map(|(_, number)| *number)
+                    .collect();
+                if numbers.is_empty() {
+                    let number = name
+                        .strip_prefix("DGN_FONT_")
+                        .and_then(|n| n.parse().ok())
+                        .filter(|n| known(*n))
+                        .ok_or_else(|| {
+                            Error::Unsupported("text font style is absent from seed".into())
+                        })?;
+                    Some(BTreeSet::from([number]))
+                } else {
+                    Some(numbers)
+                }
+            }
             None => None,
         };
         if let Some(number) = explicit {
@@ -339,14 +352,19 @@ impl Tables {
                     "text font number is absent from seed".into(),
                 ));
             }
-            if named.is_some_and(|n| n != number) {
+            if named.as_ref().is_some_and(|n| !n.contains(&number)) {
                 return Err(Error::invalid(0, "DGN font number and style name disagree"));
             }
             return Ok(number);
         }
-        // Without a style or number the format default (font 0) applies; the first table
-        // entry by name is an arbitrary seed font (often a CJK TrueType face).
-        Ok(named.unwrap_or(0))
+        match named {
+            Some(numbers) if numbers.len() > 1 => Err(Error::Unsupported(
+                "text font style is ambiguous in seed".into(),
+            )),
+            // Without a style or number the format default (font 0) applies; the first table
+            // entry by name is an arbitrary seed font (often a CJK TrueType face).
+            named => Ok(named.and_then(|n| n.first().copied()).unwrap_or(0)),
+        }
     }
 
     /// Font number of a named style for a displayed tag; `None` style uses font 0.

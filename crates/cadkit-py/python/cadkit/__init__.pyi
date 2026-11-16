@@ -12,4 +12,5 @@ from cadkit._cadkit import (
     __version__ as __version__,
     detect as detect,
     read as read,
+    strip_dgn_seed as strip_dgn_seed,
 )
