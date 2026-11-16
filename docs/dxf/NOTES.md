@@ -53,8 +53,10 @@ Forbidden sources (libdxfrw, LibreCAD, QCAD, GPL code) were not consulted.
 ## Encoding
 
 AC1021+ → UTF-8 (lossy). Older → `$DWGCODEPAGE` (`ANSI_125x`, `ANSI_932/936/949/950`, `DOS866`, `ISO8859-x`,
-`UTF-8`, ...) → `ReadOptions::fallback_codepage` → windows-1252. DOS code pages that `encoding_rs` lacks
-(437, 850, ...) fall through to the next candidate and raise a `dxf.codepage` warning. A cheap pre-scan of the
+`UTF-8`, ...) → `ReadOptions::fallback_codepage` → windows-1252. The DOS code pages 437, 850, 852, 855, 857,
+860, 861, 863, 864, 865 and 869 are decoded with cadkit-core's own tables (`cadkit_core::text::OemCodepage`),
+866 through `encoding_rs`; a code page with neither falls through to the next candidate and raises a
+`dxf.codepage` warning. A cheap pre-scan of the
 HEADER finds `$ACADVER` / `$DWGCODEPAGE` before the real pass.
 
 ## Reader mapping
@@ -185,5 +187,5 @@ All numbers come from `cargo test -p cadkit-dxf` and the two Python scripts in `
   OLE2FRAME, proxy entities) are kept only as `dxf.codes`; they are not written back.
 * Complex-linetype elements (shape/text in LTYPE), hatch gradients, `GROUP` objects, DIMSTYLE variables and
   VIEWPORT frozen-layer lists are not modelled.
-* Binary `\M+` code-page selector mapping is best effort; DOS code pages other than 866 are not decoded.
+* Binary `\M+` code-page selector mapping is best effort.
 * Not tested against AutoCAD itself (no vendor software); the strictness reference is ezdxf's audit.

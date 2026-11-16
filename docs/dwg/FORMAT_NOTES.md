@@ -289,9 +289,11 @@ and the non-graphical objects (XRECORD, GROUP, MLINESTYLE, …).
 
 - R13–R2004 strings (`T`, EED 1000) are 8-bit in the drawing code page: the index at
   offset 0x13 (DXF names `ANSI_1252` …, table in `codepage.rs`) maps to a WHATWG label
-  for `encoding_rs`. DOS code pages other than 866, and Johab, have no WHATWG encoding:
-  `ReadOptions::fallback_codepage` is used, else windows-1252, with a
-  `dwg.codepage_fallback` warning. Trailing NULs are dropped.
+  for `encoding_rs`. The DOS code pages 437, 850, 852, 855, 857, 860, 861, 863, 864, 865 and
+  869 have no WHATWG encoding and are decoded with cadkit-core's own tables
+  (`cadkit_core::text::OemCodepage`). Code pages with neither (Johab, for example) use
+  `ReadOptions::fallback_codepage`, else windows-1252, with a `dwg.codepage_fallback`
+  warning. Trailing NULs are dropped.
 - R2007+ strings are UTF-16LE (`TU`), in the string stream of the object / header /
   classes; EED strings are inline (RS length + UTF-16). Lengths are checked against
   `Limits::max_string_bytes`.
