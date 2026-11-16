@@ -95,7 +95,7 @@ certified by any CAD vendor.
 | JavaScript (browser, Node) | [`cadkit-wasm`](https://www.npmjs.com/package/cadkit-wasm) | `npm install cadkit-wasm` |
 | Rust library | [`cadkit`](https://crates.io/crates/cadkit) | `cargo add cadkit` |
 | CLI | [`cadkit-cli`](https://crates.io/crates/cadkit-cli) | binary from [GitHub Releases](https://github.com/TNYCL/cadkit/releases/latest), `cargo binstall cadkit-cli` or `cargo install cadkit-cli` |
-| C / C++ | `cadkit-capi-<target>` | archive from [GitHub Releases](https://github.com/TNYCL/cadkit/releases/latest): headers, shared and static library |
+| C / C++ | [`cadkit-capi`](https://crates.io/crates/cadkit-capi) | archive `cadkit-capi-<target>` from [GitHub Releases](https://github.com/TNYCL/cadkit/releases/latest): headers, shared and static library; or build from source |
 
 Python wheels, CLI binaries and C API archives are built for Linux x86_64 and aarch64, macOS
 arm64 and x86_64, and Windows x64. One Python wheel per platform serves Python 3.9 and

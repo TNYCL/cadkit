@@ -5,14 +5,15 @@ artifact, waits for approval on the `release` environment, then publishes:
 
 | Channel | Package | Contents |
 |---|---|---|
-| crates.io | `cadkit-geom`, `cadkit-scene`, `cadkit-gpu`, `cadkit-core`, `cadkit-dgn`, `cadkit-dxf`, `cadkit-gml`, `cadkit-dwg`, `cadkit`, `cadkit-cli` | Rust sources; docs.rs builds the API documentation |
+| crates.io | `cadkit-geom`, `cadkit-scene`, `cadkit-gpu`, `cadkit-core`, `cadkit-dgn`, `cadkit-dxf`, `cadkit-gml`, `cadkit-dwg`, `cadkit`, `cadkit-cli`, `cadkit-capi` | Rust sources; docs.rs builds the API documentation |
 | PyPI | `pycadkit` (imports as `cadkit`) | abi3 wheels for Linux x86_64/aarch64 (manylinux), macOS arm64/x86_64, Windows x64, and an sdist |
 | npm | `cadkit-wasm` | one package: `cadkit-wasm` (ES module, browser and bundlers) and `cadkit-wasm/node` (CommonJS) |
 | GitHub Releases | `cadkit-<target>` | CLI for Linux x86_64/aarch64 (static musl), macOS arm64/x86_64, Windows x64 |
 | GitHub Releases | `cadkit-capi-<target>` | C/C++ headers, shared and static libraries (Linux glibc 2.28+, macOS, Windows x64) |
 
-`cadkit-py`, `cadkit-wasm` and `cadkit-capi` have `publish = false`: they are distributed
-through PyPI, npm and GitHub Releases, not crates.io. The release also carries
+`cadkit-py` and `cadkit-wasm` have `publish = false`: they are distributed through PyPI and
+npm, not crates.io. `cadkit-capi` is published to crates.io (sources, first published at
+0.5.3) and its prebuilt libraries ship on GitHub Releases. The release also carries
 `SHA256SUMS` and GitHub build-provenance attestations for every file
 (`gh attestation verify <file> -R TNYCL/cadkit`). PyPI and npm attach their own
 provenance through trusted publishing.

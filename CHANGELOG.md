@@ -6,6 +6,11 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- `cadkit-capi` is published to crates.io with a README; prebuilt C/C++ archives stay on
+  GitHub Releases. 0.5.3 was published from the v0.5.3 sources.
+
 ## [0.5.3] - 2026-11-16
 
 ### Added
