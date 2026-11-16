@@ -1,0 +1,62 @@
+---
+import FormatPage from './_FormatPage.astro';
+import rust from '../../../scripts/check-snippets/docs/rust/read_citygml.rs?raw';
+import python from '../../../scripts/check-snippets/docs/python/read_citygml.py?raw';
+import js from '../../../scripts/check-snippets/docs/js/read-citygml.mjs?raw';
+import c from '../../../scripts/check-snippets/docs/c/read_citygml.c?raw';
+import cli from '../../../scripts/check-snippets/docs/cli/citygml.sh?raw';
+import type { Snippet } from '../../lib/types';
+
+const read: Snippet[] = [
+	{ label: 'Rust', lang: 'rust', code: rust, title: 'src/main.rs' },
+	{ label: 'Python', lang: 'python', code: python, title: 'read_citygml.py' },
+	{ label: 'JavaScript', lang: 'js', code: js, title: 'read-citygml.mjs (Node)' },
+	{ label: 'C', lang: 'c', code: c, title: 'read_citygml.c' },
+];
+---
+
+<FormatPage
+	title="CityGML 2.0 for Rust, Python and JavaScript"
+	description="Read and write CityGML 2.0 with cadkit in Rust, Python, JavaScript and C: native IDs and references, explicit CRS for new geometry, a local TKGM preflight."
+	name="CityGML"
+	ids={['citygml']}
+	supported={[
+		'Reading and writing UTF-8 CityGML 2.0 (GML 3.1.1), keeping IDs, references, LoDs, CRS attributes, typed attributes and unknown extension elements',
+		'Buildings, building parts, rooms, installations, openings, boundary surfaces, generic objects and groups',
+		'Structural and geometric validation: rings, planarity, crossings, holes and solids',
+		'Writing drawing geometry as generic city objects with an explicit CRS and level of detail',
+		'An optional local, structural TKGM preflight for two profiles: city-model tender and Digital Building registration',
+	]}
+	unsupported={[
+		'CityGML 3.0 and arbitrary GML application schemas',
+		'CRS transformation, axis swapping or guessing a CRS: you name the CRS of the coordinates',
+		'Inferring buildings or rooms from drawing geometry',
+		'External xlinks and referenced polygon rings',
+		'Institutional acceptance: the TKGM preflight is a local check, not an approval',
+	]}
+	examples={[
+		{
+			id: 'read',
+			heading: 'Read CityGML',
+			intro: 'Read the native model, validate it and project its geometry into the neutral document for SVG, DXF or DGN output.',
+			snippets: read,
+		},
+		{
+			id: 'shell',
+			heading: 'Write, validate and preflight from the shell',
+			intro: 'New geometry needs <code>--crs</code>. The preflight reports what a TKGM delivery would still need; see <a href="/docs/guides/citygml-tkgm/">CityGML 2.0 and the TKGM preflight</a>.',
+			shell: { code: cli },
+		},
+	]}
+	demo={[
+		{ href: '/demo/?sample=citygml-building', label: 'Open a CityGML sample in the demo' },
+		{ href: '/docs/guides/citygml-tkgm/', label: 'CityGML and the TKGM preflight' },
+	]}
+	reference={[
+		{ label: 'CityGML 2.0 notes: native contract, geometry and validation boundary', href: '/docs/reference/formats/citygml/' },
+		{ label: 'TKGM preflight notes', href: '/docs/reference/formats/tkgm/' },
+		{ label: 'Host integration: CityGML export', href: '/docs/reference/integration/#citygml-export' },
+		{ label: 'Interchange status', href: '/docs/reference/interchange-status/' },
+	]}
+	crates={['cadkit', 'cadkit-gml']}
+/>

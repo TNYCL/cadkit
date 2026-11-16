@@ -1,0 +1,56 @@
+---
+// Bottom of the docs sidebar on small screens: primary links, GitHub and the theme toggle.
+import ThemeToggle from '../ThemeToggle.astro';
+import { NAV, REPO } from '../../config';
+
+const path = Astro.url.pathname;
+---
+
+<div class="ck-mobile-footer">
+	<nav aria-label="Site">
+		<ul>
+			{
+				NAV.map((l) => (
+					<li>
+						<a href={l.href} aria-current={path.startsWith(l.href) ? 'page' : undefined}>
+							{l.label}
+						</a>
+					</li>
+				))
+			}
+			<li><a href={REPO}>GitHub</a></li>
+		</ul>
+	</nav>
+	<ThemeToggle withLabel />
+</div>
+
+<style>
+	.ck-mobile-footer {
+		display: flex;
+		flex-direction: column;
+		gap: var(--ck-space-4);
+		padding-block: var(--ck-space-4);
+		border-top: 1px solid var(--ck-border);
+	}
+	ul {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--ck-space-2) var(--ck-space-4);
+	}
+	a {
+		color: var(--ck-text);
+		text-decoration: none;
+		font-size: var(--sl-text-sm);
+	}
+	a[aria-current='page'] {
+		color: var(--ck-accent);
+	}
+	@media (min-width: 50rem) {
+		.ck-mobile-footer {
+			display: none;
+		}
+	}
+</style>

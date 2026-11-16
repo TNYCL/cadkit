@@ -1,0 +1,216 @@
+---
+// Shared layout of the format pages (/formats/<id>/). Not a route: the file name starts with "_".
+// Status chips come from src/data/formats.ts; code samples are the checked sources under
+// scripts/check-snippets/docs/ (imported with ?raw by each page), so they cannot drift.
+import PageLayout from '../../layouts/PageLayout.astro';
+import Prose from '../../components/Prose.astro';
+import CodeTabs from '../../components/CodeTabs.astro';
+import StatusChip from '../../components/StatusChip.astro';
+import DimensionDivider from '../../components/DimensionDivider.astro';
+import { Code } from '@astrojs/starlight/components';
+import { FORMATS, type FormatRow } from '../../data/formats';
+import { docsRsUrl } from '../../config';
+import type { Snippet } from '../../lib/types';
+
+interface Example {
+	id: string;
+	heading: string;
+	/** Short HTML paragraph (own copy only). */
+	intro?: string;
+	snippets?: Snippet[];
+	shell?: { code: string; title?: string };
+}
+
+interface Props {
+	title: string;
+	description: string;
+	/** Breadcrumb label, e.g. "DWG". */
+	name: string;
+	ids: FormatRow['id'][];
+	/** HTML list items (own copy only). */
+	supported: string[];
+	unsupported: string[];
+	examples: Example[];
+	demo: { href: string; label: string }[];
+	reference: { label: string; href: string }[];
+	crates: string[];
+}
+
+const { title, description, name, ids, supported, unsupported, examples, demo, reference, crates } = Astro.props;
+const rows = ids.map((id) => {
+	const row = FORMATS.find((f) => f.id === id);
+	if (!row) throw new Error(`unknown format id ${id}`);
+	return row;
+});
+---
+
+<PageLayout
+	title={title}
+	description={description}
+	eyebrow={`Format · ${name}`}
+	breadcrumbs={[{ label: 'Formats', href: '/formats/' }, { label: name }]}
+>
+	<section class="ck-container ck-fmt-section" aria-labelledby="support">
+		<h2 id="support">What is supported</h2>
+		<div class="ck-fmt-status" role="region" aria-label={`${name} support status`} tabindex="0">
+			<table>
+				<thead>
+					<tr>
+						<th scope="col">Format</th>
+						<th scope="col">Read</th>
+						<th scope="col">Write</th>
+						<th scope="col">Status</th>
+					</tr>
+				</thead>
+				<tbody>
+					{
+						rows.map((r) => (
+							<tr>
+								<th scope="row">{r.name}</th>
+								{[r.read, r.write].map((c) => (
+									<td>
+										<StatusChip status={c.status} label={c.label} />
+										{c.detail && <span class="ck-fmt-detail">{c.detail}</span>}
+									</td>
+								))}
+								<td>{r.note}</td>
+							</tr>
+						))
+					}
+				</tbody>
+			</table>
+		</div>
+		<div class="ck-fmt-lists">
+			<div>
+				<h3>Supported</h3>
+				<ul class="ck-grips">{supported.map((s) => <li set:html={s} />)}</ul>
+			</div>
+			<div>
+				<h3>Not supported yet</h3>
+				<ul class="ck-grips">{unsupported.map((s) => <li set:html={s} />)}</ul>
+			</div>
+		</div>
+		<div class="ck-fmt-cta">
+			{demo.map((d, i) => <a class:list={['ck-btn', i === 0 && 'ck-btn--primary']} href={d.href}>{d.label}</a>)}
+		</div>
+	</section>
+
+	<DimensionDivider label="Examples" />
+	{
+		examples.map((e) => (
+			<section class="ck-container ck-fmt-section" aria-labelledby={e.id}>
+				<h2 id={e.id}>{e.heading}</h2>
+				{e.intro && <p class="ck-fmt-intro" set:html={e.intro} />}
+				{e.snippets && <CodeTabs snippets={e.snippets} />}
+				{e.shell && <Code code={e.shell.code.trimEnd()} lang="sh" title={e.shell.title ?? 'shell'} />}
+			</section>
+		))
+	}
+
+	<DimensionDivider label="Reference" />
+	<section class="ck-container ck-fmt-section" aria-labelledby="reference">
+		<h2 id="reference">Reference</h2>
+		<Prose>
+			<ul>
+				{
+					reference.map((l) => (
+						<li>
+							<a href={l.href}>{l.label}</a>
+						</li>
+					))
+				}
+				<li>
+					Rust API on docs.rs:{' '}
+					{crates.map((c, i) => (
+						<>
+							{i > 0 && ', '}
+							<a href={docsRsUrl(c)}>{c}</a>
+						</>
+					))}
+				</li>
+			</ul>
+		</Prose>
+	</section>
+</PageLayout>
+
+<style>
+	.ck-fmt-section {
+		padding-block: var(--ck-space-8);
+	}
+	.ck-fmt-section h2 {
+		margin: 0 0 var(--ck-space-4);
+	}
+	.ck-fmt-intro {
+		max-width: 45rem;
+		margin: 0 0 var(--ck-space-4);
+		color: var(--ck-text);
+	}
+	.ck-fmt-status {
+		overflow-x: auto;
+		border: 1px solid var(--ck-border);
+		background: var(--ck-surface);
+	}
+	.ck-fmt-status table {
+		width: 100%;
+		min-width: 40rem;
+		border-collapse: collapse;
+		font-size: var(--sl-text-sm);
+	}
+	.ck-fmt-status th,
+	.ck-fmt-status td {
+		padding: var(--ck-space-3) var(--ck-space-4);
+		text-align: left;
+		vertical-align: top;
+		border-bottom: 1px solid var(--ck-border);
+	}
+	.ck-fmt-status tbody tr:last-child > * {
+		border-bottom: 0;
+	}
+	.ck-fmt-status thead th {
+		font-family: var(--__sl-font-mono);
+		font-size: var(--sl-text-2xs);
+		font-weight: 500;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--ck-muted);
+		background: var(--ck-raised);
+	}
+	.ck-fmt-status tbody th {
+		font-family: var(--__sl-font-mono);
+		font-weight: 600;
+		white-space: nowrap;
+	}
+	.ck-fmt-detail {
+		display: block;
+		margin-top: var(--ck-space-1);
+		color: var(--ck-muted);
+	}
+	.ck-fmt-lists {
+		display: grid;
+		gap: var(--ck-space-6);
+		margin-top: var(--ck-space-8);
+	}
+	@media (min-width: 50rem) {
+		.ck-fmt-lists {
+			grid-template-columns: 1fr 1fr;
+			gap: var(--ck-space-12);
+		}
+	}
+	.ck-fmt-lists h3 {
+		margin: 0 0 var(--ck-space-3);
+		font-size: var(--sl-text-lg);
+	}
+	.ck-fmt-lists ul {
+		margin: 0;
+		font-size: var(--sl-text-sm);
+	}
+	.ck-fmt-lists li + li {
+		margin-top: var(--ck-space-2);
+	}
+	.ck-fmt-cta {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--ck-space-3);
+		margin-top: var(--ck-space-8);
+	}
+</style>

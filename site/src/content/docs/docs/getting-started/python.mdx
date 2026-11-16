@@ -1,0 +1,58 @@
+---
+title: "Getting started in Python"
+description: "Install pycadkit, read DWG, DGN, DXF and CityGML files in Python, list models, layers and warnings, and export SVG, DXF and JSON."
+---
+
+import { Code } from '@astrojs/starlight/components';
+import quickstart from '../../../../../scripts/check-snippets/docs/python/quickstart.py?raw';
+
+The Python package is published on PyPI as `pycadkit` and imported as `cadkit` (the name
+`cadkit` was taken on PyPI). It wraps the Rust library with PyO3: parsing, rendering and
+writing run in Rust with the GIL released, so threads can read files in parallel.
+
+## Install
+
+```sh
+pip install pycadkit
+```
+
+One abi3 wheel per platform serves Python 3.9 and newer: Linux x86_64 and aarch64
+(manylinux), macOS arm64 and x86_64, and Windows x64. Other platforms build from the source
+distribution, which needs a Rust toolchain. Type stubs (`.pyi`, `py.typed`) are included.
+
+## Read a drawing and export SVG
+
+<Code code={quickstart} lang="python" title="quickstart.py" />
+
+`cadkit.read` accepts a path (`str` or `os.PathLike`) or bytes (`bytes`, `bytearray`,
+`memoryview`) and detects the format. The `Document` exposes `format`, `version`,
+`application`, `codepage`, `units`, `layers`, `blocks`, `models` and `warnings` as plain
+dicts and lists shaped like the [document JSON](/docs/reference/document-schema/).
+`doc.entities(model=0)` iterates the entities of one model. A `Document` is immutable and its
+dict properties are rebuilt on each access: keep them in a local variable inside loops.
+
+Other outputs:
+
+| Call | Returns |
+|---|---|
+| `doc.to_svg(width=1600, background=None, ...)` | SVG text |
+| `doc.to_dxf(version="r2018")` | ASCII DXF text, `r12` to `r2018` |
+| `doc.to_json(pretty=True)`, `doc.to_dict()` | the whole document |
+| `doc.to_dgn(seed)` | DGN V8 bytes; see [Write DGN V8 from a seed](/docs/guides/write-dgn-v8/) |
+| `doc.to_citygml(srs_name, lod=1)` | CityGML 2.0 bytes; see [CityGML 2.0](/docs/guides/citygml-tkgm/) |
+| `cadkit.inspect(path)` | header-only metadata as a dict |
+
+## Errors
+
+`cadkit.CadkitError` is the base class of `UnknownFormatError` (not a recognised drawing),
+`UnsupportedError` (valid input using an unimplemented feature), `LimitExceededError` (over a
+resource limit) and `InvalidDataError` (truncated or malformed data). Missing or unreadable
+files raise the usual `OSError` subclasses. The `max_input_bytes`, `max_decompressed_bytes`,
+`max_objects` and `max_depth` keywords of `read` lower the limits; see
+[Handling untrusted files](/docs/guides/untrusted-files/).
+
+## Next steps
+
+- [Convert DXF to SVG](/docs/guides/dxf-to-svg/) and [inspect a drawing](/docs/guides/inspect-drawing/)
+- [Write DGN V8 from a seed](/docs/guides/write-dgn-v8/) and [CityGML 2.0 and the TKGM preflight](/docs/guides/citygml-tkgm/)
+- The complete [Python API reference](/docs/reference/python/)

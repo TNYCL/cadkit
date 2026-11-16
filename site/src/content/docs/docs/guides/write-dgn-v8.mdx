@@ -1,0 +1,99 @@
+---
+title: "Write DGN V8 from a seed"
+description: "Write DGN V8 with cadkit: strip a seed from your own template, adapt a DXF or DWG drawing to it, write and check the result. Limits and acceptance status."
+---
+
+import { Code } from '@astrojs/starlight/components';
+import CodeTabs from '../../../../components/CodeTabs.astro';
+import Callout from '../../../../components/Callout.astro';
+import rust from '../../../../../scripts/check-snippets/docs/rust/write_dgn.rs?raw';
+import python from '../../../../../scripts/check-snippets/docs/python/write_dgn.py?raw';
+import js from '../../../../../scripts/check-snippets/docs/js/write-dgn.mjs?raw';
+import c from '../../../../../scripts/check-snippets/docs/c/write_dgn.c?raw';
+import cli from '../../../../../scripts/check-snippets/docs/cli/write-dgn.sh?raw';
+
+<Callout variant="caution" title="Acceptance status">
+	No file written by cadkit has yet been opened by the maintainers in another DGN application.
+	Every statement about DGN output rests on local evidence: cadkit's own reader, its structural
+	check and an independent compound-file parser. The
+	[acceptance protocol](/docs/reference/formats/dgn-acceptance/) describes how such a check is
+	done and recorded. Confirm acceptance in your target software before you rely on the output.
+</Callout>
+
+cadkit writes DGN V8 into a **seed**: an existing single-model V8 file whose tables (levels,
+fonts, colour table, text styles, views, settings, units) the output inherits. cadkit ships no
+seed of its own, because the file header and model header that every seed needs hold fields
+whose meaning is not decoded and whose values differ between the writers of the public
+samples. You make a seed from a drawing whose tables you may hand on, such as your
+organisation's template.
+
+## The three steps
+
+1. **Strip a seed.** `strip-seed` copies the template without its model's drawing content and
+   without the document properties that name people or organisations (author, company,
+   manager, title, comments, thumbnail), and rebuilds the container so no removed byte survives.
+   Names in the kept tables remain: level names, tag sets, cell and font names and the model
+   description. The report counts them; review them before you hand the seed on. **The result
+   is not anonymous.**
+2. **Prepare the document.** The writer needs one model whose dimension (2D or 3D) and units
+   match the seed, colours that exist in the seed's palette, and measured advances for centred
+   or right-aligned text. In Rust and Python, `V8Seed::prepare_document` /
+   `seed.prepare_document` does this by default: it selects the first design model, converts
+   units, promotes a 2D drawing to a 3D seed, expands block references and normalises
+   symbology (off-palette colours to the nearest palette index, `ByBlock`, millimetre
+   lineweights, unknown fonts), polyline widths, multiline text, leaders, hatches and text
+   alignment. `SeedPrepareOptions` turns each part off. The JavaScript and C APIs have no
+   preparation step; their callers supply a matching document.
+3. **Write and check.** `to_dgn` writes the model into a copy of the seed. `check_structure`
+   (Rust, and `cadkit check-dgn`) reports the container and record structure with stable
+   warning codes.
+
+<CodeTabs
+	snippets={[
+		{ label: 'Rust', lang: 'rust', code: rust, title: 'src/main.rs' },
+		{ label: 'Python', lang: 'python', code: python, title: 'write_dgn.py' },
+		{ label: 'JavaScript', lang: 'js', code: js, title: 'write-dgn.mjs (Node)' },
+		{ label: 'C', lang: 'c', code: c, title: 'write_dgn.c' },
+	]}
+/>
+
+The JavaScript version shows by hand what preparation involves. Two of its steps are
+placeholders you replace: every entity gets palette index 0, and text advances use the same
+character-count estimate as `prepare_document`. Measure text with the fonts you use for exact
+placement.
+
+## From the shell
+
+<Code code={cli} lang="sh" title="shell" />
+
+The CLI strips, checks and repacks seeds, and `convert --seed` writes a document as read,
+without preparation. A DXF or DWG file with paper layouts fails with `DGN writer requires
+exactly one source model`, and a 2D drawing into a 3D seed with `source and seed model
+dimensions differ`. For those conversions use Python or Rust.
+
+## What the writer supports
+
+New elements: lines, line strings, closed shapes, circles, ellipses, arcs, left, centre and
+right text at baseline, middle or top, complex chains and shapes, and ordinary cell groups.
+Bulged polylines become exact line and arc components; faces and meshes become shapes and
+cells; polygons with holes become a cell with hole-marked shapes. Levels, tag sets and tag
+values are writable, and strings default to UTF-16 (`codepage` selects a legacy 8-bit page).
+
+Not supported by the writer yet, and rejected with an `Unsupported` error instead of being
+dropped: shared-cell instances, edited raster attachments, splines, hatches, dimensions, fitted
+or oblique text and polylines with a non-zero width. `prepare_document` normalises hatch geometry and
+polyline widths (with multiline text and leaders) for the writer; convert the others
+explicitly before writing.
+Colours must exist in the seed palette unless you give `dgn.color_index` yourself, and
+`ByBlock` colours need resolving first.
+
+Writing into a seed that already holds drawing content requires `clear_seed_model` (CLI:
+`--clear-seed-model`). Rewriting an existing DGN with its own bytes as the seed keeps its
+unchanged raster attachments. The details, with the evidence for each layout, are in the
+[DGN format notes](/docs/reference/formats/dgn/#seed-based-v8-writer).
+
+## Related
+
+- [DGN format page](/formats/dgn/)
+- [Host integration: DGN export](/docs/reference/integration/#dgn-export) and [obtaining a seed](/docs/reference/integration/#obtaining-a-seed)
+- [Interchange status](/docs/reference/interchange-status/)

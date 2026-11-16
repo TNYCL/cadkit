@@ -1,0 +1,154 @@
+---
+// One daily panel: columns for the daily value (context, neutral) and a line (accent) on the
+// same scale, drawn as inline SVG at build time. The plot stretches to its container
+// (preserveAspectRatio="none", hairlines and the line keep their pixel width through
+// vector-effect); axis labels are HTML so they stay readable at every width. Each day has a
+// full-height hover band with a native tooltip; the table next to the chart holds every value.
+import { columnRects, linePath, dateTicks, formatTick, formatCount, formatDate } from '../chart.mjs';
+
+interface Props {
+	/** Panel heading (series name) and optional detail. */
+	label: string;
+	detail?: string;
+	dates: string[];
+	columns: (number | null)[];
+	line: (number | null)[];
+	axis: { max: number; ticks: number[] };
+	/** Words for tooltips: "downloads", "views". */
+	columnsUnit: string;
+	lineUnit: string;
+	/** Accessible summary of the panel. */
+	summary: string;
+}
+
+const { label, detail, dates, columns, line, axis, columnsUnit, lineUnit, summary } = Astro.props;
+const n = dates.length;
+const rects = columnRects(columns, axis.max);
+const path = linePath(line, axis.max);
+const xTicks = dateTicks(dates);
+// On narrow screens only labels at least 28 % apart stay (the others would collide).
+const narrow = new Set(dateTicks(dates, 28).map((t) => t.i));
+const yPct = (v: number) => (v / axis.max) * 100;
+const tip = (i: number) => {
+	const d = formatDate(dates[i] ?? '', { year: true });
+	const c = columns[i];
+	const l = line[i];
+	const parts = [d, c === null || c === undefined ? 'not collected' : `${formatCount(c)} ${columnsUnit}`];
+	if (l !== null && l !== undefined) parts.push(`${lineUnit} ${formatCount(l)}`);
+	return parts.join(' · ');
+};
+---
+
+<div class="ck-ts">
+	<p class="ck-ts-label">{label}{detail && <span> · {detail}</span>}</p>
+	<div class="ck-ts-frame">
+		<div class="ck-ts-y" aria-hidden="true">
+			{axis.ticks.map((t) => <span style={`bottom:${yPct(t)}%`}>{formatTick(t, axis.max)}</span>)}
+		</div>
+		<div class="ck-ts-plot">
+			<svg viewBox={`0 0 ${n} 100`} preserveAspectRatio="none" role="img" aria-label={summary} focusable="false">
+				<g class="ck-ts-grid">
+					{axis.ticks.map((t) => <path d={`M0 ${100 - yPct(t)}H${n}`} vector-effect="non-scaling-stroke" />)}
+				</g>
+				<g class="ck-ts-cols">
+					{rects.map((r) => <rect x={r.x} y={r.y} width={r.w} height={r.h} />)}
+				</g>
+				{path && <path class="ck-ts-line" d={path} vector-effect="non-scaling-stroke" />}
+				<g class="ck-ts-hits">
+					{dates.map((_, i) => (
+						<rect x={i} y="0" width="1" height="100">
+							<title>{tip(i)}</title>
+						</rect>
+					))}
+				</g>
+			</svg>
+		</div>
+		<div class="ck-ts-x" aria-hidden="true">
+			{xTicks.map((t) => <span class:list={{ 'is-wide-only': !narrow.has(t.i) }} style={`left:${t.pct}%`}>{t.label}</span>)}
+		</div>
+	</div>
+</div>
+
+<style>
+	.ck-ts-label {
+		margin: 0 0 var(--ck-space-2);
+		font-size: var(--sl-text-sm);
+		font-weight: 600;
+		color: var(--ck-text);
+	}
+	.ck-ts-label span {
+		font-weight: 400;
+		color: var(--ck-muted);
+	}
+	.ck-ts-frame {
+		display: grid;
+		grid-template-columns: 3rem minmax(0, 1fr);
+		grid-template-rows: 8.5rem 1.5rem;
+	}
+	.ck-ts-y {
+		position: relative;
+		grid-row: 1;
+		grid-column: 1;
+	}
+	.ck-ts-y span,
+	.ck-ts-x span {
+		position: absolute;
+		font-family: var(--__sl-font-mono);
+		font-size: var(--sl-text-2xs);
+		font-variant-numeric: tabular-nums;
+		line-height: 1;
+		color: var(--ck-muted);
+		white-space: nowrap;
+	}
+	.ck-ts-y span {
+		right: 0.5rem;
+		transform: translateY(50%);
+	}
+	.ck-ts-plot {
+		grid-row: 1;
+		grid-column: 2;
+		min-width: 0;
+		border-bottom: 1px solid var(--ck-muted);
+	}
+	.ck-ts-plot svg {
+		display: block;
+		width: 100%;
+		height: 100%;
+		overflow: visible;
+	}
+	.ck-ts-grid path {
+		stroke: var(--ck-border);
+		stroke-width: 1;
+		fill: none;
+	}
+	.ck-ts-cols rect {
+		fill: var(--ck-stats-context);
+	}
+	.ck-ts-line {
+		fill: none;
+		stroke: var(--ck-accent);
+		stroke-width: 2;
+		stroke-linejoin: round;
+		stroke-linecap: round;
+	}
+	.ck-ts-hits rect {
+		fill: transparent;
+	}
+	.ck-ts-hits rect:hover {
+		fill: color-mix(in srgb, var(--ck-accent) 12%, transparent);
+	}
+	.ck-ts-x {
+		position: relative;
+		grid-row: 2;
+		grid-column: 2;
+	}
+	.ck-ts-x span {
+		top: 0.5rem;
+		transform: translateX(-50%);
+	}
+	@media (max-width: 47.99rem) {
+		.ck-ts-x .is-wide-only {
+			display: none;
+		}
+	}
+</style>

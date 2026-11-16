@@ -1,0 +1,128 @@
+---
+import PageLayout from '../../layouts/PageLayout.astro';
+import FormatMatrix from '../../components/FormatMatrix.astro';
+import Prose from '../../components/Prose.astro';
+
+const pages = [
+	{
+		href: '/formats/dwg/',
+		name: 'DWG',
+		body: 'Read R14 (AC1014) to 2018 (AC1032): model space, layouts, layers, blocks and entities. No writer.',
+	},
+	{
+		href: '/formats/dgn/',
+		name: 'DGN',
+		body: 'Read V7 and V8, with levels, tags, cells and raster attachments. Write a seed-based V8 subset.',
+	},
+	{
+		href: '/formats/dxf/',
+		name: 'DXF',
+		body: 'Read ASCII and binary R12 to 2018. Write ASCII DXF in seven versions, with legacy code pages.',
+	},
+	{
+		href: '/formats/citygml/',
+		name: 'CityGML 2.0',
+		body: 'Read and write the native model with IDs and references; new geometry with an explicit CRS.',
+	},
+];
+---
+
+<PageLayout
+	title="CAD formats: DWG, DGN, DXF and CityGML"
+	description="Which versions of DWG, DGN, DXF and CityGML cadkit reads and writes, from Rust, Python, JavaScript and C, with the evidence behind each status."
+	breadcrumbs={[{ label: 'Formats' }]}
+	lead="Every cadkit reader produces the same format-neutral document, so the same code reads all four formats and writes DXF, seed-based DGN V8, CityGML 2.0, SVG and JSON."
+>
+	<section class="ck-container ck-fmt-index" aria-labelledby="matrix">
+		<h2 id="matrix">Support at a glance</h2>
+		<FormatMatrix />
+		<p class="ck-fmt-note">
+			Readers degrade instead of failing: records they cannot model become <code>unknown</code> entities
+			and warnings on the document. Local test evidence and the open external acceptance work are in
+			<a href="/docs/reference/interchange-status/">Interchange status</a>.
+		</p>
+	</section>
+
+	<section class="ck-container ck-fmt-index" aria-labelledby="pages">
+		<h2 id="pages">By format</h2>
+		<ul class="ck-fmt-cards">
+			{
+				pages.map((p) => (
+					<li>
+						<a href={p.href}>
+							<span class="ck-fmt-card-name">{p.name}</span>
+							<span class="ck-fmt-card-body">{p.body}</span>
+						</a>
+					</li>
+				))
+			}
+		</ul>
+	</section>
+
+	<section class="ck-container ck-fmt-index" aria-labelledby="names">
+		<h2 id="names">Format names</h2>
+		<Prose>
+			<p>
+				"DWG", "DGN" and "DXF" are used only to name file formats. cadkit is developed clean-room from
+				public specifications, MIT-licensed projects and sample files; see
+				<a href="/provenance/">provenance</a> and <a href="/trademarks/">trademarks</a>.
+			</p>
+		</Prose>
+	</section>
+</PageLayout>
+
+<style>
+	.ck-fmt-index {
+		padding-block: var(--ck-space-6);
+	}
+	.ck-fmt-index h2 {
+		margin: 0 0 var(--ck-space-4);
+	}
+	.ck-fmt-note {
+		max-width: 45rem;
+		margin: var(--ck-space-4) 0 0;
+		font-size: var(--sl-text-sm);
+		color: var(--ck-muted);
+	}
+	.ck-fmt-cards {
+		display: grid;
+		gap: var(--ck-space-4);
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+	@media (min-width: 50rem) {
+		.ck-fmt-cards {
+			grid-template-columns: repeat(2, 1fr);
+		}
+	}
+	.ck-fmt-cards a {
+		display: block;
+		height: 100%;
+		padding: var(--ck-space-4) var(--ck-space-6);
+		border: 1px solid var(--ck-border);
+		background: var(--ck-surface);
+		color: var(--ck-text);
+		text-decoration: none;
+		transition: border-color 160ms cubic-bezier(0.2, 0.8, 0.2, 1);
+	}
+	.ck-fmt-cards a:hover {
+		border-color: var(--ck-accent);
+	}
+	.ck-fmt-card-name {
+		display: block;
+		font-family: var(--__sl-font-mono);
+		font-weight: 600;
+		color: var(--ck-accent);
+	}
+	.ck-fmt-card-body {
+		display: block;
+		margin-top: var(--ck-space-2);
+		font-size: var(--sl-text-sm);
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.ck-fmt-cards a {
+			transition: none;
+		}
+	}
+</style>

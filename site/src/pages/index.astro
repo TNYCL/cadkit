@@ -1,0 +1,342 @@
+---
+import PageLayout from '../layouts/PageLayout.astro';
+import HeroPlan from '../components/HeroPlan.astro';
+import InstallTabs from '../components/InstallTabs.astro';
+import CodeTabs from '../components/CodeTabs.astro';
+import FormatMatrix from '../components/FormatMatrix.astro';
+import ModuleGrid from '../components/ModuleGrid.astro';
+import DimensionDivider from '../components/DimensionDivider.astro';
+import { SAME_TASK } from '../data/snippets';
+import { LINKS, USED_BY, REPO } from '../config';
+import { organizationJsonLd, softwareJsonLd } from '../lib/json-ld';
+
+const title = 'The open CAD engine, in pure Rust';
+const description =
+	'cadkit reads DWG, DGN, DXF and CityGML, writes DXF, DGN V8 and CityGML, and renders drawings from Rust, Python, JavaScript and C. MIT OR Apache-2.0, clean-room.';
+
+const useCases = [
+	{
+		title: 'Drawing viewers and editors',
+		body: 'Read a drawing into one document model, render it as SVG or with the wgpu plan renderer, and keep your own UI and editing tools.',
+	},
+	{
+		title: 'Converters and export pipelines',
+		body: 'Convert to DXF, seed-based DGN V8, CityGML 2.0, SVG or JSON from a library, the CLI or a script, with bounded stdin/stdout conversion in the CLI.',
+	},
+	{
+		title: 'GIS and CityGML pipelines',
+		body: 'Read and write CityGML 2.0 with an explicit CRS, keep native IDs and references, and run an optional local structural TKGM preflight.',
+	},
+	{
+		title: 'Inspection services',
+		body: 'Header-only inspection, configurable resource limits on every reader and warnings with stable codes for files you did not create.',
+	},
+];
+---
+
+<PageLayout
+	title={title}
+	description={description}
+	header={false}
+	ogType="website"
+	jsonLd={[organizationJsonLd, softwareJsonLd]}
+>
+	<section class="ck-hero ck-container" aria-labelledby="ck-hero-title">
+		<div class="ck-hero-copy">
+			<p class="ck-eyebrow">Open source · MIT OR Apache-2.0</p>
+			<h1 id="ck-hero-title">The open CAD engine, in pure&nbsp;Rust.</h1>
+			<p class="ck-hero-sub">
+				Read DWG, DGN, DXF and CityGML. Write DXF, DGN V8 and CityGML. From Rust, Python, JavaScript and C.
+			</p>
+			<div class="ck-hero-install">
+				<InstallTabs />
+			</div>
+			<div class="ck-hero-cta">
+				<a class="ck-btn ck-btn--primary" href="/docs/">Get started</a>
+				<a class="ck-btn" href="/demo/">Try the demo</a>
+			</div>
+		</div>
+		<div class="ck-hero-figure">
+			<HeroPlan />
+		</div>
+	</section>
+
+	<DimensionDivider label="01 · Formats" />
+	<section class="ck-section ck-container" aria-labelledby="formats">
+		<h2 id="formats">Formats</h2>
+		<p class="ck-lead">
+			Every reader produces the same format-neutral document. Readers degrade instead of failing:
+			records they cannot model become <code>Unknown</code> entities and warnings on the document.
+		</p>
+		<FormatMatrix />
+		<p class="ck-footnote">
+			Every interface also writes the document as JSON and SVG. There is no DWG writer yet. Local test
+			evidence and the remaining external acceptance work are recorded in{' '}
+			<a href={LINKS.interchangeStatus}>INTERCHANGE_STATUS.md</a>.
+		</p>
+	</section>
+
+	<DimensionDivider label="02 · Interfaces" />
+	<section class="ck-section ck-container" aria-labelledby="same-task">
+		<div class="ck-split">
+			<div>
+				<h2 id="same-task">The same task in four languages</h2>
+				<p class="ck-lead">
+					Open the sample plan, list its layers, export SVG. File I/O and document operations ship
+					for Rust, Python, JavaScript (WebAssembly, browser and Node) and C, with a C++17 wrapper
+					over the C ABI.
+				</p>
+				<ul class="ck-grips ck-notes">
+					<li>The site's snippet checks run the Python and JavaScript snippets on the <a href="/samples/cadkit-sample-plan.dxf">sample plan</a>, type-check the Rust one with <code>cargo check</code> and compile the C one against <code>cadkit.h</code>.</li>
+					<li>The C API returns layer names inside the document JSON; the C example prints the count.</li>
+					<li>Rust API reference: <a href={LINKS.docsRs}>docs.rs/cadkit</a>.</li>
+				</ul>
+			</div>
+			<CodeTabs snippets={SAME_TASK} />
+		</div>
+	</section>
+
+	<DimensionDivider label="03 · Modules" />
+	<section class="ck-section ck-container" aria-labelledby="modules">
+		<h2 id="modules">Modules you can adopt independently</h2>
+		<p class="ck-lead">
+			The facade and format crates do not depend on the scene or GPU crates. Pick geometry and rendering
+			separately; the host application supplies its UI, editing tools and domain rules.
+		</p>
+		<ModuleGrid />
+	</section>
+
+	<DimensionDivider label="04 · Provenance" />
+	<section class="ck-section ck-container" aria-labelledby="provenance">
+		<div class="ck-split ck-split--even">
+			<div>
+				<h2 id="provenance">Clean-room, with a ledger of sources</h2>
+				<p class="ck-lead">
+					cadkit is built only from allowed references. Every source of format knowledge is recorded in{' '}
+					<a href={LINKS.provenanceSource}>PROVENANCE.md</a>.
+				</p>
+			</div>
+			<div class="ck-columns">
+				<div>
+					<h3>Allowed references</h3>
+					<ul class="ck-grips">
+						<li>The public Open Design Specification for DWG</li>
+						<li>MIT-licensed projects: ACadSharp, ezdgn and the DGN driver of GDAL</li>
+						<li>Public sample files and our own analysis of them</li>
+					</ul>
+					<p class="ck-small">
+						Code or headers from copyleft-licensed CAD projects and from vendor SDKs are never read or
+						ported.
+					</p>
+				</div>
+				<div>
+					<h3>Untrusted input</h3>
+					<ul class="ck-grips">
+						<li>No panics on any input</li>
+						<li>Every size and count checked against configurable limits before allocation</li>
+						<li>Recoverable problems become warnings on the document</li>
+						<li>Every reader has a fuzz target that runs in CI</li>
+					</ul>
+				</div>
+			</div>
+		</div>
+	</section>
+
+	<DimensionDivider label="05 · Use cases" />
+	<section class="ck-section ck-container" aria-labelledby="built-for">
+		<h2 id="built-for">Built for</h2>
+		<ul class="ck-cases">
+			{
+				useCases.map((u) => (
+					<li>
+						<h3>{u.title}</h3>
+						<p>{u.body}</p>
+					</li>
+				))
+			}
+		</ul>
+	</section>
+
+	<DimensionDivider label="06 · Adopters" />
+	<section class="ck-section ck-container" aria-labelledby="used-by">
+		<h2 id="used-by">Used by</h2>
+		<ul class="ck-used-by">
+			{
+				USED_BY.map((u) => (
+					<li>
+						<a href={u.url}>{u.name}</a>, {u.description}, uses{' '}
+						{u.modules.map((m, i) => (
+							<>
+								{i > 0 && (i === u.modules.length - 1 ? ' and ' : ', ')}
+								<code>{m}</code>
+							</>
+						))}
+						.
+					</li>
+				))
+			}
+		</ul>
+		<p class="ck-small">
+			cadkit is vendor-neutral. Using it in your project? Say so in{' '}
+			<a href={LINKS.discussions}>GitHub Discussions</a>.
+		</p>
+	</section>
+
+	<section class="ck-final ck-container" aria-labelledby="start">
+		<div class="ck-final-inner">
+			<h2 id="start">Start with the docs</h2>
+			<p class="ck-lead">Install one package, open a drawing, export it. The rest of the API builds on that.</p>
+			<div class="ck-hero-cta">
+				<a class="ck-btn ck-btn--primary" href="/docs/">Read the docs</a>
+				<a class="ck-btn" href="/demo/">Try the demo</a>
+				<a class="ck-btn" href={REPO}>View the source</a>
+			</div>
+		</div>
+	</section>
+</PageLayout>
+
+<style>
+	.ck-hero {
+		display: grid;
+		gap: var(--ck-space-12);
+		padding-top: var(--ck-space-12);
+		padding-bottom: var(--ck-space-16);
+		align-items: center;
+	}
+	@media (min-width: 64rem) {
+		.ck-hero {
+			grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+			padding-top: var(--ck-space-16);
+			padding-bottom: var(--ck-space-24);
+		}
+	}
+	.ck-hero h1 {
+		margin: var(--ck-space-4) 0 0;
+		font-size: clamp(2.5rem, 1.5rem + 4.2vw, 4.25rem);
+		line-height: 1.02;
+		letter-spacing: -0.02em;
+	}
+	.ck-hero-sub {
+		margin: var(--ck-space-6) 0 0;
+		max-width: 34rem;
+		font-size: clamp(1.125rem, 1rem + 0.4vw, 1.3125rem);
+		line-height: 1.5;
+		color: var(--ck-muted);
+	}
+	.ck-hero-install {
+		margin-top: var(--ck-space-8);
+		max-width: 34rem;
+	}
+	.ck-hero-cta {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--ck-space-3);
+		margin-top: var(--ck-space-6);
+	}
+
+	.ck-section {
+		padding-top: var(--ck-space-8);
+		padding-bottom: var(--ck-space-16);
+	}
+	.ck-section h2,
+	.ck-final h2 {
+		margin: 0;
+		font-size: clamp(1.75rem, 1.4rem + 1.4vw, 2.5rem);
+		line-height: 1.12;
+	}
+	.ck-section h2 + .ck-lead {
+		margin: var(--ck-space-4) 0 var(--ck-space-8);
+	}
+	.ck-section h3 {
+		font-size: var(--sl-text-lg);
+	}
+	.ck-footnote,
+	.ck-small {
+		margin-top: var(--ck-space-4);
+		max-width: 48rem;
+		font-size: var(--sl-text-sm);
+		color: var(--ck-muted);
+	}
+
+	.ck-split {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		gap: var(--ck-space-8);
+	}
+	@media (min-width: 64rem) {
+		.ck-split {
+			grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+			gap: var(--ck-space-12);
+		}
+		.ck-split--even {
+			grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+		}
+	}
+	.ck-notes {
+		font-size: var(--sl-text-sm);
+		color: var(--ck-muted);
+	}
+
+	.ck-columns {
+		display: grid;
+		gap: var(--ck-space-8);
+	}
+	@media (min-width: 40rem) {
+		.ck-columns {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+		}
+	}
+	.ck-columns h3 {
+		margin: 0 0 var(--ck-space-3);
+	}
+	.ck-columns .ck-grips {
+		font-size: var(--sl-text-sm);
+	}
+
+	.ck-cases {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr));
+		gap: var(--ck-space-6);
+		list-style: none;
+		margin: var(--ck-space-8) 0 0;
+		padding: 0;
+	}
+	.ck-cases li {
+		padding-top: var(--ck-space-4);
+		border-top: 1px solid var(--ck-text);
+	}
+	.ck-cases h3 {
+		margin: 0;
+	}
+	.ck-cases p {
+		margin: var(--ck-space-2) 0 0;
+		font-size: var(--sl-text-sm);
+		color: var(--ck-muted);
+	}
+
+	.ck-used-by {
+		list-style: none;
+		margin: var(--ck-space-6) 0 0;
+		padding: var(--ck-space-4) var(--ck-space-6);
+		border: 1px solid var(--ck-border);
+		background: var(--ck-surface);
+		font-size: var(--sl-text-lg);
+	}
+
+	.ck-final {
+		padding-top: var(--ck-space-8);
+		padding-bottom: var(--ck-space-8);
+	}
+	.ck-final-inner {
+		padding: var(--ck-space-12) var(--ck-space-6);
+		border: 1px solid var(--ck-border);
+		background: var(--ck-surface);
+		text-align: center;
+	}
+	.ck-final-inner .ck-lead {
+		margin: var(--ck-space-4) auto 0;
+	}
+	.ck-final .ck-hero-cta {
+		justify-content: center;
+	}
+</style>

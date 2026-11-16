@@ -6,10 +6,26 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Project website at <https://cadkit.org> (source in `site/`, Astro + Starlight): guides for
+  Rust, Python, JavaScript, C and the CLI, the repository docs as reference pages, format
+  pages, an in-browser demo built on `cadkit-wasm` (files never leave the browser), public
+  project statistics collected daily by [cadkit-stats](https://github.com/TNYCL/cadkit-stats),
+  and community, security, privacy, trademark and brand pages.
+- `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1), `GOVERNANCE.md`, `SUPPORT.md` and
+  `TRADEMARKS.md`; issue template contact links. Role addresses: security@, conduct@,
+  hello@ and maintainers@cadkit.org.
+
 ### Changed
 
 - `cadkit-capi` is published to crates.io with a README; prebuilt C/C++ archives stay on
   GitHub Releases. 0.5.3 was published from the v0.5.3 sources.
+- Package metadata: homepage `https://cadkit.org` and authors
+  `cadkit maintainers <maintainers@cadkit.org>` for every crate, `pycadkit` and
+  `cadkit-wasm` (visible on the registries from the next release). `SECURITY.md` lists
+  security@cadkit.org next to GitHub private vulnerability reporting.
+- New logo: the "C" drawn as a selected CAD arc with grips.
 
 ## [0.5.3] - 2026-11-16
 

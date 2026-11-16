@@ -1,0 +1,39 @@
+---
+// The same task in each language. Built on Starlight's synced tabs: the chosen language is
+// stored in localStorage (key "starlight-synced-tabs__lang") and restored before paint on
+// every page, docs included (use <Tabs syncKey="lang"> with the same labels there).
+import { Tabs, TabItem, Code } from '@astrojs/starlight/components';
+import type { Snippet } from '../lib/types';
+
+interface Props {
+	snippets: Snippet[];
+	syncKey?: string;
+}
+const { snippets, syncKey = 'lang' } = Astro.props;
+---
+
+<div class="ck-code-tabs">
+	<Tabs syncKey={syncKey}>
+		{
+			snippets.map((s) => (
+				<TabItem label={s.label}>
+					<Code code={s.code.trimEnd()} lang={s.lang} title={s.title} />
+				</TabItem>
+			))
+		}
+	</Tabs>
+</div>
+
+<style>
+	.ck-code-tabs :global([role='tablist']) {
+		border-bottom: 1px solid var(--ck-border);
+	}
+	.ck-code-tabs :global([role='tab']) {
+		font-family: var(--__sl-font-mono);
+		font-size: var(--sl-text-xs);
+		letter-spacing: 0.02em;
+	}
+	.ck-code-tabs :global([role='tabpanel']) {
+		margin-top: var(--ck-space-3);
+	}
+</style>

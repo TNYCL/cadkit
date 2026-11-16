@@ -1,0 +1,49 @@
+---
+// Install commands per language; shares the "lang" sync key with <CodeTabs>.
+import { Tabs, TabItem, Code } from '@astrojs/starlight/components';
+import { LINKS } from '../config';
+---
+
+<div class="ck-install">
+	<Tabs syncKey="lang">
+		<TabItem label="Rust"><Code code="cargo add cadkit" lang="sh" frame="code" /></TabItem>
+		<TabItem label="Python"><Code code="pip install pycadkit" lang="sh" frame="code" /></TabItem>
+		<TabItem label="JavaScript"><Code code="npm install cadkit-wasm" lang="sh" frame="code" /></TabItem>
+		<TabItem label="C">
+			<p class="ck-install-c">
+				<span>Download <code>cadkit-capi-&lt;target&gt;</code> (headers, shared and static library)</span>
+				<a href={LINKS.releases}>GitHub Releases</a>
+			</p>
+		</TabItem>
+	</Tabs>
+</div>
+
+<style>
+	.ck-install :global([role='tablist']) {
+		border-bottom: 1px solid var(--ck-border);
+	}
+	.ck-install :global([role='tab']) {
+		font-family: var(--__sl-font-mono);
+		font-size: var(--sl-text-xs);
+	}
+	.ck-install :global([role='tabpanel']) {
+		margin-top: var(--ck-space-3);
+	}
+	.ck-install-c {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--ck-space-2) var(--ck-space-4);
+		min-height: 3.125rem;
+		margin: 0;
+		padding: var(--ck-space-2) var(--ck-space-4);
+		border: 1px solid var(--ck-border);
+		border-radius: var(--ck-radius);
+		background: var(--ck-raised);
+		font-size: var(--sl-text-sm);
+	}
+	.ck-install-c code {
+		font-size: 0.875em;
+	}
+</style>

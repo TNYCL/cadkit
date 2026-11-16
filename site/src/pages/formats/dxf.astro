@@ -1,0 +1,60 @@
+---
+import FormatPage from './_FormatPage.astro';
+import rust from '../../../scripts/check-snippets/docs/rust/read_dxf.rs?raw';
+import python from '../../../scripts/check-snippets/docs/python/read_dxf.py?raw';
+import js from '../../../scripts/check-snippets/docs/js/read-dxf.mjs?raw';
+import c from '../../../scripts/check-snippets/docs/c/read_dxf.c?raw';
+import cli from '../../../scripts/check-snippets/docs/cli/dxf-to-svg.sh?raw';
+import type { Snippet } from '../../lib/types';
+
+const read: Snippet[] = [
+	{ label: 'Rust', lang: 'rust', code: rust, title: 'src/main.rs' },
+	{ label: 'Python', lang: 'python', code: python, title: 'read_dxf.py' },
+	{ label: 'JavaScript', lang: 'js', code: js, title: 'read-dxf.mjs (Node)' },
+	{ label: 'C', lang: 'c', code: c, title: 'read_dxf.c' },
+];
+---
+
+<FormatPage
+	title="DXF reader and writer for Rust, Python and JavaScript"
+	description="Read ASCII and binary DXF from R12 to 2018 and write ASCII DXF in any of seven versions with cadkit, from Rust, Python, JavaScript (WebAssembly) and C."
+	name="DXF"
+	ids={['dxf']}
+	supported={[
+		'Reading ASCII and binary DXF, R12 to 2018, with code page detection and a fallback code page for files that declare none',
+		'Model space, layouts, layers, linetypes, text styles and blocks',
+		'Lines, points, circles, arcs, ellipses, splines, polylines and meshes, text and multiline text, attributes, block references, hatches, dimensions, leaders, faces, images and viewports',
+		'Writing ASCII DXF as R12, R2000, R2004, R2007, R2010, R2013 or R2018, also with legacy 8-bit output code pages such as <code>DOS857</code>',
+		'The same document from DWG, DGN or CityGML, written as DXF',
+	]}
+	unsupported={[
+		'Writing binary DXF',
+		'3D solids, regions, subdivision meshes, multileaders, multilines, tables, wipeouts, rays, construction lines and shapes: read as <code>unknown</code> entities with their group codes, not written back',
+		'Complex linetype elements, hatch gradients, group objects, dimension style variables and viewport frozen-layer lists',
+		'Code-page selection in <code>\\M+</code> double-byte character escapes is best effort',
+	]}
+	examples={[
+		{
+			id: 'read',
+			heading: 'Read DXF and write another version',
+			intro: 'Open a DXF file and write it as R2000. The writer creates the tables and handles each version needs; see the <a href="/docs/reference/formats/dxf/#writer">writer notes</a> for what each version keeps.',
+			snippets: read,
+		},
+		{
+			id: 'shell',
+			heading: 'DXF to SVG from the shell',
+			intro: 'More options, and the same task in every language, are in <a href="/docs/guides/dxf-to-svg/">Convert DXF to SVG</a>.',
+			shell: { code: cli },
+		},
+	]}
+	demo={[
+		{ href: '/demo/?sample=plan-dxf', label: 'Open the sample plan in the demo' },
+		{ href: '/docs/guides/dxf-to-svg/', label: 'Convert DXF to SVG' },
+	]}
+	reference={[
+		{ label: 'DXF notes: tokenizer, encodings, mapping, writer and known gaps', href: '/docs/reference/formats/dxf/' },
+		{ label: 'Convert DXF to SVG', href: '/docs/guides/dxf-to-svg/' },
+		{ label: 'Document JSON schema', href: '/docs/reference/document-schema/' },
+	]}
+	crates={['cadkit', 'cadkit-dxf']}
+/>

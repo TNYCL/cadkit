@@ -1,0 +1,83 @@
+---
+title: "Handling untrusted files"
+description: "How to read DWG, DGN, DXF and CityGML files from untrusted sources with cadkit: resource limits, error handling, bounded output and process isolation."
+---
+
+import { Code } from '@astrojs/starlight/components';
+import CodeTabs from '../../../../components/CodeTabs.astro';
+import rust from '../../../../../scripts/check-snippets/docs/rust/untrusted.rs?raw';
+import python from '../../../../../scripts/check-snippets/docs/python/untrusted.py?raw';
+import js from '../../../../../scripts/check-snippets/docs/js/untrusted.mjs?raw';
+import c from '../../../../../scripts/check-snippets/docs/c/untrusted.c?raw';
+import cli from '../../../../../scripts/check-snippets/docs/cli/untrusted.sh?raw';
+
+cadkit treats every input as hostile, because drawings routinely arrive from third parties.
+The readers are pure Rust and must not panic on any input. Every size, count and offset read
+from a file is checked against configurable limits before memory is allocated or a loop runs,
+recursion is bounded by a depth limit, and the XML reader resolves no external entities and
+makes no network requests. Readers are fuzzed in CI, and public samples are truncated and
+bit-flipped in tests.
+
+Parsing a format is still not a security boundary on its own. For a service that accepts
+uploads, combine three layers: lower limits, careful error handling and an isolated process.
+
+## 1. Lower the limits
+
+The default limits are generous, for trusted desktop use: 2 GiB input, 4 GiB decompressed,
+20 million objects, depth 64. `Limits::strict()` in Rust is meant for untrusted multi-tenant
+input: 64 MiB input, 256 MiB decompressed, 500,000 objects, depth 32, 4 MiB per string and
+1 million vertices per entity. The other interfaces take a subset of them as options; the table below lists which.
+
+<CodeTabs
+	snippets={[
+		{ label: 'Rust', lang: 'rust', code: rust, title: 'src/main.rs' },
+		{ label: 'Python', lang: 'python', code: python, title: 'untrusted.py' },
+		{ label: 'JavaScript', lang: 'js', code: js, title: 'untrusted.mjs (Node)' },
+		{ label: 'C', lang: 'c', code: c, title: 'untrusted.c' },
+	]}
+/>
+
+<Code code={cli} lang="sh" title="shell" />
+
+| Interface | Limits available |
+|---|---|
+| Rust | every field of `Limits`, including string bytes, vertices per entity and total vertices |
+| C | `cadkit_options`: input, decompressed, objects, depth, string bytes, vertices |
+| Python | `max_input_bytes`, `max_decompressed_bytes`, `max_objects`, `max_depth` |
+| JavaScript | `maxInputBytes`, `maxDecompressedBytes`, `maxObjects`, `maxDepth`; defaults are already lower (512 MiB, 1 GiB, 5 million, 64) |
+| CLI | `--max-input-bytes`, `--max-decompressed-bytes`, `--max-objects` |
+
+## 2. Handle errors and warnings
+
+A file over a limit fails with a typed error (`Error::LimitExceeded`, `LimitExceededError`,
+`kind: "limit_exceeded"`, `CADKIT_LIMIT_EXCEEDED`, exit code 1). Other failures are
+`UnknownFormat` (not a drawing), `Unsupported` (valid input using a feature cadkit does not
+handle), and `Truncated` or `Invalid` (damaged data). Readers fail only when no useful
+document can be built; recoverable damage becomes a warning on the document, which you can
+show to the user. In the C API, an internal panic is caught at the boundary and returned as
+`CADKIT_PANIC`; please report it.
+
+Bound what you produce, too. The bounded SVG export (`cadkit::to_svg_bounded`,
+`toSvgBounded`) counts every byte of the SVG it builds and fails with a limit error rather
+than returning a truncated drawing. In a browser, `pickEntityBounded` caps the metadata it
+returns. Neither bounds the memory of the already parsed document: that is what the read
+limits are for.
+
+## 3. Isolate the process
+
+Run conversions of untrusted files in a separate process with an operating-system memory
+limit and a time limit, such as a worker process under a container, cgroup or job-object limit
+that you can kill and restart. Large inputs within the configured limits can still take time
+and memory; the security policy treats that as out of scope. In the browser, the equivalent is
+a Web Worker that you terminate on `limit_exceeded` or a WebAssembly trap; see
+[Build a browser viewer](/docs/guides/browser-viewer/).
+
+Also out of scope for cadkit: software that consumes its output. If you render generated SVG,
+sanitise or isolate it like any other untrusted markup, for example with a Content Security
+Policy or by showing it as an image.
+
+## Reporting a vulnerability
+
+Report privately, through GitHub private vulnerability reporting or the address on the
+[security page](/security/). Do not attach drawings that contain confidential data; a reduced
+or synthetic file is preferred.

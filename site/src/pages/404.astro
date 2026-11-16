@@ -1,0 +1,73 @@
+---
+// "Unknown entity": the site degrades the way cadkit's readers do.
+import PageLayout from '../layouts/PageLayout.astro';
+import { LINKS } from '../config';
+---
+
+<PageLayout
+	title="Unknown entity"
+	description="This page does not exist. The rest of the site is intact."
+	header={false}
+	noindex
+	pagefind={false}
+	noAnalytics
+>
+	<section class="ck-404 ck-container" aria-labelledby="ck-404-title">
+		<p class="ck-eyebrow">404 · not found</p>
+		<h1 id="ck-404-title">Unknown entity</h1>
+		<p class="ck-lead">
+			When a cadkit reader meets a record it cannot model, it keeps the record as an{' '}
+			<code>Unknown</code> entity, adds a warning and reads on. This page is that record: the address
+			did not resolve, and the rest of the site is intact.
+		</p>
+		<pre class="ck-warning"><code><span class="k">warning</span>  site.unknown_entity
+<span class="k">path</span>     <span data-ck-path>(this address)</span>
+<span class="k">status</span>   404</code></pre>
+		<div class="ck-actions">
+			<a class="ck-btn ck-btn--primary" href="/">Go to the home page</a>
+			<a class="ck-btn" href="/docs/">Read the docs</a>
+			<a class="ck-btn" href={LINKS.issues}>Report a broken link</a>
+		</div>
+	</section>
+</PageLayout>
+
+<script>
+	const target = document.querySelector('[data-ck-path]');
+	if (target) target.textContent = location.pathname;
+</script>
+
+<style>
+	.ck-404 {
+		padding-top: var(--ck-space-16);
+		padding-bottom: var(--ck-space-16);
+	}
+	h1 {
+		margin: var(--ck-space-4) 0 0;
+		font-size: clamp(2.5rem, 1.6rem + 3.6vw, 4rem);
+		line-height: 1.05;
+	}
+	.ck-lead {
+		margin: var(--ck-space-6) 0 0;
+	}
+	.ck-warning {
+		margin: var(--ck-space-8) 0 0;
+		max-width: 40rem;
+		padding: var(--ck-space-4);
+		border: 1px solid var(--ck-border);
+		border-left: 3px solid var(--ck-partial);
+		background: var(--ck-raised);
+		font-size: var(--sl-text-sm);
+		line-height: 1.7;
+		overflow-x: auto;
+		white-space: pre;
+	}
+	.ck-warning .k {
+		color: var(--ck-muted);
+	}
+	.ck-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--ck-space-3);
+		margin-top: var(--ck-space-8);
+	}
+</style>

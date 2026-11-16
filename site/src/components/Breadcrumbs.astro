@@ -1,0 +1,55 @@
+---
+import type { Crumb } from '../lib/page-meta';
+
+interface Props {
+	items: Crumb[];
+}
+const { items } = Astro.props;
+const trail: Crumb[] = [{ label: 'Home', href: '/' }, ...items];
+---
+
+<nav class="ck-breadcrumbs" aria-label="Breadcrumb">
+	<ol>
+		{
+			trail.map((c, i) =>
+				i === trail.length - 1 || !c.href ? (
+					<li aria-current="page">{c.label}</li>
+				) : (
+					<li>
+						<a href={c.href}>{c.label}</a>
+					</li>
+				)
+			)
+		}
+	</ol>
+</nav>
+
+<style>
+	.ck-breadcrumbs ol {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--ck-space-2);
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		font-family: var(--__sl-font-mono);
+		font-size: var(--sl-text-xs);
+		color: var(--ck-muted);
+	}
+	li + li::before {
+		content: '/';
+		margin-inline-end: var(--ck-space-2);
+		color: var(--ck-border);
+	}
+	a {
+		color: var(--ck-muted);
+		text-decoration: none;
+	}
+	a:hover {
+		color: var(--ck-accent);
+		text-decoration: underline;
+	}
+	[aria-current='page'] {
+		color: var(--ck-text);
+	}
+</style>

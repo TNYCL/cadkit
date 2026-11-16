@@ -1,0 +1,142 @@
+---
+import PageLayout from '../../layouts/PageLayout.astro';
+import Prose from '../../components/Prose.astro';
+import Callout from '../../components/Callout.astro';
+import { LINKS, EMAIL, CADKIT_VERSION, repoFile } from '../../config';
+
+const title = 'Security';
+const description =
+	'cadkit treats every drawing as hostile input. How the readers are hardened, how to report a vulnerability privately, and which versions receive fixes.';
+---
+
+<PageLayout title={title} description={description} breadcrumbs={[{ label: 'Security' }]} eyebrow="Security policy">
+	<div class="ck-container ck-security">
+		<aside class="ck-report" aria-labelledby="report">
+			<h2 id="report">Report a vulnerability</h2>
+			<p>Report privately. Do not open a public issue.</p>
+			<ul class="ck-grips">
+				<li>
+					<a href={LINKS.securityAdvisory}>GitHub private vulnerability reporting</a> (preferred): the repository's
+					Security tab, “Report a vulnerability”.
+				</li>
+				<li>E-mail <a href={`mailto:${EMAIL.security}`}>{EMAIL.security}</a>.</li>
+			</ul>
+			<p class="ck-small">
+				Machine-readable contact: <a href="/.well-known/security.txt">/.well-known/security.txt</a> (RFC 9116).
+			</p>
+		</aside>
+
+		<Prose>
+			<h2 id="stance">Every input is untrusted</h2>
+			<p>
+				cadkit parses binary and XML formats (DWG, DGN V7 and V8, DXF and CityGML 2.0) that routinely arrive from
+				third parties, so every file is treated as hostile:
+			</p>
+			<ul>
+				<li>
+					Library code must not panic on any input. The workspace lints deny <code>unwrap</code>,{' '}
+					<code>expect</code>, <code>panic!</code> and unchecked slice indexing.
+				</li>
+				<li>
+					Every size, count and offset read from a file is checked against <code>ReadOptions::limits</code> (input
+					size, decompressed size, object count, nesting depth, string length, vertex count) before memory is
+					allocated or a loop runs. Recursion is bounded, and XML parsing disables external entities and network
+					resolution.
+				</li>
+				<li>
+					Readers fail only when no useful document can be built; recoverable damage becomes a warning on the
+					document.
+				</li>
+				<li>
+					The readers are pure Rust. <code>unsafe</code> appears only in the binding crates (Python, WebAssembly,
+					C), each block with a written safety argument. The C API catches panics at the boundary and null-checks
+					every pointer.
+				</li>
+				<li>Readers are fuzzed in CI, and public samples are truncated and bit-flipped in tests.</li>
+			</ul>
+
+			<h2 id="hardening">Processing files you did not create</h2>
+			<p>
+				The default limits are generous. For untrusted files, lower them through <code>ReadOptions</code> (Rust) or{' '}
+				<code>cadkit_options</code> (C). The Python, WebAssembly and CLI interfaces are gaining limit options and may
+				not expose all of them yet; check their documentation. In every case, run conversions of untrusted files in a
+				sandboxed process with memory and time limits: parsing a format is not a security boundary by itself.
+			</p>
+
+			<h2 id="what-to-send">What to include in a report</h2>
+			<ul>
+				<li>The affected version or commit.</li>
+				<li>A minimal input file, or the code that generates it.</li>
+				<li>What you observed: panic message, memory growth, hang or crash.</li>
+			</ul>
+			<Callout variant="caution">
+				<p>
+					Do not send drawings that contain confidential data. A reduced or synthetic file that triggers the same
+					behaviour is preferred.
+				</p>
+			</Callout>
+			<p>
+				You can expect an acknowledgement within a few days and a fix or mitigation plan after triage. Reporters are
+				credited in the changelog unless they prefer to stay anonymous.
+			</p>
+
+			<h2 id="supported-versions">Supported versions</h2>
+			<p>
+				While cadkit is before 1.0, only the latest release (currently <code>{CADKIT_VERSION}</code>) and the{' '}
+				<code>main</code> branch receive fixes. Upgrade to the latest release before reporting if you can.
+			</p>
+
+			<h2 id="out-of-scope">Out of scope</h2>
+			<ul>
+				<li>
+					Vulnerabilities in other software that consumes cadkit output, for example a viewer that renders generated
+					SVG without sanitising text.
+				</li>
+				<li>Denial of service by inputs that are large but within the configured limits.</li>
+			</ul>
+			<p>
+				The policy is maintained in <a href={repoFile('SECURITY.md')}>SECURITY.md</a>; this page summarises it.
+			</p>
+		</Prose>
+	</div>
+</PageLayout>
+
+<style>
+	.ck-security {
+		display: grid;
+		gap: var(--ck-space-8);
+		align-items: start;
+	}
+	@media (min-width: 64rem) {
+		.ck-security {
+			grid-template-columns: minmax(0, 45rem) minmax(0, 22rem);
+		}
+		.ck-report {
+			grid-column: 2;
+			grid-row: 1;
+		}
+	}
+	.ck-report {
+		position: relative;
+		padding: var(--ck-space-6);
+		border: 1px solid var(--ck-border);
+		border-top: 2px solid var(--ck-accent);
+		background: var(--ck-surface);
+	}
+	.ck-report h2 {
+		margin: 0;
+		font-size: var(--sl-text-xl);
+	}
+	.ck-report p {
+		margin: var(--ck-space-2) 0 var(--ck-space-4);
+		font-size: var(--sl-text-sm);
+		color: var(--ck-muted);
+	}
+	.ck-report .ck-grips {
+		font-size: var(--sl-text-sm);
+	}
+	.ck-report .ck-small {
+		margin: var(--ck-space-4) 0 0;
+		font-size: var(--sl-text-xs);
+	}
+</style>

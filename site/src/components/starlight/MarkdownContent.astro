@@ -1,0 +1,5 @@
+---
+import Default from '@astrojs/starlight/components/MarkdownContent.astro';
+---
+
+{Astro.locals.cadkitPage ? <slot /> : <Default><slot /></Default>}

@@ -4,3 +4,6 @@
 *.png binary
 *.pdf binary
 *.wasm binary
+# Website samples are committed byte-for-byte as cadkit writes them (DXF uses CRLF);
+# site/test checks that the generators still reproduce them exactly.
+site/public/samples/** -text

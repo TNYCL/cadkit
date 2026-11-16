@@ -1,0 +1,66 @@
+---
+title: "Getting started in C and C++"
+description: "Link the prebuilt cadkit C library from GitHub Releases, read DWG, DGN and DXF files in C or C++, export SVG, and build with gcc or CMake."
+---
+
+import { Code } from '@astrojs/starlight/components';
+import c from '../../../../../scripts/check-snippets/docs/c/quickstart.c?raw';
+import cpp from '../../../../../scripts/check-snippets/docs/c/quickstart.cpp?raw';
+import cmake from '../../../../../scripts/check-snippets/docs/c/CMakeLists.txt?raw';
+import build from '../../../../../scripts/check-snippets/docs/c/build.sh?raw';
+import cmakeSh from '../../../../../scripts/check-snippets/docs/c/cmake.sh?raw';
+
+`cadkit-capi` exposes cadkit through a small C ABI (`cadkit.h`) and a header-only C++17
+wrapper (`cadkit.hpp`). The header is the contract: functions are only added in minor
+versions, and existing signatures, enum values and struct layouts change only with a major
+version.
+
+## Get the library
+
+Each [GitHub release](https://github.com/TNYCL/cadkit/releases/latest) has a
+`cadkit-capi-<target>` archive for `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`
+(both built against glibc 2.28), `aarch64-apple-darwin`, `x86_64-apple-darwin` and
+`x86_64-pc-windows-msvc`. It contains `include/` (`cadkit.h`, `cadkit.hpp`), `lib/` with the
+shared and the static library, the license files and the API reference. Checksums are listed in
+`SHA256SUMS` on the release.
+
+## Read a drawing and export SVG
+
+<Code code={c} lang="c" title="quickstart.c" />
+
+<Code code={build} lang="sh" title="shell, with the archive unpacked as cadkit-capi/" />
+
+Prefer the shared library: the static one also needs the platform libraries Rust's standard
+library uses. With MSVC, link `cadkit_capi.dll.lib` and ship `cadkit_capi.dll` next to the
+executable.
+
+The conventions in brief: every fallible function returns a `cadkit_status` and writes its
+result through an out-pointer; `cadkit_last_error_message()` explains the last failure on the
+calling thread; strings are UTF-8. Release documents with `cadkit_document_free`, strings with
+`cadkit_string_free` and byte buffers with `cadkit_bytes_free`. No Rust panic crosses the
+boundary. The full rules are in the [C and C++ API reference](/docs/reference/c-api/).
+
+## C++
+
+<Code code={cpp} lang="cpp" title="quickstart.cpp" />
+
+`cadkit::Document` is move-only and frees its handle in the destructor; failures throw
+`cadkit::Error`, which derives from `std::runtime_error`.
+
+## CMake
+
+With a prebuilt archive, point `CADKIT_DIR` at the unpacked folder:
+
+<Code code={cmake} lang="cmake" title="CMakeLists.txt" />
+
+<Code code={cmakeSh} lang="sh" title="shell" />
+
+Building from a checkout instead, `cargo build -p cadkit-capi --release` produces the
+libraries in `target/release/`, and `cmake --install` of `crates/cadkit-capi` installs a CMake
+package (`find_package(cadkit CONFIG REQUIRED)`, target `cadkit::cadkit`) and a pkg-config file.
+See [Install for CMake and pkg-config consumers](/docs/reference/c-api/#install-for-cmake-and-pkg-config-consumers).
+
+## Next steps
+
+- [Convert DXF to SVG](/docs/guides/dxf-to-svg/), [inspect a drawing](/docs/guides/inspect-drawing/) and [handle untrusted files](/docs/guides/untrusted-files/)
+- The complete [C and C++ API reference](/docs/reference/c-api/)

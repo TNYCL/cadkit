@@ -1,0 +1,779 @@
+/* /demo/ viewer. Global (the viewer builds its panels with JavaScript), every rule scoped under
+   .ck-viewer or .ck-demo-notes. Colours come from the site tokens; the drawing sheet has its own two
+   fixed backgrounds that match the colours the SVG is rendered for. */
+
+.ck-demo {
+	margin-top: calc(-1 * var(--ck-space-2));
+}
+
+.ck-viewer {
+	--ck-sheet-bg: #ffffff;
+	--ck-sheet-ink: #1747b8;
+	--ck-sheet-grid: #ecebe4;
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	border: 1px solid var(--ck-border);
+	background: var(--ck-surface);
+}
+.ck-viewer[data-sheet='dark'] {
+	--ck-sheet-bg: #0b1324;
+	--ck-sheet-ink: #5ce1e6;
+	--ck-sheet-grid: #132038;
+}
+
+.ck-viewer .ck-mono {
+	font-family: var(--__sl-font-mono);
+}
+.ck-viewer .ck-muted {
+	color: var(--ck-muted);
+}
+
+/* ---- File bar ---- */
+.ck-vbar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--ck-space-2) var(--ck-space-3);
+	padding: var(--ck-space-3);
+	border-bottom: 1px solid var(--ck-border);
+}
+.ck-vbar select,
+.ck-viewer .ck-model select {
+	min-height: 2.75rem;
+	padding: 0 2rem 0 var(--ck-space-3);
+	border: 1px solid var(--ck-border);
+	border-radius: var(--ck-radius);
+	background: var(--ck-bg)
+		url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5 6 7.5 9 4.5' fill='none' stroke='%23808a99' stroke-width='1.5'/%3E%3C/svg%3E")
+		no-repeat right 0.625rem center / 0.75rem;
+	color: var(--ck-text);
+	font: inherit;
+	font-size: var(--sl-text-sm);
+	appearance: none;
+}
+.ck-vbar-file {
+	display: flex;
+	align-items: baseline;
+	gap: var(--ck-space-2);
+	min-width: 0;
+	margin: 0;
+	flex: 1 1 12rem;
+	font-size: var(--sl-text-sm);
+}
+.ck-vbar-file .ck-fname {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-weight: 600;
+}
+.ck-vbar-file .ck-fmt {
+	flex: none;
+	font-family: var(--__sl-font-mono);
+	font-size: var(--sl-text-xs);
+	color: var(--ck-muted);
+}
+.ck-vbar-privacy {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--ck-space-2);
+	font-family: var(--__sl-font-mono);
+	font-size: var(--sl-text-2xs);
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--ck-ok);
+}
+.ck-vbar-privacy svg {
+	width: 0.875rem;
+	height: 0.875rem;
+}
+
+/* ---- Main area ---- */
+.ck-vmain {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) 22rem;
+	height: clamp(30rem, calc(100svh - 13rem), 54rem);
+}
+
+.ck-stage-wrap {
+	position: relative;
+	min-width: 0;
+	overflow: hidden;
+	background: var(--ck-sheet-bg);
+}
+.ck-stage {
+	position: absolute;
+	inset: 0;
+	cursor: crosshair;
+	touch-action: auto;
+	user-select: none;
+	-webkit-user-select: none;
+}
+.ck-viewer[data-drag] .ck-stage {
+	cursor: grabbing;
+}
+.ck-viewer[data-touch='active'] .ck-stage {
+	touch-action: none;
+}
+.ck-stage:focus-visible {
+	outline: 2px solid var(--ck-sheet-ink);
+	outline-offset: -2px;
+	border-radius: 0;
+}
+.ck-canvas,
+.ck-canvas > svg {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	display: block;
+}
+.ck-canvas-note {
+	position: absolute;
+	inset: auto var(--ck-space-4) 50% var(--ck-space-4);
+	max-width: 30rem;
+	margin: 0 auto;
+	text-align: center;
+	color: var(--ck-muted);
+	font-size: var(--sl-text-sm);
+}
+.ck-viewer[data-sheet='dark'] .ck-canvas-note {
+	color: #9aa8bf;
+}
+.ck-viewer[data-sheet='light'] .ck-canvas-note {
+	color: #5a6170;
+}
+/* 3D top views (data-faces set by viewer.ts): stacked faces get translucent fills; their
+   outlines keep the layer colour. Text is never dimmed. */
+.ck-canvas > svg[data-faces='translucent'] :not(text, tspan)[fill]:not([fill='none']) {
+	fill-opacity: 0.12;
+}
+.ck-viewer[data-sheet='dark'] .ck-canvas > svg[data-faces='translucent'] :not(text, tspan)[fill]:not([fill='none']) {
+	fill-opacity: 0.1;
+}
+.ck-selrect {
+	fill: color-mix(in srgb, var(--ck-sheet-ink) 10%, transparent);
+	stroke: var(--ck-sheet-ink);
+	stroke-width: 1.5px;
+	stroke-dasharray: 4 3;
+	pointer-events: none;
+}
+
+/* Crosshair for keyboard picking. */
+.ck-crosshair {
+	position: absolute;
+	left: 50%;
+	top: 50%;
+	width: 21px;
+	height: 21px;
+	margin: -10px 0 0 -10px;
+	pointer-events: none;
+	opacity: 0;
+	background:
+		linear-gradient(var(--ck-sheet-ink), var(--ck-sheet-ink)) center / 1px 100% no-repeat,
+		linear-gradient(var(--ck-sheet-ink), var(--ck-sheet-ink)) center / 100% 1px no-repeat;
+}
+.ck-viewer[data-state='ready'] .ck-stage:focus-visible .ck-crosshair {
+	opacity: 1;
+}
+
+/* View tools and readout over the sheet. */
+.ck-stage-tools {
+	position: absolute;
+	top: var(--ck-space-3);
+	right: var(--ck-space-3);
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+	border: 1px solid var(--ck-border);
+	background: var(--ck-border);
+}
+.ck-viewer[data-state='empty'] .ck-stage-tools {
+	display: none;
+}
+.ck-ibtn {
+	display: grid;
+	place-items: center;
+	min-width: 2.75rem;
+	height: 2.75rem;
+	padding: 0 var(--ck-space-2);
+	border: 0;
+	border-radius: 0;
+	background: var(--ck-surface);
+	color: var(--ck-text);
+	font: inherit;
+	font-size: var(--sl-text-sm);
+	font-weight: 600;
+	cursor: pointer;
+}
+.ck-ibtn:hover:not(:disabled) {
+	background: var(--ck-raised);
+	color: var(--ck-accent);
+}
+.ck-ibtn:disabled {
+	color: var(--ck-muted);
+	cursor: default;
+}
+.ck-ibtn[aria-pressed='true'] {
+	color: var(--ck-accent);
+}
+.ck-ibtn[hidden] {
+	display: none;
+}
+.ck-ibtn svg {
+	width: 1rem;
+	height: 1rem;
+}
+.ck-ibtn:focus-visible {
+	outline-offset: -3px;
+}
+.ck-touch-done {
+	color: var(--ck-on-accent);
+	background: var(--ck-accent);
+}
+/* The touch gate exists only for touch screens; never show it to a mouse or trackpad. */
+@media not (any-pointer: coarse) {
+	.ck-touch-done,
+	.ck-touch {
+		display: none !important;
+	}
+}
+
+.ck-readout {
+	position: absolute;
+	left: var(--ck-space-3);
+	bottom: var(--ck-space-3);
+	margin: 0;
+	padding: var(--ck-space-1) var(--ck-space-2);
+	border: 1px solid var(--ck-border);
+	background: var(--ck-surface);
+	font-family: var(--__sl-font-mono);
+	font-size: var(--sl-text-xs);
+	font-variant-numeric: tabular-nums;
+	white-space: pre;
+	color: var(--ck-text);
+	pointer-events: none;
+}
+.ck-readout:empty,
+.ck-viewer[data-state='empty'] .ck-readout {
+	display: none;
+}
+
+/* Overlays. */
+.ck-overlay {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: var(--ck-space-4);
+}
+.ck-overlay[hidden] {
+	display: none;
+}
+.ck-viewer:not([data-state='empty']) .ck-empty {
+	display: none;
+}
+.ck-empty {
+	background-color: var(--ck-bg);
+	background-image:
+		linear-gradient(to right, var(--ck-grid-major) 1px, transparent 1px),
+		linear-gradient(to bottom, var(--ck-grid-major) 1px, transparent 1px),
+		linear-gradient(to right, var(--ck-grid-minor) 1px, transparent 1px),
+		linear-gradient(to bottom, var(--ck-grid-minor) 1px, transparent 1px);
+	background-size:
+		40px 40px,
+		40px 40px,
+		8px 8px,
+		8px 8px;
+	overflow: auto;
+}
+.ck-empty-inner {
+	max-width: 34rem;
+	padding: var(--ck-space-6);
+	border: 1px dashed color-mix(in srgb, var(--ck-muted) 70%, transparent);
+	background: var(--ck-surface);
+	text-align: center;
+}
+.ck-empty-mark {
+	width: 3rem;
+	height: 3rem;
+	color: var(--ck-accent);
+}
+.ck-empty-title {
+	margin: var(--ck-space-2) 0 0;
+	font-size: var(--sl-text-xl);
+	font-weight: 600;
+	font-stretch: var(--ck-heading-stretch);
+}
+.ck-empty-text {
+	margin: var(--ck-space-1) 0 var(--ck-space-4);
+	color: var(--ck-muted);
+	font-size: var(--sl-text-sm);
+}
+.ck-empty-samples {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: center;
+	gap: var(--ck-space-2);
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.ck-sample-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--ck-space-2);
+	min-height: 2.75rem;
+	padding: 0 var(--ck-space-3);
+	border: 1px solid var(--ck-border);
+	border-radius: var(--ck-radius);
+	background: var(--ck-bg);
+	color: var(--ck-text);
+	font: inherit;
+	font-size: var(--sl-text-sm);
+	cursor: pointer;
+}
+.ck-sample-btn:hover {
+	border-color: var(--ck-accent);
+	color: var(--ck-accent);
+}
+.ck-sample-fmt {
+	font-family: var(--__sl-font-mono);
+	font-size: var(--sl-text-2xs);
+	letter-spacing: 0.04em;
+	color: var(--ck-muted);
+}
+.ck-drop {
+	margin: var(--ck-space-2);
+	border: 2px dashed var(--ck-accent);
+	background: color-mix(in srgb, var(--ck-bg) 86%, transparent);
+	font-weight: 600;
+	color: var(--ck-text);
+	pointer-events: none;
+}
+.ck-busy {
+	background: color-mix(in srgb, var(--ck-bg) 72%, transparent);
+}
+.ck-busy-card {
+	display: grid;
+	justify-items: center;
+	gap: var(--ck-space-2);
+	min-width: 16rem;
+	padding: var(--ck-space-4) var(--ck-space-6);
+	border: 1px solid var(--ck-border);
+	background: var(--ck-surface);
+}
+.ck-busy-phase {
+	margin: 0;
+	font-weight: 600;
+}
+.ck-busy-time {
+	margin: 0;
+	min-height: 1.25rem;
+	font-size: var(--sl-text-xs);
+	color: var(--ck-muted);
+	font-variant-numeric: tabular-nums;
+}
+.ck-busy-bar {
+	position: relative;
+	width: 100%;
+	height: 2px;
+	overflow: hidden;
+	background: var(--ck-border);
+}
+.ck-busy-bar span {
+	position: absolute;
+	inset: 0 auto 0 0;
+	width: 35%;
+	background: var(--ck-accent);
+}
+@media (prefers-reduced-motion: no-preference) {
+	.ck-busy-bar span {
+		animation: ck-busy 1.2s var(--ck-ease) infinite;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.ck-busy-bar span {
+		width: 100%;
+		opacity: 0.5;
+	}
+}
+@keyframes ck-busy {
+	from {
+		transform: translateX(-100%);
+	}
+	to {
+		transform: translateX(300%);
+	}
+}
+.ck-touch {
+	align-items: flex-end;
+	padding-bottom: var(--ck-space-12);
+	background: linear-gradient(to top, color-mix(in srgb, var(--ck-bg) 55%, transparent), transparent 60%);
+	pointer-events: none;
+}
+.ck-touch .ck-btn {
+	pointer-events: auto;
+}
+
+.ck-alert {
+	position: absolute;
+	top: var(--ck-space-3);
+	left: var(--ck-space-3);
+	right: calc(2.75rem + var(--ck-space-6));
+	max-width: 34rem;
+	padding: var(--ck-space-3) var(--ck-space-4);
+	border: 1px solid var(--ck-border);
+	border-left: 3px solid var(--ck-redline);
+	background: var(--ck-surface);
+	font-size: var(--sl-text-sm);
+	box-shadow: var(--sl-shadow-lg);
+}
+.ck-alert[hidden] {
+	display: none;
+}
+.ck-viewer[data-state='empty'] .ck-alert {
+	right: var(--ck-space-3);
+}
+.ck-alert p {
+	margin: 0 0 var(--ck-space-1);
+}
+.ck-alert-title {
+	font-weight: 600;
+}
+.ck-alert-detail {
+	color: var(--ck-muted);
+	overflow-wrap: anywhere;
+}
+.ck-alert-detail code {
+	font-size: var(--sl-text-xs);
+	color: var(--ck-text);
+}
+
+/* ---- Side panel ---- */
+.ck-panel {
+	min-width: 0;
+	overflow: auto;
+	border-left: 1px solid var(--ck-border);
+	background: var(--ck-surface);
+	font-size: var(--sl-text-sm);
+	overscroll-behavior: contain;
+}
+.ck-panel-handle {
+	display: none;
+}
+.ck-psec {
+	padding: var(--ck-space-4);
+}
+.ck-psec + .ck-psec {
+	border-top: 1px solid var(--ck-border);
+}
+.ck-psec h3 {
+	margin: 0 0 var(--ck-space-2);
+	font-family: var(--__sl-font-mono);
+	font-size: var(--sl-text-xs);
+	font-weight: 500;
+	font-stretch: 100%;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--ck-muted);
+}
+.ck-psec h3:focus {
+	outline: none;
+}
+.ck-psec-head {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: var(--ck-space-2);
+}
+.ck-psec-actions {
+	display: flex;
+	gap: var(--ck-space-3);
+}
+.ck-count {
+	font-family: var(--__sl-font-mono);
+	color: var(--ck-muted);
+	letter-spacing: 0;
+}
+.ck-hint {
+	margin: 0;
+	color: var(--ck-muted);
+}
+.ck-summary {
+	margin: 0 0 var(--ck-space-3);
+	color: var(--ck-text);
+	line-height: 1.55;
+}
+.ck-link-btn {
+	padding: 0;
+	min-height: 1.5rem;
+	border: 0;
+	background: none;
+	color: var(--ck-accent);
+	font: inherit;
+	font-size: var(--sl-text-xs);
+	text-decoration: underline;
+	text-underline-offset: 0.2em;
+	cursor: pointer;
+}
+.ck-link-btn:disabled {
+	color: var(--ck-muted);
+	text-decoration: none;
+	cursor: default;
+}
+.ck-dl {
+	display: grid;
+	gap: var(--ck-space-1);
+	margin: 0;
+}
+.ck-dl > div {
+	display: grid;
+	grid-template-columns: 6.5rem minmax(0, 1fr);
+	gap: var(--ck-space-2);
+}
+.ck-dl dt {
+	color: var(--ck-muted);
+}
+.ck-dl dd {
+	margin: 0;
+	overflow-wrap: anywhere;
+}
+.ck-dl code,
+.ck-kinds code,
+.ck-warn code {
+	font-size: 0.875em;
+	background: none;
+	padding: 0;
+	border: 0;
+}
+.ck-kinds {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0 var(--ck-space-3);
+}
+.ck-model {
+	display: grid;
+	gap: var(--ck-space-1);
+	margin-bottom: var(--ck-space-3);
+}
+.ck-model[hidden] {
+	display: none;
+}
+.ck-model label {
+	color: var(--ck-muted);
+}
+
+.ck-layers {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	max-height: 16rem;
+	overflow: auto;
+}
+.ck-layers li {
+	display: flex;
+	align-items: center;
+	gap: var(--ck-space-2);
+	min-height: 2rem;
+}
+.ck-layers input {
+	width: 1rem;
+	height: 1rem;
+	margin: 0;
+	accent-color: var(--ck-accent);
+}
+.ck-layers label {
+	display: flex;
+	align-items: center;
+	gap: var(--ck-space-2);
+	min-width: 0;
+	flex: 1;
+	cursor: pointer;
+}
+.ck-layers input:disabled + label {
+	color: var(--ck-muted);
+	cursor: default;
+}
+.ck-swatch {
+	flex: none;
+	width: 0.75rem;
+	height: 0.75rem;
+	border: 1px solid var(--ck-border);
+	/* The swatch is data (the layer colour): keep it in forced-colours mode. */
+	forced-color-adjust: none;
+}
+.ck-swatch--none {
+	background: repeating-linear-gradient(45deg, transparent 0 2px, var(--ck-border) 2px 3px);
+}
+.ck-lname {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-family: var(--__sl-font-mono);
+	font-size: var(--sl-text-xs);
+}
+.ck-lnote {
+	margin-left: auto;
+	flex: none;
+	font-size: var(--sl-text-2xs);
+	color: var(--ck-muted);
+}
+
+.ck-warn {
+	border-top: 1px solid var(--ck-border);
+	padding: var(--ck-space-2) 0;
+}
+.ck-warn:first-child {
+	margin-top: var(--ck-space-2);
+}
+.ck-warn summary {
+	display: flex;
+	gap: var(--ck-space-2);
+	align-items: baseline;
+	cursor: pointer;
+	overflow-wrap: anywhere;
+}
+.ck-warn summary .ck-count {
+	margin-left: auto;
+	flex: none;
+}
+.ck-warn ul {
+	margin: var(--ck-space-2) 0 0;
+	padding-left: var(--ck-space-4);
+	color: var(--ck-muted);
+	font-size: var(--sl-text-xs);
+}
+
+.ck-exports {
+	display: grid;
+	gap: var(--ck-space-3);
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.ck-exports li {
+	display: grid;
+	grid-template-columns: 4.5rem minmax(0, 1fr);
+	align-items: center;
+	gap: var(--ck-space-3);
+	color: var(--ck-muted);
+	font-size: var(--sl-text-xs);
+}
+.ck-exports .ck-btn {
+	justify-content: center;
+	min-height: 2.5rem;
+	padding: 0;
+}
+.ck-exports .ck-btn:disabled {
+	border-color: var(--ck-border);
+	color: var(--ck-muted);
+	background: none;
+	cursor: default;
+}
+
+/* ---- Status bar ---- */
+.ck-vstatus {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: space-between;
+	gap: var(--ck-space-1) var(--ck-space-4);
+	padding: var(--ck-space-2) var(--ck-space-3);
+	border-top: 1px solid var(--ck-border);
+	font-size: var(--sl-text-xs);
+	color: var(--ck-muted);
+}
+.ck-vstatus p {
+	margin: 0;
+	min-height: 1.25rem;
+}
+.ck-engine {
+	font-size: var(--sl-text-2xs);
+	letter-spacing: 0.02em;
+}
+
+.ck-noscript {
+	padding: var(--ck-space-4);
+	border: 1px solid var(--ck-border);
+}
+
+/* ---- Notes under the viewer ---- */
+.ck-demo-notes {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: var(--ck-space-8);
+	padding-top: var(--ck-space-12);
+	font-size: var(--sl-text-sm);
+}
+.ck-demo-notes h2 {
+	margin: 0 0 var(--ck-space-3);
+	font-size: var(--sl-text-lg);
+}
+.ck-demo-notes .ck-small {
+	margin-top: var(--ck-space-4);
+	color: var(--ck-muted);
+}
+.ck-keys {
+	display: grid;
+	gap: var(--ck-space-2);
+	margin: 0;
+}
+.ck-keys > div {
+	display: grid;
+	grid-template-columns: 8.5rem 1fr;
+	gap: var(--ck-space-3);
+	align-items: baseline;
+}
+.ck-keys dd {
+	margin: 0;
+	color: var(--ck-muted);
+}
+.ck-keys kbd {
+	display: inline-block;
+	min-width: 1.5rem;
+	padding: 0 0.3rem;
+	border: 1px solid var(--ck-border);
+	border-bottom-width: 2px;
+	border-radius: var(--ck-radius);
+	background: var(--ck-surface);
+	font-size: var(--sl-text-xs);
+	text-align: center;
+}
+
+/* ---- Narrow screens: stacked; the details panel becomes a sheet under the drawing ---- */
+@media (max-width: 56rem) {
+	.ck-vmain {
+		grid-template-columns: minmax(0, 1fr);
+		height: auto;
+	}
+	.ck-stage-wrap {
+		height: min(68svh, 34rem);
+		min-height: 20rem;
+	}
+	.ck-panel {
+		position: relative;
+		border-left: 0;
+		border-top: 1px solid var(--ck-border);
+		box-shadow: 0 -6px 16px color-mix(in srgb, #000 10%, transparent);
+	}
+	.ck-panel-handle {
+		display: block;
+		width: 2.5rem;
+		height: 4px;
+		margin: var(--ck-space-2) auto 0;
+		border-radius: 2px;
+		background: var(--ck-border);
+	}
+	.ck-layers {
+		max-height: none;
+	}
+	.ck-vbar-privacy {
+		order: 5;
+		flex-basis: 100%;
+	}
+	.ck-demo-notes {
+		grid-template-columns: minmax(0, 1fr);
+		gap: var(--ck-space-6);
+	}
+}

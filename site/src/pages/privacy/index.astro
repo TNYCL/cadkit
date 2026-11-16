@@ -1,0 +1,74 @@
+---
+import PageLayout from '../../layouts/PageLayout.astro';
+import Prose from '../../components/Prose.astro';
+import { EMAIL, STATS_REPO, REPO } from '../../config';
+
+const title = 'Privacy';
+const description =
+	'What cadkit.org collects: no cookies, cookieless page counts on content pages when enabled, nothing from the demo, and your drawings never leave your browser.';
+---
+
+<PageLayout title={title} description={description} breadcrumbs={[{ label: 'Privacy' }]} eyebrow="Legal">
+	<div class="ck-container">
+		<Prose>
+			<p>
+				cadkit.org is a static website for an open-source project. It has no accounts, no forms, no advertising and
+				no cookies. This page lists everything that does happen when you visit.
+			</p>
+
+			<h2 id="cookies">No cookies</h2>
+			<p>
+				The site sets no cookies. Two preferences are kept in your browser's local storage and never sent anywhere:
+				the colour theme you pick (light or dark) and the programming language you last chose in code examples.
+				In the documentation, the sidebar also keeps its open sections and scroll position in session storage, which
+				lasts only as long as the browser tab. Clearing site data in your browser removes all of it.
+			</p>
+
+			<h2 id="analytics">Page view counts</h2>
+			<p>
+				When enabled, content pages load Cloudflare Web Analytics, a cookieless page-view counter. It reports
+				aggregate figures such as page views, referring sites, countries, browsers, device types and page load
+				times; Cloudflare states that it uses no cookies, no local storage and no fingerprinting. It is not loaded
+				on the demo pages or on the “page not found” page, and the site uses no other analytics or tracking.
+			</p>
+
+			<h2 id="demo">The demo</h2>
+			<p>
+				The <a href="/demo/">demo</a> opens drawings in your browser with cadkit compiled to WebAssembly. Files you
+				open are read and rendered locally and are never uploaded. The demo pages load no analytics, and their
+				content security policy only allows connections back to cadkit.org itself, to fetch the viewer and the
+				sample files.
+			</p>
+
+			<h2 id="hosting">Hosting</h2>
+			<p>
+				The site is served by Cloudflare Pages. Like any web host, Cloudflare processes request data (such as IP
+				address, requested URL and user agent) to deliver pages and protect the service, and may keep standard
+				request logs under its own privacy policy.
+			</p>
+			<p>
+				Fonts, scripts and images are served from cadkit.org; pages make no requests to other sites except the
+				optional analytics script above. Links to GitHub, crates.io, PyPI, npm and docs.rs take you to those
+				services, whose own policies apply.
+			</p>
+
+			<h2 id="stats">Project statistics</h2>
+			<p>
+				The <a href="/stats/">statistics page</a> shows only aggregate public counts published by crates.io, PyPI,
+				npm and GitHub, collected by the open <a href={STATS_REPO}>cadkit-stats</a> repository. It contains no data
+				about individual people, and it is built ahead of time, so viewing it contacts no other service.
+			</p>
+
+			<h2 id="libraries">The cadkit libraries</h2>
+			<p>
+				cadkit itself, the libraries, bindings and command-line tool, contains no telemetry and no network code. It
+				never reports anything about you or your drawings. The source is public: <a href={REPO}>{REPO.replace('https://', '')}</a>.
+			</p>
+
+			<h2 id="contact">Contact</h2>
+			<p>
+				Questions about this page: <a href={`mailto:${EMAIL.hello}`}>{EMAIL.hello}</a>.
+			</p>
+		</Prose>
+	</div>
+</PageLayout>

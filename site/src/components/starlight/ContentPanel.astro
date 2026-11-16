@@ -1,0 +1,6 @@
+---
+// Hand-written pages control their own widths; docs keep Starlight's content panel.
+import Default from '@astrojs/starlight/components/ContentPanel.astro';
+---
+
+{Astro.locals.cadkitPage ? <slot /> : <Default><slot /></Default>}

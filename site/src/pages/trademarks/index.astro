@@ -1,0 +1,51 @@
+---
+import PageLayout from '../../layouts/PageLayout.astro';
+import Prose from '../../components/Prose.astro';
+import { EMAIL, LICENSE, repoFile } from '../../config';
+
+const title = 'Trademarks';
+const description =
+	'How cadkit uses the DWG, DGN and DXF format names, and how you may use the cadkit name and logo in your own projects, articles and talks.';
+---
+
+<PageLayout title={title} description={description} breadcrumbs={[{ label: 'Trademarks' }]} eyebrow="Legal">
+	<div class="ck-container">
+		<Prose>
+			<h2 id="format-names">File-format names</h2>
+			<p>
+				“DWG”, “DGN” and “DXF” are used only to name file formats. cadkit is not affiliated with or endorsed by any
+				CAD vendor, holds no vendor certification and makes no compatibility certification claims. Other names
+				mentioned on this site belong to their owners.
+			</p>
+
+			<h2 id="name-and-logo">The cadkit name and logo</h2>
+			<p>
+				The code is licensed under {LICENSE}. Those licenses do not grant rights to the cadkit name or logo
+				(section 6 of the Apache License 2.0 says so explicitly).
+			</p>
+
+			<h3 id="welcome">Welcome without asking</h3>
+			<ul>
+				<li>Saying that your software uses, supports or is built with cadkit.</li>
+				<li>Linking to the project with the name or the unmodified logo.</li>
+				<li>Writing about cadkit in articles, talks, tutorials and teaching material.</li>
+			</ul>
+
+			<h3 id="please-do-not">Please do not</h3>
+			<ul>
+				<li>
+					Name your product, package, crate or domain so that it looks like the official cadkit project (for example
+					“cadkit-pro” or “official cadkit builds”).
+				</li>
+				<li>Modify the logo or combine it with your own mark.</li>
+				<li>Suggest that the cadkit project endorses or certifies your product.</li>
+			</ul>
+
+			<p>
+				Logo files and usage notes are on the <a href="/brand/">brand page</a>. If you are unsure whether a use is
+				fine, ask at <a href={`mailto:${EMAIL.hello}`}>{EMAIL.hello}</a>. The canonical text is{' '}
+				<a href={repoFile('TRADEMARKS.md')}>TRADEMARKS.md</a>.
+			</p>
+		</Prose>
+	</div>
+</PageLayout>

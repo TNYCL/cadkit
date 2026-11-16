@@ -1,0 +1,26 @@
+---
+// The cadkit mark inline: arc and centre mark in the text colour, grips in the accent colour.
+// Below 20 px use the favicon set (public/favicon.*), which drops the centre-mark dashes.
+import { markElements, opticalOffsetX } from '../lib/brand-mark.mjs';
+
+interface Props {
+	class?: string;
+	size?: number;
+	title?: string;
+}
+const { class: className, size = 28, title } = Astro.props;
+const body = markElements({ arc: 'currentColor', grip: 'var(--ck-accent)' });
+---
+
+<svg
+	class={className}
+	width={size}
+	height={size}
+	viewBox="0 0 32 32"
+	role={title ? 'img' : undefined}
+	aria-label={title}
+	aria-hidden={title ? undefined : 'true'}
+	focusable="false"
+>
+	<g transform={`translate(${opticalOffsetX()} 0)`} set:html={body} />
+</svg>

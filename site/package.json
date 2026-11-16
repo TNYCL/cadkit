@@ -1,0 +1,37 @@
+{
+	"name": "cadkit-site",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"description": "Source of https://cadkit.org",
+	"license": "MIT OR Apache-2.0",
+	"engines": {
+		"node": ">=22.23.4"
+	},
+	"scripts": {
+		"predev": "node scripts/prebuild.mjs",
+		"dev": "astro dev",
+		"prebuild": "node scripts/prebuild.mjs",
+		"build": "astro build",
+		"preview": "astro preview",
+		"precheck": "node scripts/prebuild.mjs",
+		"check": "astro check",
+		"test": "node --test \"test/**/*.test.mjs\"",
+		"verify": "node scripts/verify.mjs",
+		"brand": "node scripts/brand.mjs",
+		"sample:plan": "node scripts/samples/plan.mjs"
+	},
+	"dependencies": {
+		"@astrojs/starlight": "0.43.1",
+		"@fontsource-variable/archivo": "5.3.0",
+		"@fontsource-variable/jetbrains-mono": "5.3.0",
+		"astro": "7.4.12",
+		"cadkit-wasm": "0.5.3"
+	},
+	"devDependencies": {
+		"@astrojs/check": "0.9.12",
+		"@resvg/resvg-js": "2.6.2",
+		"fontkit": "3.0.0",
+		"typescript": "6.0.3"
+	}
+}

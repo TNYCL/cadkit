@@ -67,6 +67,8 @@ Registry accounts belong to the maintainer; enable two-factor authentication on 
 4. When the builds pass, approve the `release` deployment on the workflow run. The three
    publish jobs start together; the GitHub release is created after all of them succeed.
 5. Check docs.rs, the PyPI and npm pages, and the release assets.
+6. Update the website to the new version: merge Dependabot's `cadkit-wasm` update for `site/`
+   (or bump it by hand) once the npm package is published; see [WEBSITE.md](WEBSITE.md).
 
 A version with a suffix (`0.2.0-rc.1`) becomes a GitHub pre-release and npm dist-tag `next`.
 

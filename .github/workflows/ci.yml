@@ -263,3 +263,25 @@ jobs:
         with:
           name: fuzz-artifacts-${{ matrix.target }}
           path: fuzz/artifacts
+
+  site:
+    name: website (cadkit.org)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - run: npm ci
+      # Prebuild steps sync docs/ and CHANGELOG.md, render the hero with cadkit-wasm, fetch pinned
+      # public samples (sha256-checked) and the public stats summary.
+      - run: npm run check
+      - run: npm test
+      - run: npm run build
+      # Links, meta tags, sitemap, security.txt, CSP hashes, forbidden strings, secret patterns.
+      - run: npm run verify

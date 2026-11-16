@@ -1,0 +1,37 @@
+---
+// A short note in running text. Use "caution" for limits a reader must not miss.
+interface Props {
+	variant?: 'note' | 'caution';
+	title?: string;
+}
+const { variant = 'note', title } = Astro.props;
+---
+
+<aside class:list={['ck-callout', `ck-callout--${variant}`]} aria-label={title ?? (variant === 'caution' ? 'Caution' : 'Note')}>
+	{title && <p class="ck-callout-title">{title}</p>}
+	<div class="ck-callout-body"><slot /></div>
+</aside>
+
+<style>
+	.ck-callout {
+		padding: var(--ck-space-4) var(--ck-space-4) var(--ck-space-4) calc(var(--ck-space-4) + 2px);
+		border: 1px solid var(--ck-border);
+		border-left: 3px solid var(--ck-accent);
+		background: var(--ck-surface);
+		font-size: var(--sl-text-sm);
+	}
+	.ck-callout--caution {
+		border-left-color: var(--ck-partial);
+	}
+	.ck-callout-title {
+		margin: 0 0 var(--ck-space-1);
+		font-weight: 600;
+		color: var(--ck-text);
+	}
+	.ck-callout-body :global(> :first-child) {
+		margin-top: 0;
+	}
+	.ck-callout-body :global(> :last-child) {
+		margin-bottom: 0;
+	}
+</style>

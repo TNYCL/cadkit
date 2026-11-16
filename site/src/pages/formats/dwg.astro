@@ -1,0 +1,62 @@
+---
+import FormatPage from './_FormatPage.astro';
+import rust from '../../../scripts/check-snippets/docs/rust/read_dwg.rs?raw';
+import python from '../../../scripts/check-snippets/docs/python/read_dwg.py?raw';
+import js from '../../../scripts/check-snippets/docs/js/read-dwg.mjs?raw';
+import c from '../../../scripts/check-snippets/docs/c/read_dwg.c?raw';
+import cli from '../../../scripts/check-snippets/docs/cli/inspect.sh?raw';
+import type { Snippet } from '../../lib/types';
+
+const read: Snippet[] = [
+	{ label: 'Rust', lang: 'rust', code: rust, title: 'src/main.rs' },
+	{ label: 'Python', lang: 'python', code: python, title: 'read_dwg.py' },
+	{ label: 'JavaScript', lang: 'js', code: js, title: 'read-dwg.mjs (Node)' },
+	{ label: 'C', lang: 'c', code: c, title: 'read_dwg.c' },
+];
+---
+
+<FormatPage
+	title="DWG reader for Rust, Python and JavaScript"
+	description="Read DWG files from R14 to 2018 in Rust, Python, JavaScript (WebAssembly) and C with cadkit: layers, blocks, layouts and entities, without a vendor SDK."
+	name="DWG"
+	ids={['dwg']}
+	supported={[
+		'Versions AC1014 (R14), AC1015 (2000), AC1018 (2004), AC1021 (2007), AC1024 (2010), AC1027 (2013) and AC1032 (2018)',
+		'Model space, paper layouts, layers, linetypes, text styles and block definitions',
+		'Lines, points, circles, arcs, ellipses, splines, polylines and meshes, text and multiline text, attributes, block references, hatches, dimensions, leaders, faces, images and viewports',
+		'Header-only inspection (version, units, code page) without decoding entities',
+		'Export of the document as SVG, JSON, DXF, CityGML or (seed-based) DGN V8',
+	]}
+	unsupported={[
+		'Writing DWG: there is no DWG writer',
+		'R13 (AC1012): implemented on the R14 code path, but untested for lack of a permissively licensed sample',
+		'Password-protected (encrypted) files',
+		'Multileaders, tables, subdivision meshes, PDF underlays, arc-length and large radial dimensions: kept as <code>unknown</code> entities',
+		'ACIS solids and regions beyond their header; proxy-entity graphics',
+	]}
+	examples={[
+		{
+			id: 'read',
+			heading: 'Read a DWG file',
+			intro: 'Open a drawing, print its version and layer count, and render model space as SVG. The reader detects the format, so the same code opens DGN and DXF.',
+			snippets: read,
+		},
+		{
+			id: 'shell',
+			heading: 'From the shell',
+			intro: 'The <a href="/docs/getting-started/cli/">cadkit CLI</a> inspects a DWG without decoding it, summarises it and lists layers and blocks.',
+			shell: { code: cli },
+		},
+	]}
+	demo={[
+		{ href: '/demo/?sample=dwg-acadsharp', label: 'Open a DWG sample in the demo' },
+		{ href: '/docs/guides/inspect-drawing/', label: 'Inspect a drawing' },
+	]}
+	reference={[
+		{ label: 'DWG format notes: versions, containers, objects and evidence', href: '/docs/reference/formats/dwg/' },
+		{ label: 'Inspect a drawing and its layers', href: '/docs/guides/inspect-drawing/' },
+		{ label: 'Convert to SVG', href: '/docs/guides/dxf-to-svg/' },
+		{ label: 'Provenance: how the DWG reader was built clean-room', href: '/provenance/' },
+	]}
+	crates={['cadkit', 'cadkit-dwg']}
+/>

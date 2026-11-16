@@ -1,0 +1,60 @@
+---
+title: "Convert DXF to SVG"
+description: "Render a DXF drawing (or DWG and DGN) as SVG with cadkit from Rust, Python, JavaScript, C or the command line, with width, background and layer options."
+---
+
+import { Code } from '@astrojs/starlight/components';
+import CodeTabs from '../../../../components/CodeTabs.astro';
+import rust from '../../../../../scripts/check-snippets/docs/rust/dxf_to_svg.rs?raw';
+import python from '../../../../../scripts/check-snippets/docs/python/dxf_to_svg.py?raw';
+import js from '../../../../../scripts/check-snippets/docs/js/dxf-to-svg.mjs?raw';
+import c from '../../../../../scripts/check-snippets/docs/c/dxf_to_svg.c?raw';
+import cli from '../../../../../scripts/check-snippets/docs/cli/dxf-to-svg.sh?raw';
+
+cadkit renders one model of a document as a standalone SVG. The reader does not matter: the
+same code converts DWG, DGN and CityGML files, because every reader produces the same
+format-neutral document.
+
+## The same task in four languages
+
+<CodeTabs
+	snippets={[
+		{ label: 'Rust', lang: 'rust', code: rust, title: 'src/main.rs' },
+		{ label: 'Python', lang: 'python', code: python, title: 'dxf_to_svg.py' },
+		{ label: 'JavaScript', lang: 'js', code: js, title: 'dxf-to-svg.mjs (Node)' },
+		{ label: 'C', lang: 'c', code: c, title: 'dxf_to_svg.c' },
+	]}
+/>
+
+## From the shell
+
+<Code code={cli} lang="sh" title="shell" />
+
+## What the SVG contains
+
+- The `viewBox` is in drawing units, with the Y axis flipped so the drawing is not upside
+  down: SVG Y is the negated drawing Y. The `width` you choose sets the pixel size; the
+  height follows the drawing's aspect ratio.
+- Each layer is a `<g data-layer="NAME">` group, so a viewer can show and hide layers with
+  CSS or script. Strokes use `vector-effect="non-scaling-stroke"`, so their width stays in
+  pixels when the SVG is scaled.
+- Layers that are hidden or frozen in the drawing are left out unless you ask for them
+  (`include_hidden_layers`, `includeHiddenLayers`, `cadkit::to_svg_all_layers`).
+- Block references are expanded, and text is drawn as SVG text, unless you turn either off
+  (`text`, `expand_blocks`).
+
+Models are listed in `doc.models` (Rust and Python) or `doc.info().models` (JavaScript); for
+DWG and DXF, index 0 is model space and the paper layouts follow.
+
+## Large or untrusted drawings
+
+`to_svg` builds the whole SVG in memory. For files from other people, use the bounded variant
+(`cadkit::to_svg_bounded` in Rust, `toSvgBounded` in JavaScript): it either returns a complete
+SVG within the byte budget you give or fails with a limit error, never a truncated drawing.
+See [Handling untrusted files](/docs/guides/untrusted-files/).
+
+## Related
+
+- [Inspect a drawing and its layers](/docs/guides/inspect-drawing/)
+- [DXF format page](/formats/dxf/) and [DXF notes](/docs/reference/formats/dxf/)
+- API: [cadkit::to_svg](https://docs.rs/cadkit/latest/cadkit/fn.to_svg.html), [Python](/docs/reference/python/), [JavaScript](/docs/reference/javascript/), [C](/docs/reference/c-api/)

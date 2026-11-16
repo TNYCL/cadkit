@@ -1,0 +1,71 @@
+---
+title: "Build a browser viewer with cadkit-wasm"
+description: "A DWG, DGN and DXF viewer in the browser with cadkit-wasm: parsing in a Web Worker, bounded SVG output, entity picking and the CSP it needs."
+---
+
+import { Code } from '@astrojs/starlight/components';
+import worker from '../../../../../scripts/check-snippets/docs/js/viewer/worker.js?raw';
+import main from '../../../../../scripts/check-snippets/docs/js/viewer/main.js?raw';
+import html from '../../../../../scripts/check-snippets/docs/js/viewer/index.html?raw';
+
+This guide builds a small viewer: open a local file, render it as SVG, click to identify an
+entity. The file is parsed in the browser and never uploaded. The [demo](/demo/) is a fuller
+viewer built on the same package.
+
+Three rules shape the design:
+
+1. **Parse off the main thread.** Reading a large drawing takes time and memory. In a Web
+   Worker the page stays responsive, and a worker can be terminated.
+2. **Bound every output.** `toSvgBounded` and `pickEntityBounded` take byte budgets and either
+   return a complete result or throw `limit_exceeded`; they never return a truncated one.
+3. **Recover by starting over.** After `limit_exceeded`, or a `WebAssembly.RuntimeError` trap,
+   terminate the worker and create a new one: that is the only way to release a WebAssembly
+   memory that has grown.
+
+## The worker
+
+<Code code={worker} lang="js" title="worker.js" />
+
+## The page
+
+<Code code={main} lang="js" title="main.js" />
+
+<Code code={html} lang="html" title="index.html" />
+
+`new Worker(new URL("./worker.js", import.meta.url), { type: "module" })` is the form bundlers
+such as Vite recognise: they bundle the worker and copy `cadkit_wasm_bg.wasm`. Without a
+bundler, import `cadkit_wasm.js` from a served copy of `node_modules/cadkit-wasm/web/` instead
+of the bare `cadkit-wasm` specifier, because module workers do not use the page's import map.
+
+## Picking
+
+The SVG `viewBox` is in drawing units with Y pointing down, so a click maps to drawing
+coordinates through the inverse screen matrix of the `<svg>` element, with Y negated.
+`pickEntityBounded(model, x, y, tolerance, options)` returns the closest visible entity within
+`tolerance` drawing units, or `null`. It measures exact distances to lines and circular arcs,
+samples other curves and uses bounding boxes for annotations and hatches. It is a selection
+aid, not CAD snapping. The result holds the index, id, layer, kind, colour, bounding box,
+distance and short previews of text and attributes, capped by `maxOutputBytes` (at most
+64 KiB); `truncated` says whether a preview was shortened. Layer and kind filters
+(`excludedLayers`, `excludedKinds`) let picking follow what the viewer shows.
+
+## Content Security Policy
+
+WebAssembly needs `'wasm-unsafe-eval'` in `script-src`; `'unsafe-eval'` is not needed. Module
+workers need `worker-src 'self'`. A policy for the files above:
+
+```text
+Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; img-src 'self' blob: data:; style-src 'self'; frame-ancestors 'none'
+```
+
+The SVG is inserted into the page so its layer groups (`data-layer`) and coordinates are
+available to script. With a policy like this one, inline scripts and event-handler attributes
+cannot run, whatever a drawing contains. When you need no interaction, show the SVG as an
+`<img>` from a `blob:` URL instead, as in the
+[JavaScript quick start](/docs/getting-started/javascript/#browser): images run no scripts and
+load nothing.
+
+## Related
+
+- [Handling untrusted files](/docs/guides/untrusted-files/)
+- [JavaScript API reference](/docs/reference/javascript/)

@@ -1,0 +1,61 @@
+---
+title: "Inspect a drawing and its layers"
+description: "Read the header of a DWG, DGN or DXF file without decoding it, then list layers, their state, entity counts per layer and reader warnings with cadkit."
+---
+
+import { Code } from '@astrojs/starlight/components';
+import CodeTabs from '../../../../components/CodeTabs.astro';
+import rust from '../../../../../scripts/check-snippets/docs/rust/inspect_drawing.rs?raw';
+import python from '../../../../../scripts/check-snippets/docs/python/inspect_drawing.py?raw';
+import js from '../../../../../scripts/check-snippets/docs/js/inspect-drawing.mjs?raw';
+import c from '../../../../../scripts/check-snippets/docs/c/inspect_drawing.c?raw';
+import cli from '../../../../../scripts/check-snippets/docs/cli/inspect.sh?raw';
+
+Inspection comes in two depths. A **header inspection** reads only what the file declares
+about itself: format, version, units, code page and, where the format records it, whether the
+drawing is 3D and which application wrote it. It does not decode entity streams, so it is
+cheap even for large files. A **full read** gives you every layer, block, model, entity and
+warning.
+
+## Header, layers, counts and warnings
+
+Each program takes the file as its first argument and works the same for DWG, DGN and DXF.
+
+<CodeTabs
+	snippets={[
+		{ label: 'Rust', lang: 'rust', code: rust, title: 'src/main.rs' },
+		{ label: 'Python', lang: 'python', code: python, title: 'inspect_drawing.py' },
+		{ label: 'JavaScript', lang: 'js', code: js, title: 'inspect-drawing.mjs (Node)' },
+		{ label: 'C', lang: 'c', code: c, title: 'inspect_drawing.c' },
+	]}
+/>
+
+The C API returns the header and the summary as JSON strings. `cadkit_document_info` gives
+the counts as a plain struct, and the full document JSON (`cadkit_document_to_json`) has the
+layer table.
+
+## From the shell
+
+<Code code={cli} lang="sh" title="shell" />
+
+## Reading the results
+
+- **Layers.** DGN levels are reported as layers. Each layer has `visible`, `frozen` and
+  `locked` flags and a colour. An entity's `layer` names its layer; entities without one
+  belong to the default layer.
+- **Entity kinds.** Points, lines, polylines, circles, arcs, ellipses, splines, text and
+  multiline text, block references (`insert`), hatches, dimensions, leaders, faces, polygons,
+  meshes, images, viewports and groups. Records a reader cannot model become `unknown` entities rather than being dropped.
+- **Warnings** have a stable `code` (for example `dgn.unknown_element.type_36`), a message
+  and, where known, the byte offset in the file. They mean the reader kept going past
+  something it could not fully decode.
+- **Format-specific data** that the neutral model has no field for is kept in `props` with a
+  `dwg.`, `dgn.`, `dxf.` or `gml.` key prefix.
+
+The full shape is in the [document JSON schema](/docs/reference/document-schema/).
+
+## Related
+
+- [DWG](/formats/dwg/), [DGN](/formats/dgn/) and [DXF](/formats/dxf/) format pages
+- [Convert DXF to SVG](/docs/guides/dxf-to-svg/)
+- [Handling untrusted files](/docs/guides/untrusted-files/) before inspecting uploads

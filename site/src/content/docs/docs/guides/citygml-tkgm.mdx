@@ -1,0 +1,80 @@
+---
+title: "CityGML 2.0 and the TKGM preflight"
+description: "Write CityGML 2.0 with an explicit CRS from Rust, Python, JavaScript or C, validate it and run cadkit's local TKGM preflight. Not institutional acceptance."
+---
+
+import { Code } from '@astrojs/starlight/components';
+import CodeTabs from '../../../../components/CodeTabs.astro';
+import Callout from '../../../../components/Callout.astro';
+import rust from '../../../../../scripts/check-snippets/docs/rust/citygml.rs?raw';
+import python from '../../../../../scripts/check-snippets/docs/python/citygml.py?raw';
+import js from '../../../../../scripts/check-snippets/docs/js/citygml.mjs?raw';
+import c from '../../../../../scripts/check-snippets/docs/c/citygml.c?raw';
+import cli from '../../../../../scripts/check-snippets/docs/cli/citygml.sh?raw';
+
+cadkit reads and writes UTF-8 CityGML 2.0 (GML 3.1.1) in pure Rust, with no network requests,
+no schema downloads, no CRS transformation and no axis swapping. It has two models of a
+CityGML file:
+
+- the **native model** (`read_citygml`, `readCityGml`, `gml::read_native`), which keeps object
+  IDs, building, room and surface relationships, shared references, typed attributes and XML
+  extensions, and writes them back;
+- the **neutral document** that every other format uses, a geometric projection for viewing or
+  converting to DXF, SVG or DGN.
+
+## New geometry needs an explicit CRS
+
+Writing a drawing as CityGML (`to_citygml`) creates `GenericCityObject` instances, never
+inferred buildings or rooms. You must name the coordinate reference system the coordinates are
+already in, and a level of detail from 0 to 4; cadkit writes the coordinates unchanged and
+never guesses a CRS or reprojects.
+
+Points, straight lines and polylines, exact circles, closed polygons, faces, meshes and groups
+are written. Closed polylines stay curves, so create polygon entities for surfaces. Bulges,
+widths, arcs, splines, text, images and other kinds fail by default; with `metadata_only`
+(an explicit opt-in) they are kept only as JSON metadata and listed in the report.
+
+<CodeTabs
+	snippets={[
+		{ label: 'Rust', lang: 'rust', code: rust, title: 'src/main.rs' },
+		{ label: 'Python', lang: 'python', code: python, title: 'citygml.py' },
+		{ label: 'JavaScript', lang: 'js', code: js, title: 'citygml.mjs (Node)' },
+		{ label: 'C', lang: 'c', code: c, title: 'citygml.c' },
+	]}
+/>
+
+The example CRS identifier is a placeholder: use the one your survey or model is in.
+
+## From the shell
+
+<Code code={cli} lang="sh" title="shell" />
+
+## The TKGM preflight
+
+<Callout variant="caution" title="Local checks, not acceptance">
+	The preflight checks a documented structural subset on your machine. Its report always says
+	`acceptance_verified: false` and lists the rules it did not check. The receiving TKGM system
+	remains the only acceptance authority.
+</Callout>
+
+`preflight_tkgm` (`preflightTkgm`, `gml::tkgm::preflight`, `cadkit_citygml_preflight_tkgm`,
+`validate-gml --tkgm-profile`) runs on the native model and needs an explicit profile; there is
+no default:
+
+| Profile | Scope |
+|---|---|
+| `city-model-tender` | Architectural common subset of the public 3D city-model tender production guide (CityGML 2.0, revision v2.50). Tender-year MAKS rules and sustainability extensions stay unchecked. |
+| `digital-building-registration` | The separate Digital Building registration guide (TKGMCityGML 3.0.3) rules that cadkit implements. |
+
+A TKGM delivery models buildings as `Building`, storeys as `CityObjectGroup` and independent
+sections as `GenericCityObject` with their classes, typed attributes and links. Generic
+geometry written from a drawing does not populate that model, which is why the example above
+reports `tkgm.missing_class`, `tkgm.missing_building` and `tkgm.missing_envelope`. The
+application that owns the meaning of its objects (which rectangle is a room, a floor or a
+roof) builds the native model; cadkit validates and writes it.
+
+## Related
+
+- [CityGML format page](/formats/citygml/)
+- [CityGML 2.0 notes](/docs/reference/formats/citygml/) and [TKGM preflight notes](/docs/reference/formats/tkgm/)
+- [Host integration: CityGML export](/docs/reference/integration/#citygml-export)

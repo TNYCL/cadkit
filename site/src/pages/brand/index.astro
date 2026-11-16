@@ -1,0 +1,467 @@
+---
+import PageLayout from '../../layouts/PageLayout.astro';
+import Prose from '../../components/Prose.astro';
+import DimensionDivider from '../../components/DimensionDivider.astro';
+import Logo from '../../components/Logo.astro';
+import { BRAND_ASSETS } from './_assets';
+import { EMAIL } from '../../config';
+import { licenseHref } from '../../data/licenses';
+
+const title = 'Brand';
+const description =
+	'Download the cadkit logo as SVG and PNG, with the colours, typefaces, clear space and minimum sizes to use it correctly.';
+
+const fileLabel = (f: { href: string; format: string; width: number; height: number }) =>
+	f.format === 'SVG' ? 'SVG' : `${f.format} ${f.width}×${f.height}`;
+const fileName = (href: string) => href.split('/').pop() ?? href;
+
+const COLOURS = [
+	{ name: 'Ink', hex: '#14171C', role: 'Arc and wordmark on light backgrounds; body text.' },
+	{ name: 'Ink blue', hex: '#1747B8', role: 'Grips on light backgrounds; links.' },
+	{ name: 'Paper', hex: '#FAFAF7', role: 'Light background.' },
+	{ name: 'Blueprint', hex: '#0B1324', role: 'Dark background and the tile.' },
+	{ name: 'Blueprint text', hex: '#E8EDF5', role: 'Arc and wordmark on dark backgrounds.' },
+	{ name: 'Construction cyan', hex: '#5CE1E6', role: 'Grips on dark backgrounds; the tile mark.' },
+	{ name: 'Redline', hex: '#C2361F', role: 'Annotation and dimension lines only; never text or the logo.' },
+];
+---
+
+<PageLayout title={title} description={description} breadcrumbs={[{ label: 'Brand' }]} eyebrow="Brand">
+	<section class="ck-container ck-intro" aria-label="The mark">
+		<div class="ck-hero-mark" aria-hidden="true">
+			<Logo size={160} />
+		</div>
+		<Prose>
+			<p>
+				The cadkit mark is the letter C drawn as a CAD arc entity in its selected state: a 270° arc open to the
+				right, square grips at both ends and at the midpoint, and the arc's centre mark, a centre point with four
+				short dashes. Use the files below as they are. How you may use the name and the logo is set out on the{' '}
+				<a href="/trademarks/">trademarks page</a>.
+			</p>
+		</Prose>
+	</section>
+
+	<DimensionDivider label="01 · Files" />
+	<section class="ck-container ck-section" aria-labelledby="files">
+		<h2 id="files">Logo files</h2>
+		<ul class="ck-assets">
+			{
+				BRAND_ASSETS.map((a) => (
+					<li class="ck-asset">
+						<div class:list={['ck-asset-preview', `ck-ground--${a.ground}`, { 'is-wide': a.preview.width > a.preview.height }]}>
+							<img
+								src={a.preview.href}
+								alt=""
+								width={a.preview.width > a.preview.height ? 230 : 96}
+								height={a.preview.width > a.preview.height ? Math.round((230 * a.preview.height) / a.preview.width) : 96}
+								loading="lazy"
+								decoding="async"
+							/>
+						</div>
+						<div class="ck-asset-meta">
+							<h3>{a.name}</h3>
+							<p>{a.use}</p>
+							<ul class="ck-downloads" aria-label={`Download ${a.name}`}>
+								{a.files.map((f) => (
+									<li>
+										<a href={f.href} download={fileName(f.href)}>
+											{fileLabel(f)}
+											<span class="sr-only"> ({fileName(f.href)})</span>
+										</a>
+									</li>
+								))}
+							</ul>
+						</div>
+					</li>
+				))
+			}
+		</ul>
+	</section>
+
+	<DimensionDivider label="02 · Usage" />
+	<section class="ck-container ck-section" aria-labelledby="usage">
+		<h2 id="usage">Clear space and minimum size</h2>
+		<div class="ck-split">
+			<figure class="ck-clearspace">
+				<svg viewBox="0 0 240 200" role="img" aria-labelledby="clearspace-title">
+					<title id="clearspace-title">
+						Clear space: keep a margin of one quarter of the mark's height free on every side.
+					</title>
+					<rect x="40" y="20" width="160" height="160" class="ck-cs-zone" />
+					<rect x="80" y="60" width="80" height="80" class="ck-cs-box" />
+					<g transform="translate(80 60) scale(2.5)" class="ck-cs-mark">
+						<Logo size={32} />
+					</g>
+					<g class="ck-cs-dim">
+						<path d="M40 194H80M40 188V200M80 188V200M36 198l8 -8M76 198l8 -8" />
+						<path d="M206 20V60M200 20H212M200 60H212M202 24l8 -8M202 64l8 -8" />
+					</g>
+					<text x="60" y="190" class="ck-cs-label">x</text>
+					<text x="222" y="44" class="ck-cs-label">x</text>
+					<text x="120" y="156" class="ck-cs-label" text-anchor="middle">4x</text>
+				</svg>
+				<figcaption>x = one quarter of the mark's height.</figcaption>
+			</figure>
+			<Prose>
+				<ul>
+					<li>
+						<strong>Clear space:</strong> keep a margin of one quarter of the mark's height free of text and
+						other graphics on every side; for the lockup, measure from the mark.
+					</li>
+					<li>
+						<strong>Mark:</strong> at least 20 px (5 mm in print). Below that, use the favicon files, which keep
+						only the centre point.
+					</li>
+					<li><strong>Lockup:</strong> at least 20 px (5 mm) high.</li>
+					<li><strong>Tile:</strong> 16 px and up as a favicon; 128 px and up shows the full centre mark.</li>
+				</ul>
+			</Prose>
+		</div>
+	</section>
+
+	<section class="ck-container ck-section" aria-labelledby="colours">
+		<h2 id="colours">Colours</h2>
+		<ul class="ck-swatches">
+			{
+				COLOURS.map((c) => (
+					<li>
+						<span class="ck-swatch" style={`background:${c.hex}`} aria-hidden="true" />
+						<span class="ck-swatch-name">{c.name}</span>
+						<code class="ck-swatch-hex">{c.hex}</code>
+						<span class="ck-swatch-role">{c.role}</span>
+					</li>
+				))
+			}
+		</ul>
+		<p class="ck-small">
+			The site's full light (paper) and dark (blueprint) token sets are in{' '}
+			<code>site/src/styles/tokens.css</code> in the repository.
+		</p>
+	</section>
+
+	<section class="ck-container ck-section" aria-labelledby="type">
+		<h2 id="type">Typography</h2>
+		<div class="ck-type">
+			<div>
+				<p class="ck-type-sample ck-type-sans">Archivo</p>
+				<p class="ck-small">
+					Headings at width 115, weight 600. The wordmark is lowercase “cadkit” at width 115, weight 500, outlined
+					to paths in the logo files. Body text at width 100. SIL Open Font License 1.1
+					(<a href={licenseHref('archivo')}>licence text<span class="sr-only"> of Archivo</span></a>).
+				</p>
+			</div>
+			<div>
+				<p class="ck-type-sample ck-type-mono">JetBrains Mono</p>
+				<p class="ck-small">
+					Code, coordinates, versions and labels. SIL Open Font License 1.1
+					(<a href={licenseHref('jetbrains-mono')}>licence text<span class="sr-only"> of JetBrains Mono</span></a>).
+				</p>
+			</div>
+		</div>
+	</section>
+
+	<section class="ck-container ck-section" aria-labelledby="dos">
+		<h2 id="dos">Do and don't</h2>
+		<div class="ck-split ck-split--even">
+			<Prose>
+				<h3>Do</h3>
+				<ul>
+					<li>Use the files as provided, at their proportions.</li>
+					<li>Use the two-tone mark on light backgrounds and the dark version on dark ones.</li>
+					<li>Use the one-colour version when only one colour is available.</li>
+					<li>Keep the clear space and the minimum size.</li>
+				</ul>
+				<h3>Don't</h3>
+				<ul>
+					<li>Stretch, skew, rotate or redraw the mark, or set the wordmark in another typeface.</li>
+					<li>Recolour the two-tone versions or add shadows, glows, gradients or outlines.</li>
+					<li>Combine the logo with your own mark or use it as part of your product's name.</li>
+					<li>Place the two-tone versions on busy photographs or patterns.</li>
+				</ul>
+			</Prose>
+			<ul class="ck-donts" aria-label="Examples of incorrect use">
+				<li>
+					<div class="ck-dont-preview" aria-hidden="true"><img src="/brand/cadkit-mark.svg" alt="" width="64" height="64" class="ck-dont-stretch" loading="lazy" /></div>
+					<span>Stretched</span>
+				</li>
+				<li>
+					<div class="ck-dont-preview" aria-hidden="true"><img src="/brand/cadkit-mark.svg" alt="" width="64" height="64" class="ck-dont-rotate" loading="lazy" /></div>
+					<span>Rotated</span>
+				</li>
+				<li>
+					<div class="ck-dont-preview" aria-hidden="true"><img src="/brand/cadkit-mark.svg" alt="" width="64" height="64" class="ck-dont-effect" loading="lazy" /></div>
+					<span>Effects added</span>
+				</li>
+			</ul>
+		</div>
+		<p class="ck-small">
+			Unsure whether a use is fine? Ask at <a href={`mailto:${EMAIL.hello}`}>{EMAIL.hello}</a>.
+		</p>
+	</section>
+</PageLayout>
+
+<style>
+	.ck-intro {
+		display: grid;
+		gap: var(--ck-space-8);
+		align-items: center;
+		padding-bottom: var(--ck-space-8);
+	}
+	@media (min-width: 50rem) {
+		.ck-intro {
+			grid-template-columns: auto minmax(0, 1fr);
+		}
+	}
+	.ck-hero-mark {
+		display: grid;
+		place-items: center;
+		width: 12.5rem;
+		height: 12.5rem;
+		border: 1px solid var(--ck-border);
+		background: var(--ck-surface);
+		color: var(--ck-text);
+	}
+
+	.ck-section {
+		display: grid;
+		gap: var(--ck-space-6);
+		padding-top: var(--ck-space-8);
+		padding-bottom: var(--ck-space-12);
+	}
+	.ck-section h2 {
+		margin: 0;
+		font-size: clamp(1.75rem, 1.4rem + 1.4vw, 2.5rem);
+		line-height: 1.12;
+	}
+	.ck-small {
+		margin: 0;
+		max-width: 48rem;
+		font-size: var(--sl-text-sm);
+		color: var(--ck-muted);
+	}
+
+	.ck-assets {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(min(100%, 17rem), 1fr));
+		gap: var(--ck-space-6);
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+	.ck-asset {
+		display: flex;
+		flex-direction: column;
+		border: 1px solid var(--ck-border);
+		background: var(--ck-surface);
+	}
+	.ck-asset-preview {
+		display: grid;
+		place-items: center;
+		height: 10rem;
+		border-bottom: 1px solid var(--ck-border);
+	}
+	.ck-asset-preview img {
+		display: block;
+		max-width: 80%;
+		height: auto;
+	}
+	/* Fixed grounds: a preview shows the file on the background it is made for, in either theme. */
+	.ck-ground--paper {
+		background: #fafaf7;
+	}
+	.ck-ground--blueprint {
+		background: #0b1324;
+	}
+	.ck-asset-meta {
+		display: flex;
+		flex-direction: column;
+		gap: var(--ck-space-2);
+		padding: var(--ck-space-4);
+		flex: 1;
+	}
+	.ck-asset-meta h3 {
+		margin: 0;
+		font-size: var(--sl-text-base);
+	}
+	.ck-asset-meta p {
+		margin: 0;
+		flex: 1;
+		font-size: var(--sl-text-sm);
+		color: var(--ck-muted);
+	}
+	.ck-downloads {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--ck-space-2);
+		list-style: none;
+		margin: var(--ck-space-2) 0 0;
+		padding: 0;
+	}
+	.ck-downloads a {
+		display: inline-flex;
+		align-items: center;
+		min-height: 2rem;
+		padding: 0 var(--ck-space-3);
+		border: 1px solid var(--ck-border);
+		border-radius: var(--ck-radius);
+		font-family: var(--__sl-font-mono);
+		font-size: var(--sl-text-xs);
+		text-decoration: none;
+	}
+	.ck-downloads a:hover {
+		border-color: var(--ck-accent);
+	}
+
+	.ck-split {
+		display: grid;
+		gap: var(--ck-space-8);
+		align-items: start;
+	}
+	@media (min-width: 50rem) {
+		.ck-split {
+			grid-template-columns: minmax(0, 18rem) minmax(0, 1fr);
+		}
+		.ck-split--even {
+			grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+		}
+	}
+	.ck-clearspace {
+		margin: 0;
+		padding: var(--ck-space-4);
+		border: 1px solid var(--ck-border);
+		background: var(--ck-surface);
+		color: var(--ck-text);
+	}
+	.ck-clearspace svg {
+		display: block;
+		width: 100%;
+		height: auto;
+	}
+	.ck-cs-zone {
+		fill: color-mix(in srgb, var(--ck-accent) 8%, transparent);
+		stroke: var(--ck-border);
+	}
+	.ck-cs-box {
+		fill: none;
+		stroke: var(--ck-border);
+	}
+	.ck-cs-dim path {
+		fill: none;
+		stroke: var(--ck-redline);
+		stroke-width: 1;
+	}
+	.ck-cs-label {
+		fill: var(--ck-muted);
+		font-family: var(--__sl-font-mono);
+		font-size: 11px;
+	}
+	.ck-clearspace figcaption {
+		margin-top: var(--ck-space-2);
+		font-size: var(--sl-text-xs);
+		color: var(--ck-muted);
+	}
+
+	.ck-swatches {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr));
+		gap: var(--ck-space-4) var(--ck-space-6);
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+	.ck-swatches li {
+		display: grid;
+		grid-template-columns: 3rem minmax(0, 1fr);
+		grid-template-areas: 'chip name' 'chip hex' 'chip role';
+		column-gap: var(--ck-space-3);
+		font-size: var(--sl-text-sm);
+	}
+	.ck-swatch {
+		grid-area: chip;
+		width: 3rem;
+		height: 3rem;
+		border: 1px solid var(--ck-border);
+	}
+	.ck-swatch-name {
+		grid-area: name;
+		font-weight: 600;
+	}
+	.ck-swatch-hex {
+		grid-area: hex;
+		font-size: var(--sl-text-xs);
+		color: var(--ck-text);
+	}
+	.ck-swatch-role {
+		grid-area: role;
+		font-size: var(--sl-text-xs);
+		color: var(--ck-muted);
+	}
+
+	.ck-type {
+		display: grid;
+		gap: var(--ck-space-8);
+	}
+	@media (min-width: 50rem) {
+		.ck-type {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+		}
+	}
+	.ck-type-sample {
+		margin: 0 0 var(--ck-space-2);
+		font-size: clamp(2rem, 1.6rem + 1.6vw, 3rem);
+		line-height: 1.1;
+		color: var(--ck-text);
+	}
+	.ck-type-sans {
+		font-stretch: 115%;
+		font-weight: 600;
+		letter-spacing: -0.01em;
+	}
+	.ck-type-mono {
+		font-family: var(--__sl-font-mono);
+		font-weight: 500;
+	}
+
+	.ck-donts {
+		display: grid;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: var(--ck-space-4);
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+	.ck-donts li {
+		display: flex;
+		flex-direction: column;
+		gap: var(--ck-space-2);
+		font-size: var(--sl-text-xs);
+		color: var(--ck-muted);
+	}
+	.ck-dont-preview {
+		position: relative;
+		display: grid;
+		place-items: center;
+		aspect-ratio: 1;
+		border: 1px solid var(--ck-border);
+		background: #fafaf7;
+		overflow: hidden;
+	}
+	/* A redline strike through each incorrect example. */
+	.ck-dont-preview::after {
+		content: '';
+		position: absolute;
+		inset: 50% -10% auto;
+		height: 2px;
+		background: #c2361f;
+		transform: rotate(-35deg);
+	}
+	.ck-dont-stretch {
+		transform: scaleX(1.6);
+	}
+	.ck-dont-rotate {
+		transform: rotate(-24deg);
+	}
+	.ck-dont-effect {
+		filter: drop-shadow(3px 4px 0 #f5a5a5) blur(0.4px);
+	}
+</style>

@@ -1,0 +1,73 @@
+---
+title: "Command-line tool"
+description: "Install the cadkit CLI to inspect DWG, DGN, DXF and CityGML files and convert them to SVG, JSON, DXF, DGN V8 or CityGML from the shell."
+---
+
+import { Code } from '@astrojs/starlight/components';
+import tour from '../../../../../scripts/check-snippets/docs/cli/tour.sh?raw';
+import pipes from '../../../../../scripts/check-snippets/docs/cli/pipes.sh?raw';
+
+The `cadkit` binary (crate `cadkit-cli`) inspects and converts drawings from the shell or a
+script. It uses the same readers and writers as the libraries.
+
+## Install
+
+- Prebuilt: `cadkit-<target>` archives on [GitHub Releases](https://github.com/TNYCL/cadkit/releases/latest)
+  for `x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl` (static binaries),
+  `aarch64-apple-darwin`, `x86_64-apple-darwin` and `x86_64-pc-windows-msvc`, with checksums
+  in `SHA256SUMS`.
+- With Cargo: `cargo binstall cadkit-cli` (prebuilt) or `cargo install cadkit-cli` (builds
+  from source; Rust 1.88 or newer).
+
+## A first session
+
+<Code code={tour} lang="sh" title="shell" />
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `inspect <file> [--json]` | Header metadata without decoding entity streams |
+| `info <file> [--warnings] [--max-warnings N] [--json]` | Format, units, models, layers, entity histogram |
+| `layers <file> [--json]` | Layers with their state and entity counts |
+| `blocks <file> [--json]` | Block definitions |
+| `dump <file> [--json]` | One line per entity, or the full document as JSON |
+| `convert <input> <output>` | Convert to `.json`, `.svg`, `.dxf`, `.dgn` or `.gml`; the output extension selects the format |
+| `validate-gml <file> [--tkgm-profile P]` | CityGML structural and geometry report as JSON; exits 1 when issues are found |
+| `check-dgn <file>` | Structural report of a DGN V8 file as JSON; exits 1 when it has warnings |
+| `repack-dgn <input> <output>` | Repack DGN V8 streams into a fresh container without changing their contents |
+| `strip-seed <input> <output> [--report]` | Copy a DGN V8 seed without its drawing content; see [Write DGN V8](/docs/guides/write-dgn-v8/) |
+| `completions <shell>` | Shell completion script for `bash`, `zsh`, `fish` or `powershell` |
+
+`cadkit help <command>` lists every flag of a command. The most used `convert` flags:
+
+| Flag | Meaning |
+|---|---|
+| `--to json\|svg\|dxf\|dgn\|gml` | Output format; required when the output is `-` (stdout) |
+| `--width PX`, `--model N` | SVG width in pixels and the model to render |
+| `--dxf-version r12 … r2018`, `--output-codepage LABEL` | DXF version and legacy 8-bit output code page |
+| `--pretty` | Indented JSON |
+| `--seed FILE`, `--clear-seed-model` | DGN V8 output: the seed, and permission to clear a non-empty seed model |
+| `--crs ID`, `--lod N`, `--gml-metadata-only` | CityGML output: the CRS of the coordinates (required), level of detail 0 to 4, metadata for unsupported entities |
+| `--explode-inserts`, `--units UNIT`, `--layer NAME`, `--kind KIND` | Transforms before writing: expand block references, convert units, keep one layer or one entity kind |
+
+## Global options
+
+These go before or after the command and apply to every reader:
+
+| Option | Meaning |
+|---|---|
+| `--max-input-bytes BYTES` | Refuse larger input files |
+| `--max-decompressed-bytes BYTES` | Stop when decompressed data would exceed this |
+| `--max-objects N` | Stop after this many records, objects or elements |
+| `--codepage LABEL` | Code page (WHATWG label such as `windows-1254`) for 8-bit text when the file declares none |
+| `--keep-raw` | Keep the original record bytes of every entity (large) |
+| `--planarity-tolerance UNITS` | Polygon planarity tolerance for CityGML validation and DGN output (default 0.01) |
+
+## Pipes and exit codes
+
+An input or output of `-` reads from stdin or writes to stdout (`--to` then names the output
+format). Exit codes: `0` success, `1` the drawing could not be read or written (and the report
+commands above when they find issues), `2` usage error.
+
+<Code code={pipes} lang="sh" title="shell" />

@@ -1,0 +1,348 @@
+/*
+ * Site-wide styles, loaded by Starlight on every page (docs and hand-written pages alike).
+ * Maps the cadkit tokens onto Starlight's custom properties so both look like one site.
+ */
+
+/* ---- Starlight mapping ------------------------------------------------------------------- */
+
+:root,
+:root[data-theme='light'] {
+	--sl-font: var(--ck-font-sans);
+	--sl-font-mono: var(--ck-font-mono);
+	--sl-line-height: 1.625;
+	--sl-line-height-headings: 1.15;
+
+	--sl-color-white: var(--ck-text);
+	--sl-color-gray-1: var(--ck-text);
+	--sl-color-gray-2: var(--ck-text);
+	--sl-color-gray-3: var(--ck-muted);
+	--sl-color-gray-4: color-mix(in srgb, var(--ck-muted) 60%, var(--ck-border));
+	--sl-color-gray-5: var(--ck-border);
+	--sl-color-gray-6: var(--ck-raised);
+	--sl-color-gray-7: var(--ck-surface);
+	--sl-color-black: var(--ck-bg);
+
+	--sl-color-accent-low: color-mix(in srgb, var(--ck-accent) 16%, var(--ck-bg));
+	--sl-color-accent: var(--ck-accent);
+	--sl-color-accent-high: var(--ck-accent);
+
+	--sl-color-text: var(--ck-text);
+	--sl-color-text-accent: var(--ck-accent);
+	--sl-color-text-invert: var(--ck-on-accent);
+	--sl-color-bg: var(--ck-bg);
+	--sl-color-bg-nav: var(--ck-bg);
+	--sl-color-bg-sidebar: var(--ck-bg);
+	--sl-color-bg-inline-code: var(--ck-raised);
+	--sl-color-bg-accent: var(--ck-accent);
+	--sl-color-hairline-light: var(--ck-border);
+	--sl-color-hairline: var(--ck-border);
+	--sl-color-hairline-shade: var(--ck-border);
+	--sl-color-backdrop-overlay: color-mix(in srgb, var(--ck-bg) 72%, transparent);
+
+	/* Aside variants: note = accent, tip = ok, caution = partial, danger = redline. */
+	--sl-color-blue-low: color-mix(in srgb, var(--ck-accent) 10%, var(--ck-bg));
+	--sl-color-blue: var(--ck-accent);
+	--sl-color-blue-high: var(--ck-text);
+	--sl-color-purple-low: color-mix(in srgb, var(--ck-ok) 10%, var(--ck-bg));
+	--sl-color-purple: var(--ck-ok);
+	--sl-color-purple-high: var(--ck-text);
+	--sl-color-green-low: color-mix(in srgb, var(--ck-ok) 10%, var(--ck-bg));
+	--sl-color-green: var(--ck-ok);
+	--sl-color-green-high: var(--ck-text);
+	--sl-color-orange-low: color-mix(in srgb, var(--ck-partial) 12%, var(--ck-bg));
+	--sl-color-orange: var(--ck-partial);
+	--sl-color-orange-high: var(--ck-text);
+	--sl-color-red-low: color-mix(in srgb, var(--ck-redline) 10%, var(--ck-bg));
+	--sl-color-red: var(--ck-redline);
+	--sl-color-red-high: var(--ck-text);
+
+	--sl-shadow-sm: none;
+	--sl-shadow-md: 0 1px 0 var(--ck-border);
+	--sl-shadow-lg: 0 8px 24px color-mix(in srgb, #000 18%, transparent);
+}
+
+/* ---- Base ---------------------------------------------------------------------------------- */
+
+html {
+	-webkit-text-size-adjust: 100%;
+	text-size-adjust: 100%;
+}
+
+body {
+	font-family: var(--__sl-font);
+	font-size: 1rem;
+	line-height: var(--sl-line-height);
+	color: var(--ck-text);
+	background-color: var(--ck-bg);
+	font-optical-sizing: auto;
+}
+
+h1,
+h2,
+h3,
+h4,
+.ck-heading {
+	font-family: var(--__sl-font);
+	font-stretch: var(--ck-heading-stretch);
+	font-weight: 600;
+	letter-spacing: -0.01em;
+	color: var(--ck-text);
+	text-wrap: balance;
+}
+
+code,
+kbd,
+samp,
+pre,
+.ck-mono {
+	font-family: var(--__sl-font-mono);
+	font-variant-ligatures: none;
+}
+
+::selection {
+	background: color-mix(in srgb, var(--ck-accent) 28%, transparent);
+	color: var(--ck-text);
+}
+
+/* One visible focus ring everywhere (WCAG 2.4.7 / 2.4.11). */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+	outline: 2px solid var(--ck-accent);
+	outline-offset: 2px;
+	border-radius: var(--ck-radius);
+}
+
+a {
+	color: var(--ck-accent);
+	text-underline-offset: 0.2em;
+	text-decoration-thickness: 1px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	a,
+	button {
+		transition:
+			color var(--ck-duration) var(--ck-ease),
+			background-color var(--ck-duration) var(--ck-ease),
+			border-color var(--ck-duration) var(--ck-ease);
+	}
+}
+
+/* ---- Drafting grid ------------------------------------------------------------------------- */
+
+/* Rendered once by the PageFrame override; fades out below the first screen so long text
+   always sits on a plain background. */
+.ck-grid-bg {
+	position: absolute;
+	inset: 0 0 auto 0;
+	height: min(68rem, 140vh);
+	z-index: -1;
+	pointer-events: none;
+	background-image:
+		linear-gradient(to right, var(--ck-grid-major) 1px, transparent 1px),
+		linear-gradient(to bottom, var(--ck-grid-major) 1px, transparent 1px),
+		linear-gradient(to right, var(--ck-grid-minor) 1px, transparent 1px),
+		linear-gradient(to bottom, var(--ck-grid-minor) 1px, transparent 1px);
+	background-size:
+		40px 40px,
+		40px 40px,
+		8px 8px,
+		8px 8px;
+	background-position: -1px -1px;
+	-webkit-mask-image: linear-gradient(to bottom, #000 0%, rgb(0 0 0 / 0.55) 40%, transparent 100%);
+	mask-image: linear-gradient(to bottom, #000 0%, rgb(0 0 0 / 0.55) 40%, transparent 100%);
+}
+
+/* Docs pages: keep the grid to the header band only. */
+:root[data-has-sidebar] .ck-grid-bg {
+	height: 18rem;
+}
+
+/* ---- Layout helpers for hand-written pages ------------------------------------------------- */
+
+.ck-container {
+	width: 100%;
+	max-width: var(--ck-page-width);
+	margin-inline: auto;
+	padding-inline: var(--ck-space-4);
+}
+
+@media (min-width: 50rem) {
+	.ck-container {
+		padding-inline: var(--ck-space-8);
+	}
+}
+
+.ck-eyebrow {
+	font-family: var(--__sl-font-mono);
+	font-size: var(--sl-text-xs);
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--ck-muted);
+}
+
+.ck-lead {
+	font-size: var(--sl-text-lg);
+	line-height: 1.6;
+	color: var(--ck-muted);
+	max-width: 44rem;
+}
+
+/* Grip squares as list bullets. */
+.ck-grips {
+	list-style: none;
+	padding: 0;
+	margin: 0;
+}
+.ck-grips > li {
+	position: relative;
+	padding-inline-start: 1.25rem;
+}
+.ck-grips > li + li {
+	margin-top: var(--ck-space-2);
+}
+.ck-grips > li::before {
+	content: '';
+	position: absolute;
+	inset-inline-start: 0.125rem;
+	top: 0.6em;
+	width: 7px;
+	height: 7px;
+	background: var(--ck-accent);
+}
+
+/* ---- Buttons ------------------------------------------------------------------------------ */
+
+.ck-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--ck-space-2);
+	min-height: 2.75rem;
+	padding: 0 var(--ck-space-4);
+	border: 1px solid var(--ck-accent);
+	border-radius: var(--ck-radius);
+	font-family: var(--__sl-font);
+	font-weight: 600;
+	font-size: var(--sl-text-sm);
+	letter-spacing: 0.01em;
+	text-decoration: none;
+	color: var(--ck-accent);
+	background: transparent;
+	white-space: nowrap;
+}
+.ck-btn:hover {
+	background: color-mix(in srgb, var(--ck-accent) 10%, transparent);
+}
+.ck-btn--primary {
+	color: var(--ck-on-accent);
+	background: var(--ck-accent);
+}
+.ck-btn--primary:hover {
+	color: var(--ck-on-accent);
+	background: color-mix(in srgb, var(--ck-accent) 86%, var(--ck-text));
+}
+.ck-btn svg {
+	width: 1rem;
+	height: 1rem;
+	flex: none;
+}
+
+/* ---- Starlight content refinements --------------------------------------------------------- */
+
+.sl-markdown-content :is(h1, h2, h3, h4, h5, h6) {
+	font-stretch: var(--ck-heading-stretch);
+	letter-spacing: -0.01em;
+}
+
+.sl-markdown-content table {
+	font-size: var(--sl-text-sm);
+}
+.sl-markdown-content :is(th, td) {
+	border-color: var(--ck-border);
+}
+.sl-markdown-content th {
+	font-family: var(--__sl-font-mono);
+	font-size: var(--sl-text-xs);
+	font-weight: 500;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--ck-muted);
+}
+
+/* Linked headings (e.g. "[Unreleased]" in the changelog) read as headings, not as large links. */
+.sl-markdown-content :is(h1, h2, h3, h4) > a:not([class]) {
+	color: inherit;
+	text-decoration-color: var(--ck-accent);
+	text-decoration-thickness: 2px;
+	text-underline-offset: 0.15em;
+}
+.sl-markdown-content :is(h1, h2, h3, h4) > a:not([class]):hover {
+	color: var(--ck-accent);
+}
+
+.sl-markdown-content :not(pre) > code {
+	border: 1px solid var(--ck-border);
+	border-radius: var(--ck-radius);
+	padding: 0.0625rem 0.3125rem;
+	font-size: 0.875em;
+}
+
+/* Starlight's sidebar current item uses accent background: keep text AA. */
+nav.sidebar a[aria-current='page'],
+nav.sidebar a[aria-current='page']:hover,
+nav.sidebar a[aria-current='page']:focus {
+	color: var(--ck-on-accent);
+}
+
+/* Starlight's docs menu button (small screens) matches the header controls: a 40px square
+   with a hairline, like the disclosure menu of the hand-written pages. Starlight's own styles
+   sit in a cascade layer, so these unlayered rules win without extra specificity. */
+:root {
+	--sl-menu-button-size: 2.5rem;
+}
+.sl-menu-button {
+	padding: 0.625rem;
+	border: 1px solid var(--ck-border);
+	border-radius: var(--ck-radius);
+	background-color: var(--ck-bg);
+	color: var(--ck-text);
+	box-shadow: none;
+}
+.sl-menu-button:has(~ :popover-open) {
+	border-color: var(--ck-accent);
+	background-color: var(--ck-bg);
+	color: var(--ck-accent);
+}
+
+/* Search trigger and dialog sit on the same palette. */
+site-search button[data-open-modal] {
+	border: 1px solid var(--ck-border);
+	background-color: var(--ck-surface);
+	color: var(--ck-muted);
+	border-radius: var(--ck-radius);
+}
+site-search button[data-open-modal]:hover {
+	border-color: var(--ck-muted);
+	color: var(--ck-text);
+}
+@media (max-width: 49.99rem) {
+	/* Icon-only on small screens: the same 40px square as the menu button. */
+	site-search button[data-open-modal] {
+		justify-content: center;
+		width: 2.5rem;
+		padding: 0;
+		background-color: var(--ck-bg);
+		color: var(--ck-text);
+		font-size: 1.125rem;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+		scroll-behavior: auto !important;
+	}
+}

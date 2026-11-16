@@ -1,0 +1,74 @@
+---
+import FormatPage from './_FormatPage.astro';
+import rust from '../../../scripts/check-snippets/docs/rust/read_dgn.rs?raw';
+import python from '../../../scripts/check-snippets/docs/python/read_dgn.py?raw';
+import js from '../../../scripts/check-snippets/docs/js/read-dgn.mjs?raw';
+import c from '../../../scripts/check-snippets/docs/c/read_dgn.c?raw';
+import writeRust from '../../../scripts/check-snippets/docs/rust/write_dgn.rs?raw';
+import writePython from '../../../scripts/check-snippets/docs/python/write_dgn.py?raw';
+import cli from '../../../scripts/check-snippets/docs/cli/write-dgn.sh?raw';
+import type { Snippet } from '../../lib/types';
+
+const read: Snippet[] = [
+	{ label: 'Rust', lang: 'rust', code: rust, title: 'src/main.rs' },
+	{ label: 'Python', lang: 'python', code: python, title: 'read_dgn.py' },
+	{ label: 'JavaScript', lang: 'js', code: js, title: 'read-dgn.mjs (Node)' },
+	{ label: 'C', lang: 'c', code: c, title: 'read_dgn.c' },
+];
+const write: Snippet[] = [
+	{ label: 'Rust', lang: 'rust', code: writeRust, title: 'src/main.rs' },
+	{ label: 'Python', lang: 'python', code: writePython, title: 'write_dgn.py' },
+];
+---
+
+<FormatPage
+	title="DGN V7 and V8 for Rust, Python and JavaScript"
+	description="Read DGN V7 and V8 and write seed-based DGN V8 with cadkit in Rust, Python, JavaScript and C: levels, tags, cells, raster attachments and acceptance status."
+	name="DGN"
+	ids={['dgn-v7', 'dgn-v8']}
+	supported={[
+		'DGN V8 (compound file) and DGN V7 (ISFF) reading, with every model of a V8 file, 2D and 3D',
+		'Levels as layers, the colour table, master and sub units and the font table',
+		'Lines, line and point strings, shapes, arcs, ellipses, curves, B-splines, text and text nodes, complex chains and shapes, cells and shared cells',
+		'Tag sets and tags attached to their elements (V8); raster attachments (V8)',
+		'Seed-based DGN V8 writing of a documented element subset, seed stripping and a structural report (<code>check-dgn</code>)',
+	]}
+	unsupported={[
+		'Writing DGN V7',
+		'A built-in blank seed: writing needs a seed made from a file of your own',
+		'Writing shared-cell instances, edited raster attachments, splines, hatches, dimensions and fitted or oblique text',
+		'Extended colours (index above 255): the RGB value is not decoded, so these elements read with their layer colour',
+		'Dimensions and multi-lines (kept as <code>unknown</code> entities) and 3D surface and solid headers (their components are read as a plain group)',
+		'External application acceptance of written files: not recorded yet',
+	]}
+	examples={[
+		{
+			id: 'read',
+			heading: 'Read a DGN file',
+			intro: 'V7 and V8 files open with the same call; the format is detected from the bytes. Levels appear as layers.',
+			snippets: read,
+		},
+		{
+			id: 'write',
+			heading: 'Write DGN V8 from a seed',
+			intro: 'Strip a seed from a template of your own, adapt the drawing to it and write. The <a href="/docs/guides/write-dgn-v8/">guide</a> explains each step, the JavaScript and C variants and the writer\'s limits. No external acceptance is claimed yet.',
+			snippets: write,
+		},
+		{
+			id: 'shell',
+			heading: 'From the shell',
+			shell: { code: cli },
+		},
+	]}
+	demo={[
+		{ href: '/demo/?sample=dgn-v8-gdal', label: 'Open a DGN V8 sample in the demo' },
+		{ href: '/demo/?sample=dgn-v7-gdal', label: 'Open a DGN V7 sample' },
+	]}
+	reference={[
+		{ label: 'Write DGN V8 from a seed', href: '/docs/guides/write-dgn-v8/' },
+		{ label: 'DGN format notes: layouts, writer and evidence', href: '/docs/reference/formats/dgn/' },
+		{ label: 'DGN external acceptance protocol', href: '/docs/reference/formats/dgn-acceptance/' },
+		{ label: 'Interchange status', href: '/docs/reference/interchange-status/' },
+	]}
+	crates={['cadkit', 'cadkit-dgn']}
+/>

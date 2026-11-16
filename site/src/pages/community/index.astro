@@ -1,0 +1,156 @@
+---
+import PageLayout from '../../layouts/PageLayout.astro';
+import Prose from '../../components/Prose.astro';
+import Callout from '../../components/Callout.astro';
+import { LINKS, EMAIL, REPO, USED_BY, SITE, CADKIT_VERSION, repoFile } from '../../config';
+
+const title = 'Community';
+const description =
+	'How to ask questions, report bugs without sharing private drawings, contribute under the clean-room rules, and how cadkit is governed.';
+---
+
+<PageLayout title={title} description={description} breadcrumbs={[{ label: 'Community' }]} eyebrow="Community">
+	<div class="ck-container">
+		<nav class="ck-toc" aria-label="On this page">
+			<ul>
+				<li><a href="#questions">Questions</a></li>
+				<li><a href="#issues">Bug reports</a></li>
+				<li><a href="#contribute">Contribute</a></li>
+				<li><a href="#conduct">Code of conduct</a></li>
+				<li><a href="#governance">Governance</a></li>
+				<li><a href="#support">Support</a></li>
+				<li><a href="#used-by">Used by</a></li>
+				<li><a href="#cite">Cite or announce</a></li>
+			</ul>
+		</nav>
+		<Prose>
+			<h2 id="questions">Questions and ideas</h2>
+			<p>
+				Ask in <a href={LINKS.discussions}>GitHub Discussions</a>: how to read a particular file, which API fits a
+				task, or an idea for a new feature. Start with the <a href="/docs/">documentation</a> and the Rust API
+				reference on <a href={LINKS.docsRs}>docs.rs</a>.
+			</p>
+
+			<h2 id="issues">Bug reports</h2>
+			<p>
+				<a href={`${REPO}/issues/new/choose`}>Open an issue</a> with the cadkit version, the interface you used
+				(Rust, Python, JavaScript, C or the CLI), what you expected and what happened, and a minimal file that shows
+				the problem.
+			</p>
+			<Callout variant="caution" title="Never attach private drawings">
+				<p>
+					Issues are public. Do not attach confidential or client drawings, or excerpts of them: drawings carry
+					names, addresses, coordinates and layer names that you may not be allowed to share. Reduce the problem to
+					a synthetic file you drew yourself or to a public sample. Reports with a reduced, shareable file are
+					answered first.
+				</p>
+			</Callout>
+			<p>
+				Security vulnerabilities are never reported in a public issue; see <a href="/security/">Security</a>.
+			</p>
+
+			<h2 id="contribute">Contribute</h2>
+			<p>
+				Pull requests are welcome. Read <a href={repoFile('CONTRIBUTING.md')}>CONTRIBUTING.md</a>,{' '}
+				<a href={repoFile('AGENTS.md')}>AGENTS.md</a> and{' '}
+				<a href={repoFile('docs/ARCHITECTURE.md')}>docs/ARCHITECTURE.md</a> first; they bind human and automated
+				contributors alike. In short:
+			</p>
+			<ul>
+				<li>
+					<strong>Clean-room.</strong> Format knowledge comes only from allowed references (the public Open Design
+					Specification for DWG, the MIT-licensed ACadSharp, ezdgn and GDAL DGN driver, public samples and your own
+					analysis). Code from copyleft-licensed CAD projects, vendor SDKs and anything decompiled is off limits; if
+					you have read such code, say so before contributing in that area.
+				</li>
+				<li>
+					<strong>Provenance.</strong> Every source you rely on gets a row in{' '}
+					<a href={LINKS.provenanceSource}>docs/PROVENANCE.md</a>, and ported logic is attributed.
+				</li>
+				<li>
+					<strong>No panics on any input.</strong> Sizes and counts from a file are checked against the reader limits
+					before allocating; recoverable problems become warnings.
+				</li>
+				<li>
+					<strong>Tests with synthetic fixtures</strong> that document the byte layout; update the docs and the
+					Unreleased section of the changelog.
+				</li>
+				<li>Code, comments and documentation are in English.</li>
+			</ul>
+
+			<h2 id="conduct">Code of conduct</h2>
+			<p>
+				Everyone taking part follows the <a href={repoFile('CODE_OF_CONDUCT.md')}>Code of Conduct</a>, adapted from
+				the Contributor Covenant 2.1. Report unacceptable behaviour to{' '}
+				<a href={`mailto:${EMAIL.conduct}`}>{EMAIL.conduct}</a>; reports are handled in confidence.
+			</p>
+
+			<h2 id="governance">Governance</h2>
+			<p>
+				cadkit currently has one maintainer, the GitHub account <a href="https://github.com/TNYCL">TNYCL</a>, who
+				reviews and merges pull requests, sets the roadmap and format scope, cuts releases and handles security
+				reports. Day-to-day changes are decided in pull requests; larger ones (a new format, a new binding, a change
+				to the document model or a breaking API change) start as an issue or a discussion. Contributors who land
+				several substantial, well-tested changes and review others' work can be invited to become maintainers. The
+				full text is in <a href={repoFile('GOVERNANCE.md')}>GOVERNANCE.md</a>; contact the maintainers at{' '}
+				<a href={`mailto:${EMAIL.maintainers}`}>{EMAIL.maintainers}</a>.
+			</p>
+
+			<h2 id="support">Support</h2>
+			<p>
+				cadkit is maintained by volunteers and offers no service-level guarantee. For anything that is not a
+				question, a bug or a vulnerability, write to <a href={`mailto:${EMAIL.hello}`}>{EMAIL.hello}</a>. See{' '}
+				<a href={repoFile('SUPPORT.md')}>SUPPORT.md</a>.
+			</p>
+
+			<h2 id="used-by">Used by</h2>
+			<ul>
+				{
+					USED_BY.map((u) => (
+						<li>
+							<a href={u.url}>{u.name}</a>, {u.description}, uses{' '}
+							{u.modules.map((mod, i) => (
+								<>
+									{i > 0 && (i === u.modules.length - 1 ? ' and ' : ', ')}
+									<code>{mod}</code>
+								</>
+							))}
+							.
+						</li>
+					))
+				}
+			</ul>
+			<p>
+				An adopter is not a sponsor: cadkit stays vendor-neutral, and product-specific rules, customer data and
+				domain logic of any adopter live outside the repository. Using cadkit? Say so in{' '}
+				<a href={LINKS.discussions}>Discussions</a>.
+			</p>
+
+			<h2 id="cite">Cite or announce</h2>
+			<p>
+				Saying that your software uses, supports or is built with cadkit is welcome without asking, as is linking to
+				the project with the name or the unmodified logo (<a href="/brand/">logo files</a>,{' '}
+				<a href="/trademarks/">name and logo policy</a>). To cite cadkit in writing, name the version you used:
+			</p>
+			<pre class="ck-cite"><code>cadkit contributors. cadkit: an open CAD engine in pure Rust. Version {CADKIT_VERSION}. {SITE}/ (source: {REPO}).</code></pre>
+		</Prose>
+	</div>
+</PageLayout>
+
+<style>
+	.ck-toc ul {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--ck-space-2) var(--ck-space-4);
+		list-style: none;
+		margin: 0 0 var(--ck-space-8);
+		padding: var(--ck-space-3) 0;
+		border-top: 1px solid var(--ck-border);
+		border-bottom: 1px solid var(--ck-border);
+		font-size: var(--sl-text-sm);
+	}
+	.ck-cite {
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+	}
+</style>

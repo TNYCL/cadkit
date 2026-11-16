@@ -1,0 +1,46 @@
+---
+title: "Geometry with cadkit-geom"
+description: "Analytic 2D geometry in Rust with cadkit-geom: offsets, polygon area and point location, and polygon booleans with explicit tolerances and error budgets."
+---
+
+import { Code } from '@astrojs/starlight/components';
+import { CADKIT_VERSION } from '../../../../config';
+import geometry from '../../../../../scripts/check-snippets/docs/rust/geometry.rs?raw';
+
+`cadkit-geom` is independent `f64` geometry in a Cartesian plane whose units you choose. It
+depends on no other cadkit crate, so you can use it without any file format. Lengths are in
+your units, areas in squared units and angles in radians, positive counterclockwise from +x.
+Every operation takes an explicit `GeometryTolerance` and either returns a result or a typed
+`GeometryError` with a stable reason code; nothing is repaired silently. It is a Rust crate
+only: the Python, JavaScript and C packages do not expose it.
+
+<Code code={`[dependencies]\ncadkit-geom = "${CADKIT_VERSION}"`} lang="toml" title="Cargo.toml" />
+
+## Offsets, areas and booleans
+
+<Code code={geometry} lang="rust" title="src/main.rs" />
+
+Running it prints the offset segment from (0, 0.1) to (4, 0.1), a room area of 19.84 (20
+minus the 0.16 hole), `Inside` for the point (1, 1), and one union polygon of area 25.84.
+
+- **Rings close implicitly.** A `Polygon` ring lists each corner once; do not repeat the first
+  point. (Polygon entities in the document model are different: their rings repeat it.)
+- **Tolerances are separate budgets:** `linear` (default 1e-8 units), `angular` (1e-10 rad)
+  and `area` (1e-12 squared units, the smallest valid area). Defaults are numerical starting
+  values, not physical accuracy guarantees.
+- **Booleans** (`union`, `intersection`, `difference`, or `polygon_boolean` for collections)
+  are regularised area operations on linear rings, with a coordinate and an area error budget
+  in `PolygonBooleanOptions` and caps on input, output and generated edges. The result
+  carries measured errors and the provenance of every output edge. Curved and mesh booleans
+  are not supported.
+
+## What else is in the crate
+
+Curves (`LineSegment`, `Arc`, `Circle`, `Ellipse`, `Bezier`, `Polyline` and the `Curve`
+enum) with length, nearest point, intersections, trimming, extending, offsets and snap candidates;
+polygon slicing along zero-width separators; similarity and affine calibration from control
+points; and NURBS
+evaluation, tessellation and nearest-point search for the documented profile (degree 1 to 3,
+positive weights, open clamped knots). The supported profiles, error budgets and limits are
+specified in the [geometry contracts](/docs/reference/geometry/); the API is on
+[docs.rs/cadkit-geom](https://docs.rs/cadkit-geom).

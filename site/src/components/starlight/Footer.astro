@@ -1,0 +1,6 @@
+---
+// Docs keep Starlight's pagination footer; the site footer itself lives in PageFrame.
+import Default from '@astrojs/starlight/components/Footer.astro';
+---
+
+{Astro.locals.cadkitPage ? null : <Default />}

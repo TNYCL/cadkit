@@ -1,0 +1,58 @@
+---
+title: "Getting started in JavaScript"
+description: "Install cadkit-wasm and read DWG, DGN, DXF and CityGML files in Node or the browser with WebAssembly. Export SVG, DXF, DGN V8, CityGML and JSON."
+---
+
+import { Code } from '@astrojs/starlight/components';
+import node from '../../../../../scripts/check-snippets/docs/js/quickstart.mjs?raw';
+import browser from '../../../../../scripts/check-snippets/docs/js/browser-quickstart.js?raw';
+
+`cadkit-wasm` is the cadkit file and document API compiled to WebAssembly. Parsing and export
+run in the JavaScript process: in a browser, files never leave the page. One npm package
+ships two builds:
+
+| Import | Build | Use |
+|---|---|---|
+| `cadkit-wasm` | ES module (`web/`) | browsers and bundlers; call `await init()` first |
+| `cadkit-wasm/node` | CommonJS (`node/`) | Node; ready on load, works with `import` and `require` |
+
+TypeScript declarations are included for both.
+
+## Install
+
+```sh
+npm install cadkit-wasm
+```
+
+## Node
+
+<Code code={node} lang="js" title="quickstart.mjs" />
+
+`read` takes a `Uint8Array` (a Node `Buffer` is one) and returns a `CadDocument`. `info()`,
+`layers()` and `warnings()` return plain objects; `toJSON()` returns the whole
+[document JSON](/docs/reference/document-schema/). Call `free()` when you are done: the
+document lives in WebAssembly memory, which the JavaScript garbage collector does not manage.
+
+## Browser
+
+<Code code={browser} lang="js" title="main.js" />
+
+`init()` fetches `cadkit_wasm_bg.wasm` relative to the module. Bundlers such as Vite resolve
+that URL and copy the file; without a bundler, serve `node_modules/cadkit-wasm/web/` and import
+`cadkit_wasm.js` from there. Pages with a Content Security Policy need `'wasm-unsafe-eval'` in
+`script-src` to instantiate WebAssembly. For anything larger than a quick preview, run cadkit
+in a Web Worker as in [Build a browser viewer](/docs/guides/browser-viewer/).
+
+## Errors and memory
+
+Errors are `Error` objects with a `kind`: `unknown_format`, `unsupported`, `invalid`,
+`truncated` and `limit_exceeded` from the readers, plus `io` and `bad_argument`. Because
+wasm32 aborts on allocation failure, `read` uses conservative default limits (512 MiB input,
+1 GiB decompressed, 5 million objects, depth 64). If a call still traps with a
+`WebAssembly.RuntimeError`, the module instance is unusable and must be created again.
+
+## Next steps
+
+- [Convert DXF to SVG](/docs/guides/dxf-to-svg/) and [inspect a drawing](/docs/guides/inspect-drawing/)
+- [Build a browser viewer](/docs/guides/browser-viewer/) with a Web Worker and bounded picking
+- The complete [JavaScript API reference](/docs/reference/javascript/)

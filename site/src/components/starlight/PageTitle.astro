@@ -1,0 +1,6 @@
+---
+// Hand-written pages (<PageLayout>) render their own <h1>.
+import Default from '@astrojs/starlight/components/PageTitle.astro';
+---
+
+{Astro.locals.cadkitPage ? null : <Default />}

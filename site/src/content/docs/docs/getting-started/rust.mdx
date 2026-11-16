@@ -1,0 +1,74 @@
+---
+title: "Getting started in Rust"
+description: "Add the cadkit crate, open a DWG, DGN, DXF or CityGML file, list its models, layers and warnings, and export SVG. Feature flags and error handling."
+prev:
+  link: /docs/
+  label: Overview
+---
+
+import { Code } from '@astrojs/starlight/components';
+import { CADKIT_VERSION } from '../../../../config';
+import quickstart from '../../../../../scripts/check-snippets/docs/rust/quickstart.rs?raw';
+
+The `cadkit` crate is the entry point for file I/O: it detects the format, runs the matching
+reader and gives you one format-neutral `Document`. It re-exports the model of `cadkit-core`
+and the format crates (`cadkit::dwg`, `cadkit::dgn`, `cadkit::dxf`, `cadkit::gml`). The
+minimum supported Rust version is 1.88.
+
+## Install
+
+```sh
+cargo add cadkit
+```
+
+<Code code={`[dependencies]\ncadkit = "${CADKIT_VERSION}"`} lang="toml" title="Cargo.toml" />
+
+## Read a drawing and export SVG
+
+<Code code={quickstart} lang="rust" title="src/main.rs" />
+
+`cadkit::open` reads the file, detects the format from its bytes and returns a `Document`:
+`source` (format, version, application, code page), `units`, `layers`, `blocks`, `models`
+(for DWG and DXF: model space, then the paper layouts) and `warnings`. Coordinates are in drawing units and
+angles in radians. Format-specific data the neutral model has no field for is kept in each
+entity's `props` under a `dwg.`, `dgn.`, `dxf.` or `gml.` prefix.
+
+`cadkit::read(&bytes)` reads from memory, `cadkit::read_from(reader, &options)` from any
+`std::io::Read`, and `cadkit::inspect_file(path)` reads only the header (format, version,
+units, code page) without decoding entities.
+
+## Choose features
+
+Default features enable every format and output. Disable them to compile only what you use:
+
+| Feature | Enables |
+|---|---|
+| `dwg` | DWG reader (`cadkit::dwg`) |
+| `dgn-read` | DGN V7 and V8 reader (`cadkit::dgn`) |
+| `dgn` | `dgn-read` plus the seed-based V8 writer (`cadkit::to_dgn`, `cadkit::strip_dgn_seed`) |
+| `dxf` | DXF reader and writer (`cadkit::dxf`, `cadkit::to_dxf`) |
+| `gml` | CityGML 2.0 reader and writer (`cadkit::gml`, `cadkit::to_citygml`) |
+| `svg` | `cadkit::to_svg` and `SvgOptions` |
+| `json` | `cadkit::to_json` |
+
+<Code code={`[dependencies]\ncadkit = { version = "${CADKIT_VERSION}", default-features = false, features = ["dgn-read", "svg"] }`} lang="toml" title="Cargo.toml (DGN reading and SVG only)" />
+
+## Errors and limits
+
+Every fallible call returns `cadkit::Result<T>`. `cadkit::Error` is `#[non_exhaustive]`; its
+variants are `Truncated` and `Invalid` (with absolute byte offsets), `Unsupported`,
+`LimitExceeded`, `SchemaVersion`, `UnknownFormat` and `Io`. Readers fail only when no useful
+document can be built; recoverable problems are recorded in `doc.warnings` with stable codes
+such as `dgn.unknown_element.type_36`.
+
+Every size and count read from a file is checked against `ReadOptions::limits` before memory
+is allocated. The defaults are generous (2 GiB input, 20 million objects); for files from
+other people use `Limits::strict()` and `cadkit::open_with`, as shown in
+[Handling untrusted files](/docs/guides/untrusted-files/).
+
+## Next steps
+
+- [Convert DXF to SVG](/docs/guides/dxf-to-svg/) and [inspect a drawing](/docs/guides/inspect-drawing/)
+- [Write DGN V8 from a seed](/docs/guides/write-dgn-v8/) and [CityGML 2.0 output](/docs/guides/citygml-tkgm/)
+- [Geometry with cadkit-geom](/docs/guides/geometry/) and [scene and GPU rendering](/docs/guides/scene-gpu/)
+- API documentation: [docs.rs/cadkit](https://docs.rs/cadkit) and [docs.rs/cadkit-core](https://docs.rs/cadkit-core)

@@ -1,0 +1,174 @@
+---
+// Site footer drawn as a drawing title block. SHEET n/N is filled in after the build by
+// scripts/postbuild.mjs (page index over the sorted list of built pages).
+import Logo from './Logo.astro';
+import { FOOTER_NAV, CADKIT_VERSION, BUILD_DATE, LICENSE, COPYRIGHT, SITE_NAME } from '../config';
+
+const title = Astro.locals.starlightRoute.entry.data.title;
+---
+
+<footer class="ck-footer">
+	<div class="ck-footer-inner">
+		<nav class="ck-footer-nav" aria-label="Footer">
+			{
+				FOOTER_NAV.map((col) => (
+					<div>
+						<h2 class="ck-footer-heading">{col.title}</h2>
+						<ul>
+							{col.links.map((l) => (
+								<li>
+									<a href={l.href}>{l.label}</a>
+								</li>
+							))}
+						</ul>
+					</div>
+				))
+			}
+		</nav>
+
+		<dl class="ck-titleblock">
+			<div class="ck-tb-cell ck-tb-brand">
+				<dt>Project</dt>
+				<dd><Logo size={22} /><span translate="no">{SITE_NAME}</span></dd>
+			</div>
+			<div class="ck-tb-cell ck-tb-title"><dt>Title</dt><dd>{title}</dd></div>
+			<div class="ck-tb-cell"><dt>Rev</dt><dd>{CADKIT_VERSION}</dd></div>
+			<div class="ck-tb-cell"><dt>License</dt><dd>{LICENSE}</dd></div>
+			<div class="ck-tb-cell"><dt>Sheet</dt><dd><span data-ck-sheet>&mdash;</span></dd></div>
+			<div class="ck-tb-cell"><dt>Date</dt><dd><time datetime={BUILD_DATE}>{BUILD_DATE}</time></dd></div>
+		</dl>
+
+		<p class="ck-footer-legal">
+			“DWG”, “DGN” and “DXF” are used only to name file formats. cadkit is an independent
+			open-source project with no affiliation to any CAD vendor. {COPYRIGHT}.
+		</p>
+	</div>
+</footer>
+
+<style>
+	.ck-footer {
+		margin-top: var(--ck-space-16);
+		border-top: 1px solid var(--ck-border);
+		background: var(--ck-bg);
+		font-size: var(--sl-text-sm);
+	}
+	.ck-footer-inner {
+		max-width: var(--ck-page-width);
+		margin-inline: auto;
+		padding: var(--ck-space-12) var(--ck-space-4) var(--ck-space-8);
+	}
+	@media (min-width: 50rem) {
+		.ck-footer-inner {
+			padding-inline: var(--ck-space-8);
+		}
+	}
+
+	.ck-footer-nav {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: var(--ck-space-8) var(--ck-space-6);
+	}
+	@media (min-width: 50rem) {
+		.ck-footer-nav {
+			grid-template-columns: repeat(4, minmax(0, 1fr));
+		}
+	}
+	.ck-footer-heading {
+		margin: 0 0 var(--ck-space-3);
+		font-family: var(--__sl-font-mono);
+		font-size: var(--sl-text-2xs);
+		font-weight: 500;
+		font-stretch: 100%;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--ck-muted);
+	}
+	.ck-footer-nav ul {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+	.ck-footer-nav li + li {
+		margin-top: var(--ck-space-2);
+	}
+	.ck-footer-nav a {
+		color: var(--ck-text);
+		text-decoration: none;
+	}
+	.ck-footer-nav a:hover {
+		color: var(--ck-accent);
+		text-decoration: underline;
+	}
+
+	/* Title block: a ruled grid of label/value cells. */
+	.ck-titleblock {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		margin: var(--ck-space-12) 0 0;
+		border: 1px solid var(--ck-text);
+		background: var(--ck-surface);
+	}
+	.ck-titleblock > div {
+		padding: var(--ck-space-2) var(--ck-space-3);
+		border-right: 1px solid var(--ck-border);
+		border-bottom: 1px solid var(--ck-border);
+		min-width: 0;
+	}
+	.ck-tb-brand {
+		grid-column: 1 / -1;
+	}
+	.ck-titleblock .ck-tb-brand dd {
+		display: flex;
+		align-items: center;
+		gap: var(--ck-space-2);
+		font-family: var(--__sl-font);
+		font-stretch: 115%;
+		font-weight: 500;
+		font-size: var(--sl-text-base);
+		line-height: 1.25;
+	}
+	.ck-tb-title {
+		grid-column: 1 / -1;
+	}
+	.ck-titleblock dt {
+		font-family: var(--__sl-font-mono);
+		font-size: var(--sl-text-2xs);
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--ck-muted);
+	}
+	.ck-titleblock dd {
+		margin: 0;
+		font-family: var(--__sl-font-mono);
+		font-size: var(--sl-text-sm);
+		color: var(--ck-text);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	@media (min-width: 50rem) {
+		.ck-titleblock {
+			grid-template-columns: auto minmax(0, 2fr) repeat(4, minmax(0, 1fr));
+		}
+		.ck-tb-brand,
+		.ck-tb-title {
+			grid-column: auto;
+		}
+		.ck-titleblock > div {
+			border-bottom: 0;
+		}
+		.ck-titleblock > div:last-child {
+			border-right: 0;
+		}
+		.ck-tb-brand {
+			padding-inline: var(--ck-space-4);
+		}
+	}
+
+	.ck-footer-legal {
+		margin: var(--ck-space-4) 0 0;
+		max-width: 52rem;
+		font-size: var(--sl-text-xs);
+		color: var(--ck-muted);
+	}
+</style>

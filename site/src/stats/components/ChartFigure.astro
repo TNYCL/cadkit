@@ -1,0 +1,107 @@
+---
+// One chart on /stats/: title, a one-line takeaway, the chart, an optional note and the same
+// data as a table behind a disclosure (the accessible equivalent of the chart).
+interface Props {
+	id: string;
+	title: string;
+	takeaway: string;
+	/** Label of the table disclosure. */
+	tableLabel?: string;
+}
+const { id, title, takeaway, tableLabel = 'Show the data as a table' } = Astro.props;
+---
+
+<figure class="ck-chart" aria-labelledby={`${id}-title`} aria-describedby={`${id}-takeaway`}>
+	<h3 id={`${id}-title`} class="ck-chart-title">{title}</h3>
+	<p id={`${id}-takeaway`} class="ck-chart-takeaway">{takeaway}</p>
+	<div class="ck-chart-body"><slot /></div>
+	{Astro.slots.has('note') && <div class="ck-chart-note"><slot name="note" /></div>}
+	{
+		Astro.slots.has('table') && (
+			<details class="ck-chart-table">
+				<summary>{tableLabel}</summary>
+				<div class="ck-chart-table-scroll" tabindex="0" role="region" aria-label={`${title}: data table`}>
+					<slot name="table" />
+				</div>
+			</details>
+		)
+	}
+</figure>
+
+<style>
+	.ck-chart {
+		margin: 0;
+		padding: var(--ck-space-6);
+		border: 1px solid var(--ck-border);
+		background: var(--ck-surface);
+		min-width: 0;
+	}
+	.ck-chart-title {
+		margin: 0;
+		font-size: var(--sl-text-lg);
+		line-height: 1.3;
+	}
+	.ck-chart-takeaway {
+		margin: var(--ck-space-2) 0 0;
+		max-width: 48rem;
+		color: var(--ck-muted);
+		font-size: var(--sl-text-sm);
+	}
+	.ck-chart-body {
+		margin-top: var(--ck-space-6);
+	}
+	.ck-chart-note {
+		margin-top: var(--ck-space-4);
+		font-size: var(--sl-text-xs);
+		color: var(--ck-muted);
+		max-width: 48rem;
+	}
+	.ck-chart-note :global(p) {
+		margin: 0;
+	}
+	.ck-chart-table {
+		margin-top: var(--ck-space-4);
+		border-top: 1px solid var(--ck-border);
+		padding-top: var(--ck-space-3);
+		font-size: var(--sl-text-sm);
+	}
+	.ck-chart-table summary {
+		cursor: pointer;
+		color: var(--ck-accent);
+		font-weight: 500;
+		width: fit-content;
+	}
+	.ck-chart-table-scroll {
+		margin-top: var(--ck-space-3);
+		max-height: 28rem;
+		overflow: auto;
+	}
+	.ck-chart-table-scroll :global(table) {
+		width: 100%;
+		border-collapse: collapse;
+		font-size: var(--sl-text-xs);
+	}
+	.ck-chart-table-scroll :global(th),
+	.ck-chart-table-scroll :global(td) {
+		padding: 0.25rem 0.75rem 0.25rem 0;
+		border-bottom: 1px solid var(--ck-border);
+		text-align: left;
+		white-space: nowrap;
+	}
+	.ck-chart-table-scroll :global(thead th) {
+		position: sticky;
+		top: 0;
+		background: var(--ck-surface);
+		font-family: var(--__sl-font-mono);
+		font-weight: 500;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		color: var(--ck-muted);
+	}
+	.ck-chart-table-scroll :global(td.num),
+	.ck-chart-table-scroll :global(th.num) {
+		text-align: right;
+		font-variant-numeric: tabular-nums;
+		font-family: var(--__sl-font-mono);
+	}
+</style>

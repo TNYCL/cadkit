@@ -1,0 +1,73 @@
+---
+// Section divider drawn as a dimension line: extension ticks at both ends and a mono label.
+// Decorative: section headings carry the meaning.
+interface Props {
+	label: string;
+}
+const { label } = Astro.props;
+---
+
+<div class="ck-dim ck-container" aria-hidden="true">
+	<div class="ck-dim-inner">
+		<span class="ck-dim-line"></span>
+		<span class="ck-dim-label">{label}</span>
+		<span class="ck-dim-line"></span>
+	</div>
+</div>
+
+<style>
+	.ck-dim-inner {
+		position: relative;
+		display: flex;
+		align-items: center;
+		gap: var(--ck-space-3);
+		height: 1.5rem;
+		padding-inline: 0.5rem;
+		color: var(--ck-redline);
+	}
+	/* Extension lines and oblique ticks at both ends. */
+	.ck-dim-inner::before,
+	.ck-dim-inner::after {
+		content: '';
+		position: absolute;
+		top: 0;
+		width: 1px;
+		height: 100%;
+		background: currentColor;
+	}
+	.ck-dim-inner::before {
+		left: 0.5rem;
+	}
+	.ck-dim-inner::after {
+		right: 0.5rem;
+	}
+	.ck-dim-line {
+		position: relative;
+		flex: 1;
+		height: 1px;
+		background: currentColor;
+	}
+	.ck-dim-line:first-child::before,
+	.ck-dim-line:last-child::after {
+		content: '';
+		position: absolute;
+		top: -4px;
+		width: 1px;
+		height: 9px;
+		background: currentColor;
+		transform: rotate(45deg);
+	}
+	.ck-dim-line:first-child::before {
+		left: 0;
+	}
+	.ck-dim-line:last-child::after {
+		right: 0;
+	}
+	.ck-dim-label {
+		font-family: var(--__sl-font-mono);
+		font-size: var(--sl-text-2xs);
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--ck-muted);
+	}
+</style>

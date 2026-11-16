@@ -1,0 +1,31 @@
+# Cloudflare Pages response headers. This file is a template: scripts/postbuild.mjs writes
+# dist/_headers with the __CK_*__ placeholders filled in (inline script hashes collected from
+# the built HTML, and the Cloudflare Web Analytics origins only when the beacon is enabled).
+# See site/README.md, "Content Security Policy".
+
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval' __CK_SCRIPT_HASHES__ __CK_ANALYTICS_SCRIPT__; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' __CK_ANALYTICS_CONNECT__; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests
+  Strict-Transport-Security: max-age=31536000
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: accelerometer=(), autoplay=(), camera=(), display-capture=(), encrypted-media=(), geolocation=(), gyroscope=(), hid=(), magnetometer=(), microphone=(), midi=(), payment=(), publickey-credentials-get=(), serial=(), usb=(), xr-spatial-tracking=(), browsing-topics=()
+  Cross-Origin-Opener-Policy: same-origin
+
+# Demo: WebAssembly in a Web Worker, local files only, no analytics. The worker is a same-origin
+# script under /_astro/ (worker-src 'self', no blob: workers); the page fetches samples from this
+# site (connect-src 'self'); data: images are embedded raster images in rendered SVG; exports are
+# saved through blob: download links, which CSP does not govern. 'wasm-unsafe-eval' stays for the
+# Pagefind search in the header (the worker itself runs under the site policy of /_astro/*).
+/demo/*
+  ! Content-Security-Policy
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval' __CK_SCRIPT_HASHES__; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests
+
+/_astro/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/*.wasm
+  Content-Type: application/wasm
+
+/.well-known/security.txt
+  Content-Type: text/plain; charset=utf-8

@@ -1,0 +1,88 @@
+---
+// Light "paper" / dark "blueprint" switch. Stores the choice under Starlight's own key
+// ("starlight-theme"), so docs and hand-written pages share it; Starlight's inline
+// ThemeProvider applies it before first paint.
+interface Props {
+	withLabel?: boolean;
+}
+const { withLabel = false } = Astro.props;
+---
+
+<button type="button" class:list={['ck-theme-toggle', { 'ck-theme-toggle--label': withLabel }]} data-ck-theme-toggle>
+	<svg class="ck-icon-moon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+		<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"></path>
+	</svg>
+	<svg class="ck-icon-sun" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+		<circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="1.75"></circle>
+		<path d="M12 2.5v2.5M12 19v2.5M2.5 12H5M19 12h2.5M5.3 5.3l1.8 1.8M16.9 16.9l1.8 1.8M5.3 18.7l1.8-1.8M16.9 7.1l1.8-1.8" stroke="currentColor" stroke-width="1.75" stroke-linecap="square"></path>
+	</svg>
+	<span class:list={['ck-to-dark', { 'sr-only': !withLabel }]}>Dark theme</span>
+	<span class:list={['ck-to-light', { 'sr-only': !withLabel }]}>Light theme</span>
+</button>
+
+<script>
+	const KEY = 'starlight-theme';
+	const root = document.documentElement;
+	const stored = (): string | null => {
+		try {
+			return localStorage.getItem(KEY);
+		} catch {
+			return null;
+		}
+	};
+	for (const button of document.querySelectorAll<HTMLButtonElement>('[data-ck-theme-toggle]')) {
+		button.addEventListener('click', () => {
+			const next = root.dataset.theme === 'dark' ? 'light' : 'dark';
+			root.dataset.theme = next;
+			try {
+				localStorage.setItem(KEY, next);
+			} catch {
+				/* Storage can be unavailable (private mode); the choice then lasts for this page. */
+			}
+		});
+	}
+	// Without an explicit choice, follow the operating system live.
+	matchMedia('(prefers-color-scheme: light)').addEventListener('change', (e) => {
+		if (!stored()) root.dataset.theme = e.matches ? 'light' : 'dark';
+	});
+</script>
+
+<style>
+	.ck-theme-toggle {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: var(--ck-space-2);
+		min-width: 2.5rem;
+		height: 2.5rem;
+		padding: 0 var(--ck-space-2);
+		border: 1px solid transparent;
+		border-radius: var(--ck-radius);
+		background: none;
+		color: var(--ck-text);
+		font: inherit;
+		font-size: var(--sl-text-sm);
+		cursor: pointer;
+	}
+	.ck-theme-toggle:hover {
+		border-color: var(--ck-border);
+		color: var(--ck-accent);
+	}
+	.ck-theme-toggle--label {
+		justify-content: flex-start;
+		border-color: var(--ck-border);
+		padding-inline: var(--ck-space-3);
+	}
+	svg {
+		width: 1.25rem;
+		height: 1.25rem;
+		flex: none;
+	}
+	/* Each control names and shows the theme it switches to. */
+	:global(:root[data-theme='dark']) .ck-icon-moon,
+	:global(:root[data-theme='dark']) .ck-to-dark,
+	:global(:root[data-theme='light']) .ck-icon-sun,
+	:global(:root[data-theme='light']) .ck-to-light {
+		display: none;
+	}
+</style>

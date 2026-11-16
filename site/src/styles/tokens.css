@@ -1,0 +1,70 @@
+/*
+ * cadkit design tokens: light "paper" and dark "blueprint".
+ * This file is the single source of colour values; test/contrast.test.mjs parses it and
+ * checks every text/background pair against WCAG 2.2 AA.
+ * :root holds the dark theme because Starlight treats dark as its base and sets
+ * data-theme="light" for the light theme (default for prefers-color-scheme: light).
+ */
+
+:root {
+	--ck-bg: #0b1324;
+	--ck-surface: #101b31;
+	--ck-raised: #16233d;
+	--ck-border: #22314f;
+	--ck-grid-minor: #132038;
+	--ck-grid-major: #1b2a47;
+	--ck-text: #e8edf5;
+	--ck-muted: #9aa8bf;
+	--ck-accent: #5ce1e6;
+	--ck-on-accent: #0b1324;
+	--ck-redline: #ff7a66;
+	--ck-ok: #5bd69a;
+	--ck-partial: #e8b85c;
+	--ck-pending: #9aa8bf;
+	color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+	--ck-bg: #fafaf7;
+	--ck-surface: #ffffff;
+	--ck-raised: #f2f2ec;
+	--ck-border: #e2e1d8;
+	--ck-grid-minor: #ecebe4;
+	--ck-grid-major: #dcdbd0;
+	--ck-text: #14171c;
+	--ck-muted: #5a6170;
+	--ck-accent: #1747b8;
+	--ck-on-accent: #ffffff;
+	--ck-redline: #c2361f;
+	--ck-ok: #1a7f4b;
+	--ck-partial: #8a5a00;
+	--ck-pending: #5a6170;
+	color-scheme: light;
+}
+
+:root {
+	/* Type */
+	/* --ck-font-*-face come from the Astro font config (family + metric-matched fallback). */
+	--ck-font-sans: var(--ck-font-sans-face, Arial), var(--sl-font-system);
+	--ck-font-mono: var(--ck-font-mono-face, monospace), var(--sl-font-system-mono);
+	--ck-heading-stretch: 115%;
+
+	/* 4px spacing rhythm */
+	--ck-space-1: 0.25rem;
+	--ck-space-2: 0.5rem;
+	--ck-space-3: 0.75rem;
+	--ck-space-4: 1rem;
+	--ck-space-6: 1.5rem;
+	--ck-space-8: 2rem;
+	--ck-space-12: 3rem;
+	--ck-space-16: 4rem;
+	--ck-space-24: 6rem;
+
+	/* Motion */
+	--ck-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+	--ck-duration: 180ms;
+
+	/* Layout */
+	--ck-page-width: 76rem;
+	--ck-radius: 2px;
+}

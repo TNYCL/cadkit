@@ -1,0 +1,106 @@
+---
+// Read/write status per format with evidence links. Data: src/data/formats.ts.
+import StatusChip from './StatusChip.astro';
+import { FORMATS } from '../data/formats';
+
+interface Props {
+	caption?: string;
+}
+const { caption = 'Format support in cadkit' } = Astro.props;
+---
+
+<div class="ck-matrix" role="region" aria-label={caption} tabindex="0">
+	<table>
+		<caption class="sr-only">{caption}</caption>
+		<thead>
+			<tr>
+				<th scope="col">Format</th>
+				<th scope="col">Read</th>
+				<th scope="col">Write</th>
+				<th scope="col">Status</th>
+				<th scope="col">Evidence</th>
+			</tr>
+		</thead>
+		<tbody>
+			{
+				FORMATS.map((f) => (
+					<tr>
+						<th scope="row">{f.name}</th>
+						{[f.read, f.write].map((c) => (
+							<td>
+								<StatusChip status={c.status} label={c.label} />
+								{c.detail && <span class="ck-detail">{c.detail}</span>}
+							</td>
+						))}
+						<td class="ck-note">{f.note}</td>
+						<td>
+							<ul>
+								{f.evidence.map((e) => (
+									<li>
+										<a href={e.href}>{e.label}</a>
+									</li>
+								))}
+							</ul>
+						</td>
+					</tr>
+				))
+			}
+		</tbody>
+	</table>
+</div>
+
+<style>
+	.ck-matrix {
+		overflow-x: auto;
+		border: 1px solid var(--ck-border);
+		background: var(--ck-surface);
+	}
+	table {
+		width: 100%;
+		min-width: 52rem;
+		border-collapse: collapse;
+		font-size: var(--sl-text-sm);
+	}
+	th,
+	td {
+		padding: var(--ck-space-3) var(--ck-space-4);
+		text-align: left;
+		vertical-align: top;
+		border-bottom: 1px solid var(--ck-border);
+	}
+	tbody tr:last-child > * {
+		border-bottom: 0;
+	}
+	thead th {
+		font-family: var(--__sl-font-mono);
+		font-size: var(--sl-text-2xs);
+		font-weight: 500;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--ck-muted);
+		background: var(--ck-raised);
+	}
+	tbody th {
+		font-family: var(--__sl-font-mono);
+		font-weight: 600;
+		white-space: nowrap;
+		color: var(--ck-text);
+	}
+	.ck-detail {
+		display: block;
+		margin-top: var(--ck-space-1);
+		color: var(--ck-muted);
+	}
+	.ck-note {
+		color: var(--ck-text);
+		max-width: 22rem;
+	}
+	ul {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+	li + li {
+		margin-top: var(--ck-space-1);
+	}
+</style>

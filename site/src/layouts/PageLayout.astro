@@ -1,0 +1,96 @@
+---
+// Layout for every hand-written page (landing, demo, stats, community, legal, format pages).
+// Renders through Starlight, so header, search, theme toggle and footer match the docs.
+//
+//   <PageLayout title="Stats" description="..." breadcrumbs={[{ label: 'Stats' }]}>
+//     <section class="ck-container">...</section>
+//   </PageLayout>
+//
+// The page <h1> is the title (rendered here) unless header={false}, in which case the page
+// must render exactly one <h1> itself. An Open Graph card is generated for every page.
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+import Breadcrumbs from '../components/Breadcrumbs.astro';
+import type { Crumb } from '../lib/page-meta';
+
+interface Props {
+	/** Page name; <title> becomes "<title> · cadkit". */
+	title: string;
+	/** Unique meta description (about 120-160 characters). */
+	description: string;
+	/** Trail after "Home"; also emitted as BreadcrumbList JSON-LD. */
+	breadcrumbs?: Crumb[];
+	/** Custom OG image path; default is the generated card for this URL. */
+	ogImage?: string;
+	/** Extra JSON-LD objects. */
+	jsonLd?: Record<string, unknown>[];
+	/** Omit the analytics beacon (always omitted under /demo/). */
+	noAnalytics?: boolean;
+	noindex?: boolean;
+	ogType?: 'website' | 'article';
+	/** Render the standard page header (eyebrow, h1, lead). Default true. */
+	header?: boolean;
+	eyebrow?: string;
+	/** Lead paragraph under the h1; defaults to the description. */
+	lead?: string;
+	/** Include the page in the site search index. Default true. */
+	pagefind?: boolean;
+}
+
+const {
+	title,
+	description,
+	breadcrumbs,
+	ogImage,
+	jsonLd,
+	noAnalytics,
+	noindex,
+	ogType,
+	header = true,
+	eyebrow,
+	lead = description,
+	pagefind = true,
+} = Astro.props;
+
+Astro.locals.cadkitPage = { custom: true, breadcrumbs, ogImage, jsonLd, noAnalytics, noindex, ogType };
+---
+
+<StarlightPage frontmatter={{ title, description, template: 'splash', pagefind }} hasSidebar={false}>
+	<div class="ck-page">
+		{
+			(breadcrumbs || header) && (
+				<header class="ck-page-header ck-container">
+					{breadcrumbs && <Breadcrumbs items={breadcrumbs} />}
+					{header && (
+						<>
+							{eyebrow && <p class="ck-eyebrow">{eyebrow}</p>}
+							<h1>{title}</h1>
+							{lead && <p class="ck-lead">{lead}</p>}
+						</>
+					)}
+				</header>
+			)
+		}
+		<slot />
+	</div>
+</StarlightPage>
+
+<style>
+	.ck-page {
+		padding-bottom: var(--ck-space-8);
+	}
+	.ck-page-header {
+		padding-top: var(--ck-space-12);
+		padding-bottom: var(--ck-space-8);
+	}
+	.ck-page-header h1 {
+		margin: var(--ck-space-4) 0 0;
+		font-size: clamp(2.25rem, 1.6rem + 2.6vw, 3.5rem);
+		line-height: 1.08;
+	}
+	.ck-page-header .ck-eyebrow {
+		margin: var(--ck-space-6) 0 0;
+	}
+	.ck-page-header .ck-lead {
+		margin: var(--ck-space-4) 0 0;
+	}
+</style>

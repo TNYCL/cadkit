@@ -1,0 +1,65 @@
+---
+title: "Scene and GPU rendering"
+description: "Render CAD plans with cadkit-scene and cadkit-gpu in Rust: turn a drawing into chunked plan data without a GPU, then draw it with wgpu in your own render pass."
+next:
+  link: /docs/reference/python/
+  label: Python API
+---
+
+import { Code } from '@astrojs/starlight/components';
+import { CADKIT_VERSION } from '../../../../config';
+import plan from '../../../../../scripts/check-snippets/docs/rust/scene_plan.rs?raw';
+import paint from '../../../../../scripts/check-snippets/docs/rust/gpu_paint.rs?raw';
+
+Two Rust crates turn drawings into pixels, separately from file I/O:
+
+- **`cadkit-scene`** is scene data that needs no GPU. `Plan2d` stores 2D lines, polylines,
+  arcs and circles in fixed-size chunks, encodes each chunk once for the GPU in `f32`
+  coordinates relative to the chunk centre, and checks every frame whether that precision
+  still meets a screen-space error budget. Chunks that do not, and objects you mark as
+  overlays, are handed back for your CPU drawing path. `Mesh3d` holds `f64` triangle meshes.
+- **`cadkit-gpu`** draws them with `wgpu` 30 (re-exported as `cadkit_gpu::wgpu`): analytic
+  antialiased strokes with mitred corners, lit depth-tested meshes with an orbit camera, and
+  offscreen rendering with readback. The renderers take your device, queue and render pass;
+  they open no window, so any UI toolkit can host them.
+
+Neither is exposed by the Python, JavaScript or C packages; cadkit-wasm renders through SVG.
+
+<Code code={`[dependencies]\ncadkit = "${CADKIT_VERSION}"\ncadkit-geom = "${CADKIT_VERSION}"\ncadkit-scene = { version = "${CADKIT_VERSION}", features = ["document"] }\ncadkit-gpu = "${CADKIT_VERSION}"`} lang="toml" title="Cargo.toml" />
+
+## From a drawing to plan data, without a GPU
+
+The `document` feature of `cadkit-scene` bridges a read drawing to the plan:
+`plan_document` expands blocks and arrays, projects one model onto XY, makes one group per
+layer, resolves colours and lineweight widths, and flattens curves that do not stay circular.
+
+<Code code={plan} lang="rust" title="src/main.rs" />
+
+On the sample floor plan it reports 135 entities drawn and 26 skipped (text) and splits the
+view into GPU chunk draws. The `DocumentPlanReport` tells you what was not drawn as stored:
+skipped kinds, flattened curves, dashed linetypes drawn solid and whether the traversal budget
+ran out. Text, hatches and fills, points, images and viewports are not drawn by this bridge;
+draw them through your own path if you need them.
+
+## Drawing with wgpu
+
+<Code code={paint} lang="rust" title="src/plan_paint.rs" />
+
+Create one `PlanRenderer::new(&device, surface_format)` and call `prepare` and `paint` every
+frame inside a render pass you own. Chunk buffers are uploaded once per content change; moving
+the camera rewrites only a few bytes per chunk. Objects in `frame.cpu` (chunks over the
+precision budget, overlays such as a selection) are yours to draw, for example highlighted on
+top. GPU validation and out-of-memory errors are returned as `GpuError`s.
+
+From a checkout, an example renders a DWG, DXF or DGN plan to PNG offscreen (it reports CPU
+handoffs but does not draw them):
+
+```sh
+cargo run -p cadkit-gpu --example render_png -- plan.dxf plan.png 1600 1000
+```
+
+## Related
+
+- [Host integration: scene and GPU](/docs/reference/integration/#scene-and-gpu-integration)
+- [Architecture](/docs/reference/architecture/#scene-and-rendering)
+- API: [docs.rs/cadkit-scene](https://docs.rs/cadkit-scene) and [docs.rs/cadkit-gpu](https://docs.rs/cadkit-gpu)

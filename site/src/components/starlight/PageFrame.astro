@@ -1,0 +1,14 @@
+---
+// Wraps Starlight's frame: adds the drafting grid behind the first screen and the site footer
+// (title block) after the content, outside <main>, on every page.
+import Default from '@astrojs/starlight/components/PageFrame.astro';
+import SiteFooter from '../SiteFooter.astro';
+---
+
+<Default>
+	<slot name="header" slot="header" />
+	<slot name="sidebar" slot="sidebar" />
+	<div class="ck-grid-bg" aria-hidden="true"></div>
+	<slot />
+	<SiteFooter />
+</Default>

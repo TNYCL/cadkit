@@ -1,0 +1,242 @@
+---
+// Site header shared by docs and hand-written pages: brand, primary navigation, search,
+// GitHub and the theme toggle. Pages without the docs sidebar get a small disclosure menu
+// on narrow screens (docs use Starlight's sidebar menu, see MobileMenuFooter).
+import Search from '@astrojs/starlight/components/Search.astro';
+import { Icon } from '@astrojs/starlight/components';
+import ThemeToggle from '../ThemeToggle.astro';
+import Logo from '../Logo.astro';
+import { NAV, REPO } from '../../config';
+
+const { hasSidebar } = Astro.locals.starlightRoute;
+const path = Astro.url.pathname;
+const current = (href: string) => (path === href || path.startsWith(href) ? 'page' : undefined);
+---
+
+<div class="ck-header">
+	<a class="ck-brand" href="/">
+		<Logo class="ck-brand-mark" size={28} />
+		<span class="ck-brand-word" translate="no">cadkit</span>
+		<span class="sr-only">home</span>
+	</a>
+
+	<nav class="ck-nav" aria-label="Primary">
+		<ul>
+			{
+				NAV.map((l) => (
+					<li>
+						<a href={l.href} aria-current={current(l.href)}>
+							{l.label}
+						</a>
+					</li>
+				))
+			}
+		</ul>
+	</nav>
+
+	<div class="ck-search print:hidden"><Search /></div>
+
+	<div class="ck-actions print:hidden">
+		<a class="ck-icon-link" href={REPO} aria-label="cadkit on GitHub">
+			<Icon name="github" size="1.25rem" />
+		</a>
+		<ThemeToggle />
+	</div>
+
+	{
+		!hasSidebar && (
+			<details class="ck-menu print:hidden" data-ck-menu>
+				<summary>
+					<svg class="ck-menu-open" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+						<path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="1.75" fill="none" />
+					</svg>
+					<svg class="ck-menu-close" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+						<path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="1.75" fill="none" />
+					</svg>
+					<span class="sr-only">Menu</span>
+				</summary>
+				<div class="ck-menu-panel">
+					<nav aria-label="Primary (menu)">
+						<ul>
+							{NAV.map((l) => (
+								<li>
+									<a href={l.href} aria-current={current(l.href)}>
+										{l.label}
+									</a>
+								</li>
+							))}
+							<li>
+								<a href={REPO}>GitHub</a>
+							</li>
+						</ul>
+					</nav>
+					<ThemeToggle withLabel />
+				</div>
+			</details>
+		)
+	}
+</div>
+
+<script>
+	// Close the disclosure menu with Escape or a click outside it.
+	for (const menu of document.querySelectorAll<HTMLDetailsElement>('[data-ck-menu]')) {
+		document.addEventListener('keydown', (e) => {
+			if (e.key === 'Escape' && menu.open) {
+				menu.open = false;
+				menu.querySelector('summary')?.focus();
+			}
+		});
+		document.addEventListener('click', (e) => {
+			if (menu.open && e.target instanceof Node && !menu.contains(e.target)) menu.open = false;
+		});
+	}
+</script>
+
+<style>
+	.ck-header {
+		display: flex;
+		align-items: center;
+		gap: var(--ck-space-4);
+		height: 100%;
+	}
+
+	.ck-brand {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.625rem;
+		color: var(--ck-text);
+		text-decoration: none;
+		flex: none;
+	}
+	.ck-brand-word {
+		font-stretch: 115%;
+		font-weight: 500;
+		font-size: 1.375rem;
+		letter-spacing: -0.01em;
+		line-height: 1;
+	}
+
+	.ck-nav {
+		display: none;
+	}
+	.ck-nav ul,
+	.ck-menu ul {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+	.ck-nav ul {
+		display: flex;
+		gap: var(--ck-space-1);
+	}
+	.ck-nav a {
+		display: inline-flex;
+		align-items: center;
+		height: 2.5rem;
+		padding-inline: var(--ck-space-3);
+		color: var(--ck-muted);
+		text-decoration: none;
+		font-size: var(--sl-text-sm);
+		font-weight: 500;
+		border-radius: var(--ck-radius);
+	}
+	.ck-nav a:hover {
+		color: var(--ck-text);
+	}
+	.ck-nav a[aria-current='page'] {
+		color: var(--ck-text);
+		box-shadow: inset 0 -2px 0 var(--ck-accent);
+		border-radius: 0;
+	}
+
+	.ck-search {
+		margin-inline-start: auto;
+		display: flex;
+	}
+
+	.ck-actions {
+		display: none;
+		align-items: center;
+		gap: var(--ck-space-1);
+	}
+	.ck-icon-link {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 2.5rem;
+		height: 2.5rem;
+		color: var(--ck-text);
+		border: 1px solid transparent;
+		border-radius: var(--ck-radius);
+	}
+	.ck-icon-link:hover {
+		color: var(--ck-accent);
+		border-color: var(--ck-border);
+	}
+
+	.ck-menu {
+		position: static;
+	}
+	.ck-menu summary {
+		list-style: none;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 2.5rem;
+		height: 2.5rem;
+		color: var(--ck-text);
+		border: 1px solid var(--ck-border);
+		border-radius: var(--ck-radius);
+		cursor: pointer;
+	}
+	.ck-menu summary::-webkit-details-marker {
+		display: none;
+	}
+	.ck-menu summary svg {
+		width: 1.25rem;
+		height: 1.25rem;
+	}
+	.ck-menu[open] summary {
+		border-color: var(--ck-accent);
+		color: var(--ck-accent);
+	}
+	/* Same icons as the docs menu button: bars when closed, a cross when open. */
+	.ck-menu[open] .ck-menu-open,
+	.ck-menu:not([open]) .ck-menu-close {
+		display: none;
+	}
+	.ck-menu-panel {
+		position: fixed;
+		inset: var(--sl-nav-height) 0 auto 0;
+		display: flex;
+		flex-direction: column;
+		gap: var(--ck-space-4);
+		padding: var(--ck-space-4);
+		background: var(--ck-bg);
+		border-bottom: 1px solid var(--ck-border);
+		box-shadow: var(--sl-shadow-lg);
+	}
+	.ck-menu-panel a {
+		display: block;
+		padding-block: var(--ck-space-2);
+		color: var(--ck-text);
+		text-decoration: none;
+		font-size: var(--sl-text-lg);
+	}
+	.ck-menu-panel a[aria-current='page'] {
+		color: var(--ck-accent);
+	}
+
+	@media (min-width: 50rem) {
+		.ck-nav,
+		.ck-actions {
+			display: flex;
+		}
+		.ck-menu {
+			display: none;
+		}
+		.ck-search {
+			margin-inline-start: auto;
+		}
+	}
+</style>

@@ -1,0 +1,14 @@
+version: 2
+updates:
+  # Website dependencies (site/). Rust crates are updated by hand: their versions are part of
+  # the public API and the MSRV policy.
+  - package-ecosystem: npm
+    directory: /site
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      astro:
+        patterns: ["astro", "@astrojs/*"]
+      fonts:
+        patterns: ["@fontsource-variable/*"]

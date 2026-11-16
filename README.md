@@ -13,6 +13,8 @@
 
 **An open-source CAD engine for building CAD applications.**
 
+Website and documentation: **<https://cadkit.org>** · [Live demo](https://cadkit.org/demo/) (files stay in your browser) · [Rust API on docs.rs](https://docs.rs/cadkit)
+
 Read and write CAD files, manipulate geometry, and render with GPU acceleration using
 modules you can adopt independently.
 

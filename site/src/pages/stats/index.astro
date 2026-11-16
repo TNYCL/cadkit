@@ -1,0 +1,677 @@
+---
+// Public project statistics, rendered at build time from the cadkit-stats summary
+// (scripts/prebuild.d/30-stats.mjs). No client JavaScript: charts are inline SVG and HTML.
+import PageLayout from '../../layouts/PageLayout.astro';
+import Callout from '../../components/Callout.astro';
+import StatusChip from '../../components/StatusChip.astro';
+import DimensionDivider from '../../components/DimensionDivider.astro';
+import ChartFigure from '../../stats/components/ChartFigure.astro';
+import TimeSeries from '../../stats/components/TimeSeries.astro';
+import BarList from '../../stats/components/BarList.astro';
+import { stats } from '../../stats/load';
+import { formatCount, formatDate, formatTimestamp, formatPercent } from '../../stats/chart.mjs';
+import { STATS_REPO, STATS_SUMMARY_URL, PYPI_PACKAGE, NPM_PACKAGE, LINKS } from '../../config';
+
+const title = 'Project statistics';
+const description =
+	'Public download counts for cadkit on crates.io, PyPI, npm and GitHub Releases, plus GitHub repository traffic, collected daily by the open cadkit-stats repository.';
+
+const seriesUrl = `${STATS_REPO}/tree/main/data/series`;
+const schemaUrl = `${STATS_REPO}/blob/main/schema/summary.schema.json`;
+const m = stats.ok ? stats.model : null;
+const peak = (values: (number | null)[], dates: string[]) => {
+	let best = -1;
+	values.forEach((v, i) => {
+		if (v !== null && (best < 0 || v > (values[best] ?? 0))) best = i;
+	});
+	return best < 0 ? 'no data' : `peak ${formatCount(values[best] ?? 0)} on ${formatDate(dates[best] ?? '', { year: true })}`;
+};
+const sourceState = (s: { ok: boolean; skipped: boolean }) =>
+	s.ok ? { status: 'ok' as const, label: 'Updated' } : s.skipped ? { status: 'pending' as const, label: 'Not collected' } : { status: 'partial' as const, label: 'Last run failed' };
+const trafficSource = m?.traffic.source;
+---
+
+<PageLayout title={title} description={description} breadcrumbs={[{ label: 'Stats' }]} eyebrow="Stats">
+	<div class="ck-stats">
+		{
+			m ? (
+				<section class="ck-container ck-asof" aria-label="Data freshness and sources">
+					<p class="ck-asof-line">
+						<span class="ck-mono">As of <time datetime={m.generatedAt}>{formatTimestamp(m.generatedAt)}</time></span>
+						<span>
+							Collected daily by <a href={STATS_REPO}>cadkit-stats</a> · <a href={STATS_SUMMARY_URL}>raw summary.json</a>
+						</span>
+					</p>
+					{m.stale && (
+						<Callout variant="caution" title="These numbers are not current">
+							<p>
+								The latest summary is {m.ageDays} days old: the daily collector has not published new data since then.
+								Everything below is as of {formatTimestamp(m.generatedAt)}.
+							</p>
+						</Callout>
+					)}
+					{m.sources.length > 0 && (
+						<ul class="ck-sources" aria-label="Status of each data source in the latest collection">
+							{m.sources.map((s) => {
+								const st = sourceState(s);
+								return (
+									<li>
+										<span class="ck-source-name">{s.label}</span>
+										<StatusChip status={st.status} label={st.label} />
+										{!s.ok && (
+											<span class="ck-source-note">
+												{s.lastSuccessAt ? <>values from {formatTimestamp(s.lastSuccessAt)}</> : 'no earlier data'}
+											</span>
+										)}
+									</li>
+								);
+							})}
+						</ul>
+					)}
+				</section>
+			) : (
+				<section class="ck-container ck-asof" aria-labelledby="unavailable">
+					<Callout variant="caution">
+						<h2 id="unavailable" class="ck-unavailable-title">Statistics are temporarily unavailable</h2>
+						<p>
+							This build could not use the public statistics summary ({stats.ok ? '' : stats.reason}), so this page
+							shows no numbers rather than old or estimated ones.
+							{stats.checkedAt && <> Checked at <span class="ck-nowrap">{formatTimestamp(stats.checkedAt)}</span>.</>}
+						</p>
+						<p>
+							The collected data is public: see the <a href={STATS_REPO}>cadkit-stats repository</a>, its{' '}
+							<a href={STATS_SUMMARY_URL}>summary.json</a> and the <a href={seriesUrl}>daily series (CSV)</a>.
+						</p>
+					</Callout>
+				</section>
+			)
+		}
+
+		{
+			m && (
+				<>
+					<DimensionDivider label="01 · Downloads" />
+					<section class="ck-container ck-section" aria-labelledby="downloads">
+						<h2 id="downloads">Downloads</h2>
+						<p class="ck-section-lead">
+							Registry download counters, not users: CI pipelines, mirrors, caches and bots download packages too.
+							Read them as a trend.
+						</p>
+						<dl class="ck-tiles">
+							<div class="ck-tile">
+								<dt>crates.io</dt>
+								<dd class="ck-tile-value">{formatCount(m.totals.crates)}</dd>
+								<dd class="ck-tile-detail">all-time, {m.totals.cratesCount} crates combined</dd>
+							</div>
+							<div class="ck-tile">
+								<dt>PyPI <code>{PYPI_PACKAGE}</code></dt>
+								<dd class="ck-tile-value">{formatCount(m.totals.pypi)}</dd>
+								<dd class="ck-tile-detail">
+									without mirrors{m.totals.pypiSince && <>, since {formatDate(m.totals.pypiSince, { year: true })}</>}
+								</dd>
+							</div>
+							<div class="ck-tile">
+								<dt>npm <code>{NPM_PACKAGE}</code></dt>
+								<dd class="ck-tile-value">{formatCount(m.totals.npm)}</dd>
+								<dd class="ck-tile-detail">
+									tarball downloads{m.totals.npmSince && <>, since {formatDate(m.totals.npmSince, { year: true })}</>}
+								</dd>
+							</div>
+							<div class="ck-tile">
+								<dt>GitHub release assets</dt>
+								<dd class="ck-tile-value">{formatCount(m.totals.releaseAssets)}</dd>
+								<dd class="ck-tile-detail">all-time, {m.releases.count} releases</dd>
+							</div>
+						</dl>
+						<p class="ck-small">
+							PyPI with mirrors: {formatCount(m.totals.pypiWithMirrors)}. Mirrors are services that copy every
+							package on PyPI, wanted or not, so the count without them is the better signal. Last 30 days: PyPI{' '}
+							{formatCount(m.recent.pypi.lastMonth)}, npm {formatCount(m.recent.npm.lastMonth)} (as reported by the
+							registries). PyPI and npm totals are sums of the daily series the collector has kept.
+						</p>
+
+						{m.daily && (
+							<ChartFigure id="daily" title={`Daily downloads per channel, ${m.daily.span}`} takeaway={m.daily.takeaway}>
+								<ul class="ck-legend" aria-label="Legend">
+									<li><span class="ck-key ck-key--col" aria-hidden="true" />Downloads per day</li>
+									<li><span class="ck-key ck-key--line" aria-hidden="true" />7-day average</li>
+								</ul>
+								<div class="ck-multiples">
+									{m.daily.panels.map((p) => (
+										<TimeSeries
+											label={p.label}
+											detail={p.detail}
+											dates={m.daily!.dates}
+											columns={p.values}
+											line={p.mean7}
+											axis={m.daily!.axis}
+											columnsUnit="downloads"
+											lineUnit="7-day average"
+											summary={`Daily ${p.label} downloads, ${m.daily!.span}: ${peak(p.values, m.daily!.dates)}.`}
+										/>
+									))}
+								</div>
+								<Fragment slot="note">
+									<p>
+										All three panels share one scale. A day without a column had no downloads or was not reported yet
+										(the table tells them apart); the most recent day may be incomplete. The 7-day average starts once seven days of data exist. Up to 90 days are
+										shown; the <a href={seriesUrl}>daily series</a> keep the full history.
+									</p>
+								</Fragment>
+								<table slot="table">
+									<caption class="sr-only">Daily downloads per channel</caption>
+									<thead>
+										<tr>
+											<th scope="col">Date</th>
+											{m.daily.panels.map((p) => <th scope="col" class="num">{p.label}</th>)}
+										</tr>
+									</thead>
+									<tbody>
+										{[...m.daily.dates].reverse().map((d) => {
+											const i = m.daily!.dates.indexOf(d);
+											return (
+												<tr>
+													<th scope="row"><time datetime={d}>{d}</time></th>
+													{m.daily!.panels.map((p) => {
+														const v = p.values[i];
+														return <td class="num">{v === null || v === undefined ? '–' : formatCount(v)}</td>;
+													})}
+												</tr>
+											);
+										})}
+									</tbody>
+								</table>
+							</ChartFigure>
+						)}
+
+						<div class="ck-grid-2">
+							<ChartFigure id="crates" title="Downloads per crate, all-time" takeaway={m.crates.takeaway}>
+								<BarList
+									label="Downloads per crate"
+									rows={m.crates.rows.map((c) => ({ label: c.name, value: c.downloads, code: true }))}
+									total={m.crates.total}
+								/>
+								<Fragment slot="note">
+									<p>
+										Crates download their dependencies: one install of <code>cadkit</code> also downloads{' '}
+										<code>cadkit-core</code> and the format crates it enables, so per-crate counts overlap and do
+										not add up to installs.
+									</p>
+								</Fragment>
+								<table slot="table">
+									<caption class="sr-only">Downloads per crate</caption>
+									<thead>
+										<tr>
+											<th scope="col">Crate</th>
+											<th scope="col" class="num">All-time</th>
+											<th scope="col" class="num">Last 90 days</th>
+											<th scope="col">Latest version</th>
+										</tr>
+									</thead>
+									<tbody>
+										{m.crates.rows.map((c) => (
+											<tr>
+												<th scope="row"><code>{c.name}</code></th>
+												<td class="num">{formatCount(c.downloads)}</td>
+												<td class="num">{formatCount(c.recent_90d)}</td>
+												<td>{c.max_version}</td>
+											</tr>
+										))}
+									</tbody>
+								</table>
+							</ChartFigure>
+
+							<ChartFigure id="pypi-os" title="PyPI downloads by operating system" takeaway={m.pypiOs.takeaway}>
+								<BarList
+									label="PyPI downloads by operating system"
+									rows={[
+										...m.pypiOs.reported.map((r) => ({ label: r.label, value: r.value })),
+										{ label: 'Not reported', value: m.pypiOs.notReported, muted: true },
+									]}
+									total={m.pypiOs.total}
+								/>
+								<Fragment slot="note">
+									<p>
+										Without mirrors, over the days the collector has kept. Many installers, CI systems and caching
+										proxies do not send the operating system, so a large “not reported” share is normal; the
+										reported rows are a sample, not the whole.
+									</p>
+								</Fragment>
+								<table slot="table">
+									<caption class="sr-only">PyPI downloads by operating system</caption>
+									<thead>
+										<tr>
+											<th scope="col">Operating system</th>
+											<th scope="col" class="num">Downloads</th>
+											<th scope="col" class="num">Share</th>
+										</tr>
+									</thead>
+									<tbody>
+										{[...m.pypiOs.reported, { label: 'Not reported', value: m.pypiOs.notReported }].map((r) => (
+											<tr>
+												<th scope="row">{r.label}</th>
+												<td class="num">{formatCount(r.value)}</td>
+												<td class="num">{formatPercent(r.value, m.pypiOs.total)}</td>
+											</tr>
+										))}
+									</tbody>
+								</table>
+							</ChartFigure>
+						</div>
+
+						<ChartFigure id="releases" title="GitHub release downloads by artefact" takeaway={m.releases.takeaway}>
+							<BarList label="GitHub release downloads by artefact" rows={m.releases.kinds} total={m.releases.total} />
+							<Fragment slot="note">
+								<p>
+									Counts of direct downloads from <a href={LINKS.releases}>GitHub Releases</a>, all releases combined.
+									Python and npm users normally install from PyPI and npm instead; those are counted above.
+								</p>
+							</Fragment>
+							<table slot="table">
+								<caption class="sr-only">GitHub release downloads by release</caption>
+								<thead>
+									<tr>
+										<th scope="col">Release</th>
+										<th scope="col" class="num">Downloads</th>
+									</tr>
+								</thead>
+								<tbody>
+									{m.releases.tags.map((t) => (
+										<tr>
+											<th scope="row">{t.tag}</th>
+											<td class="num">{formatCount(t.value)}</td>
+										</tr>
+									))}
+								</tbody>
+							</table>
+						</ChartFigure>
+					</section>
+
+					<DimensionDivider label="02 · Repository" />
+					<section class="ck-container ck-section" aria-labelledby="repository">
+						<h2 id="repository">Repository</h2>
+						<p class="ck-section-lead">
+							GitHub keeps traffic for a rolling 14 days only; the collector stores each day it captures.
+						</p>
+						{trafficSource && !trafficSource.ok && (
+							<Callout variant="caution" title="GitHub traffic was not collected in the latest run">
+								<p>
+									{trafficSource.lastSuccessAt
+										? <>The traffic figures below are from {formatTimestamp(trafficSource.lastSuccessAt)}.</>
+										: <>No traffic has been captured yet.</>}
+								</p>
+							</Callout>
+						)}
+						{m.traffic.window ? (
+							<>
+								<dl class="ck-facts">
+									<div><dt>Views, 14 days</dt><dd>{formatCount(m.traffic.window.views)}</dd></div>
+									<div><dt>Unique visitors</dt><dd>{formatCount(m.traffic.window.unique_views)}</dd></div>
+									<div><dt>Clones, 14 days</dt><dd>{formatCount(m.traffic.window.clones)}</dd></div>
+									<div><dt>Unique cloners</dt><dd>{formatCount(m.traffic.window.unique_clones)}</dd></div>
+								</dl>
+								<div class="ck-grid-2">
+									{[
+										{ id: 'views', key: 'views' as const, title: 'Repository page views per day', col: 'Views', line: 'Unique visitors', unit: 'views' },
+										{ id: 'clones', key: 'clones' as const, title: 'Repository clones per day', col: 'Clones', line: 'Unique cloners', unit: 'clones' },
+									].map((c) => {
+										const t = m.traffic[c.key];
+										return t ? (
+											<ChartFigure
+												id={c.id}
+												title={c.title}
+												takeaway={
+													c.key === 'views'
+														? `${t.days} captured days, ${t.span}.`
+														: `${t.days} captured days, ${t.span}. Most clones come from automated systems such as CI, not people.`
+												}
+											>
+												<ul class="ck-legend" aria-label="Legend">
+													<li><span class="ck-key ck-key--col" aria-hidden="true" />{c.col}</li>
+													<li><span class="ck-key ck-key--line" aria-hidden="true" />{c.line}</li>
+												</ul>
+												<TimeSeries
+													label={c.col}
+													dates={t.dates}
+													columns={t.count}
+													line={t.uniques}
+													axis={t.axis!}
+													columnsUnit={c.unit}
+													lineUnit={c.line.toLowerCase()}
+													summary={`${c.title}, ${t.span}: ${peak(t.count, t.dates)}.`}
+												/>
+												<table slot="table">
+													<caption class="sr-only">{c.title}</caption>
+													<thead>
+														<tr>
+															<th scope="col">Date</th>
+															<th scope="col" class="num">{c.col}</th>
+															<th scope="col" class="num">{c.line}</th>
+														</tr>
+													</thead>
+													<tbody>
+														{[...t.dates.keys()].reverse().filter((i) => t.count[i] !== null).map((i) => (
+															<tr>
+																<th scope="row"><time datetime={t.dates[i]}>{t.dates[i]}</time></th>
+																<td class="num">{formatCount(t.count[i] ?? 0)}</td>
+																<td class="num">{formatCount(t.uniques[i] ?? 0)}</td>
+															</tr>
+														))}
+													</tbody>
+												</table>
+											</ChartFigure>
+										) : null;
+									})}
+								</div>
+							</>
+						) : (
+							<p class="ck-small">No GitHub traffic has been captured yet.</p>
+						)}
+						<dl class="ck-facts ck-facts--small" aria-label="Repository facts">
+							<div><dt>Stars</dt><dd>{formatCount(m.repo.stars)}</dd></div>
+							<div><dt>Forks</dt><dd>{formatCount(m.repo.forks)}</dd></div>
+							<div><dt>Open issues and pull requests</dt><dd>{formatCount(m.repo.openIssues)}</dd></div>
+							<div><dt>Watchers</dt><dd>{formatCount(m.repo.watchers)}</dd></div>
+						</dl>
+					</section>
+				</>
+			)
+		}
+
+		<DimensionDivider label={m ? '03 · Method' : 'Method'} />
+		<section class="ck-container ck-section" aria-labelledby="how-to-read">
+			<h2 id="how-to-read">How to read these numbers</h2>
+			<ul class="ck-grips ck-read">
+				<li>
+					<strong>Downloads are not users.</strong> CI pipelines, dependency bots, caches and rebuilds download
+					packages on every run, and one project can account for thousands of downloads.
+				</li>
+				<li>
+					<strong>Mirrors.</strong> Some services copy every package published on PyPI. pypistats.org separates
+					known mirrors, and this page uses the count without them.
+				</li>
+				<li>
+					<strong>crates.io timing.</strong> crates.io updates all-time totals and per-day counts on different
+					schedules, so for a short time the daily series can add up to slightly more than the total. Per-day data
+					is only offered for 90 days; the collector keeps older days.
+				</li>
+				<li>
+					<strong>GitHub traffic.</strong> GitHub reports views and clones for the last 14 days only; days the
+					collector did not capture are missing for good. Clones are dominated by automated systems.
+				</li>
+				<li>
+					<strong>Incomplete days.</strong> The most recent day of each series may still be counting; the next
+					daily run corrects it.
+				</li>
+				<li>
+					<strong>No telemetry.</strong> cadkit never phones home: the libraries, bindings and CLI contain no
+					telemetry and no network code. Every number here comes from public registry and GitHub counters.
+				</li>
+			</ul>
+		</section>
+
+		<section class="ck-container ck-section" aria-labelledby="data">
+			<h2 id="data">Data and method</h2>
+			<p class="ck-section-lead">
+				The collector, its schema and every daily snapshot are public and licensed MIT OR Apache-2.0. This page is
+				rebuilt from the published summary; nothing is measured on this website.
+			</p>
+			<ul class="ck-grips ck-read">
+				<li><a href={STATS_REPO}>cadkit-stats repository</a>: collector, schedule and documentation</li>
+				<li><a href={STATS_SUMMARY_URL}>summary.json</a>: the file this page is built from (<a href={schemaUrl}>schema</a>)</li>
+				<li><a href={seriesUrl}>Daily series as CSV</a>: the full history per channel</li>
+			</ul>
+			{
+				m && m.notes.length > 0 && (
+					<details class="ck-notes">
+						<summary>Collector notes for this summary</summary>
+						<ul>
+							{m.notes.map((n: string) => <li>{n}</li>)}
+						</ul>
+					</details>
+				)
+			}
+		</section>
+	</div>
+</PageLayout>
+
+<style>
+	.ck-stats {
+		--ck-stats-context: color-mix(in srgb, var(--ck-muted) 55%, var(--ck-surface));
+	}
+	.ck-asof {
+		display: grid;
+		gap: var(--ck-space-4);
+		padding-bottom: var(--ck-space-8);
+	}
+	.ck-asof-line {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--ck-space-2) var(--ck-space-6);
+		margin: 0;
+		font-size: var(--sl-text-sm);
+		color: var(--ck-muted);
+	}
+	.ck-asof-line .ck-mono {
+		color: var(--ck-text);
+	}
+	.ck-asof :global(.ck-callout-body p + p) {
+		margin-top: var(--ck-space-2);
+	}
+	.ck-nowrap {
+		white-space: nowrap;
+	}
+	.ck-unavailable-title {
+		margin: 0 0 var(--ck-space-2);
+		font-size: var(--sl-text-xl);
+	}
+	.ck-sources {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--ck-space-2) var(--ck-space-6);
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		font-size: var(--sl-text-sm);
+	}
+	.ck-sources li {
+		display: inline-flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: var(--ck-space-2);
+	}
+	.ck-source-note {
+		font-size: var(--sl-text-xs);
+		color: var(--ck-muted);
+	}
+	/* Narrow screens: one source per row, chips aligned in a second column. */
+	@media (max-width: 49.99rem) {
+		.ck-sources {
+			display: grid;
+			grid-template-columns: auto 1fr;
+			gap: var(--ck-space-2) var(--ck-space-4);
+		}
+		.ck-sources li {
+			display: grid;
+			grid-column: 1 / -1;
+			grid-template-columns: subgrid;
+			align-items: center;
+		}
+		.ck-sources li > :global(*) {
+			justify-self: start;
+		}
+		.ck-source-note {
+			grid-column: 2;
+		}
+	}
+
+	.ck-section {
+		display: grid;
+		gap: var(--ck-space-6);
+		padding-top: var(--ck-space-8);
+		padding-bottom: var(--ck-space-12);
+	}
+	.ck-section h2 {
+		margin: 0;
+		font-size: clamp(1.75rem, 1.4rem + 1.4vw, 2.5rem);
+		line-height: 1.12;
+	}
+	.ck-section-lead {
+		margin: 0;
+		max-width: 48rem;
+		color: var(--ck-muted);
+		font-size: var(--sl-text-lg);
+		line-height: 1.6;
+	}
+	.ck-small {
+		margin: 0;
+		max-width: 52rem;
+		font-size: var(--sl-text-sm);
+		color: var(--ck-muted);
+	}
+
+	.ck-tiles {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+		margin: 0;
+		border-top: 1px solid var(--ck-border);
+		border-left: 1px solid var(--ck-border);
+	}
+	.ck-tile {
+		position: relative;
+		padding: var(--ck-space-4) var(--ck-space-6) var(--ck-space-6);
+		border-right: 1px solid var(--ck-border);
+		border-bottom: 1px solid var(--ck-border);
+		background: var(--ck-surface);
+	}
+	.ck-tile::before {
+		content: '';
+		position: absolute;
+		top: -1px;
+		left: -1px;
+		width: 7px;
+		height: 7px;
+		background: var(--ck-accent);
+	}
+	.ck-tile dt {
+		font-size: var(--sl-text-sm);
+		color: var(--ck-text);
+	}
+	.ck-tile dt code {
+		font-size: var(--sl-text-xs);
+	}
+	.ck-tile dd {
+		margin: 0;
+	}
+	.ck-tile-value {
+		margin-top: var(--ck-space-2) !important;
+		font-stretch: var(--ck-heading-stretch);
+		font-weight: 600;
+		font-size: clamp(2rem, 1.6rem + 1.2vw, 2.75rem);
+		line-height: 1.05;
+		letter-spacing: -0.01em;
+		color: var(--ck-text);
+	}
+	.ck-tile-detail {
+		margin-top: var(--ck-space-2) !important;
+		font-size: var(--sl-text-xs);
+		color: var(--ck-muted);
+	}
+
+	.ck-legend {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--ck-space-2) var(--ck-space-6);
+		list-style: none;
+		margin: 0 0 var(--ck-space-4);
+		padding: 0;
+		font-size: var(--sl-text-xs);
+		color: var(--ck-muted);
+	}
+	.ck-legend li {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--ck-space-2);
+	}
+	.ck-key {
+		display: inline-block;
+		width: 0.875rem;
+	}
+	.ck-key--col {
+		height: 0.75rem;
+		background: var(--ck-stats-context);
+	}
+	.ck-key--line {
+		height: 2px;
+		background: var(--ck-accent);
+		border-radius: 1px;
+	}
+	.ck-multiples {
+		display: grid;
+		gap: var(--ck-space-6);
+	}
+
+	.ck-grid-2 {
+		display: grid;
+		gap: var(--ck-space-6);
+	}
+	@media (min-width: 72rem) {
+		.ck-grid-2 {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+		}
+	}
+
+	.ck-facts {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));
+		gap: var(--ck-space-4) var(--ck-space-6);
+		margin: 0;
+	}
+	.ck-facts div {
+		padding-top: var(--ck-space-3);
+		border-top: 1px solid var(--ck-text);
+	}
+	.ck-facts dt {
+		font-size: var(--sl-text-xs);
+		color: var(--ck-muted);
+	}
+	.ck-facts dd {
+		margin: var(--ck-space-1) 0 0;
+		font-stretch: var(--ck-heading-stretch);
+		font-weight: 600;
+		font-size: var(--sl-text-2xl);
+		line-height: 1.1;
+		color: var(--ck-text);
+	}
+	.ck-facts--small div {
+		border-top-color: var(--ck-border);
+	}
+	.ck-facts--small dd {
+		font-family: var(--__sl-font-mono);
+		font-stretch: 100%;
+		font-weight: 500;
+		font-size: var(--sl-text-base);
+	}
+
+	.ck-read {
+		max-width: 52rem;
+		font-size: var(--sl-text-sm);
+	}
+	.ck-read strong {
+		color: var(--ck-text);
+	}
+	.ck-notes {
+		max-width: 52rem;
+		font-size: var(--sl-text-sm);
+		color: var(--ck-muted);
+	}
+	.ck-notes summary {
+		cursor: pointer;
+		color: var(--ck-accent);
+		width: fit-content;
+	}
+	.ck-notes ul {
+		margin: var(--ck-space-3) 0 0;
+		padding-left: var(--ck-space-6);
+	}
+</style>

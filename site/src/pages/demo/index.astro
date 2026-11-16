@@ -1,0 +1,237 @@
+---
+// /demo/: the in-browser viewer. cadkit-wasm runs in a Web Worker (src/demo/worker.ts) that this
+// page starts; the page itself never loads WebAssembly. Files are read locally and never uploaded.
+// No analytics on /demo/ (NO_ANALYTICS_PREFIXES in src/config.ts), and public/_headers gives
+// /demo/* its own CSP (worker-src 'self', connect-src 'self').
+import PageLayout from '../../layouts/PageLayout.astro';
+import { CADKIT_VERSION, LINKS } from '../../config';
+import { SAMPLES } from '../../demo/samples';
+import { MAX_FILE_BYTES, MAX_SVG_BYTES } from '../../demo/protocol';
+import '../../demo/viewer.css';
+
+const mb = (n: number) => `${Math.round(n / (1024 * 1024))} MiB`;
+const title = 'Viewer demo';
+const description =
+	'Open DWG, DGN, DXF and CityGML drawings in your browser with cadkit-wasm: pan, zoom, inspect layers and entities, export SVG, DXF or JSON. Files never leave the tab.';
+---
+
+<PageLayout
+	title={title}
+	description={description}
+	breadcrumbs={[{ label: 'Demo' }]}
+	eyebrow={`cadkit-wasm ${CADKIT_VERSION} · runs in your browser`}
+	lead="Read a DWG, DGN, DXF or CityGML file with cadkit compiled to WebAssembly. Pan and zoom, toggle layers, pick entities to see their properties, and export the document. Your file is read in this tab and never uploaded."
+	noAnalytics
+>
+	<section class="ck-container ck-demo" aria-labelledby="ck-viewer-heading">
+		<h2 id="ck-viewer-heading" class="sr-only">Viewer</h2>
+		<div class="ck-viewer" id="ck-viewer" data-state="empty" data-sheet="light">
+			<div class="ck-vbar">
+				<button type="button" class="ck-btn ck-btn--primary" id="ck-open">
+					<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 3.5h4l1.5 1.5H14v8H2z" fill="none" stroke="currentColor" stroke-width="1.25"></path></svg>
+					Open file
+				</button>
+				<input type="file" id="ck-file" class="sr-only" tabindex="-1" aria-hidden="true" accept=".dwg,.dxf,.dgn,.gml,.xml" />
+				<label class="ck-vbar-select">
+					<span class="sr-only">Open a sample</span>
+					<select id="ck-sample">
+						<option value="">Samples…</option>
+						{SAMPLES.map((s) => <option value={s.id}>{s.label} ({s.format})</option>)}
+					</select>
+				</label>
+				<p class="ck-vbar-file" id="ck-filename" aria-live="off"><span class="ck-muted">No file open</span></p>
+				<span class="ck-vbar-privacy">
+					<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><rect x="3" y="7" width="10" height="7" fill="none" stroke="currentColor" stroke-width="1.25"></rect><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" fill="none" stroke="currentColor" stroke-width="1.25"></path></svg>
+					Local only, nothing is uploaded
+				</span>
+			</div>
+
+			<div class="ck-vmain">
+				<div class="ck-stage-wrap">
+					<div
+						class="ck-stage"
+						id="ck-stage"
+						tabindex="0"
+						role="application"
+						aria-roledescription="drawing view"
+						aria-label="Drawing"
+						aria-describedby="ck-summary ck-keys"
+					>
+						<div class="ck-canvas" id="ck-canvas"></div>
+						<span class="ck-crosshair" aria-hidden="true"></span>
+					</div>
+
+					<div class="ck-stage-tools" role="group" aria-label="View">
+						<button type="button" class="ck-ibtn" id="ck-zin" aria-label="Zoom in" title="Zoom in (+)" disabled>
+							<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.5"></path></svg>
+						</button>
+						<button type="button" class="ck-ibtn" id="ck-zout" aria-label="Zoom out" title="Zoom out (-)" disabled>
+							<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 8h10" stroke="currentColor" stroke-width="1.5"></path></svg>
+						</button>
+						<button type="button" class="ck-ibtn" id="ck-fit" aria-label="Fit drawing" title="Fit drawing (0)" disabled>
+							<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4" fill="none" stroke="currentColor" stroke-width="1.5"></path></svg>
+						</button>
+						<button type="button" class="ck-ibtn" id="ck-sheet" aria-pressed="false" aria-label="Dark sheet" title="Dark sheet" disabled>
+							<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><rect x="2.5" y="2.5" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.25"></rect><path d="M13.5 2.5v11h-11z" fill="currentColor"></path></svg>
+						</button>
+						<button type="button" class="ck-ibtn ck-touch-done" id="ck-touch-done" hidden>Done</button>
+					</div>
+
+					<p class="ck-readout" id="ck-readout" aria-hidden="true"></p>
+
+					<div class="ck-overlay ck-empty" id="ck-empty">
+						<div class="ck-empty-inner">
+							<svg class="ck-empty-mark" viewBox="0 0 48 48" aria-hidden="true" focusable="false">
+								<path d="M38 13.5A17 17 0 1 0 38 34.5" fill="none" stroke="currentColor" stroke-width="1.5"></path>
+								<rect x="35.5" y="11" width="5" height="5" fill="currentColor"></rect>
+								<rect x="35.5" y="32" width="5" height="5" fill="currentColor"></rect>
+								<rect x="4.5" y="21.5" width="5" height="5" fill="currentColor"></rect>
+								<path d="M24 20v8M20 24h8" stroke="currentColor" stroke-width="1"></path>
+							</svg>
+							<p class="ck-empty-title">Drop a drawing here</p>
+							<p class="ck-empty-text">
+								DWG, DGN, DXF or CityGML, up to {mb(MAX_FILE_BYTES)}. Or open one of the samples:
+							</p>
+							<ul class="ck-empty-samples">
+								{
+									SAMPLES.map((s) => (
+										<li>
+											<button type="button" class="ck-sample-btn" data-sample={s.id}>
+												<span class="ck-sample-fmt">{s.format}</span>
+												<span>{s.label}</span>
+											</button>
+										</li>
+									))
+								}
+							</ul>
+						</div>
+					</div>
+
+					<div class="ck-overlay ck-drop" id="ck-drop" hidden>
+						<p>Drop to open. The file stays in this tab.</p>
+					</div>
+
+					<div class="ck-overlay ck-busy" id="ck-busy" hidden>
+						<div class="ck-busy-card">
+							<p class="ck-busy-phase" id="ck-busy-phase">Working</p>
+							<div class="ck-busy-bar" aria-hidden="true"><span></span></div>
+							<p class="ck-busy-time ck-mono" id="ck-busy-time" aria-hidden="true"></p>
+							<button type="button" class="ck-btn" id="ck-cancel">Cancel</button>
+						</div>
+					</div>
+
+					<div class="ck-overlay ck-touch" id="ck-touch" hidden>
+						<button type="button" class="ck-btn ck-btn--primary" id="ck-touch-start">Tap to interact</button>
+					</div>
+
+					<div class="ck-alert" id="ck-alert" role="alert" hidden></div>
+				</div>
+
+				<aside class="ck-panel" id="ck-panel" aria-label="Drawing details">
+					<span class="ck-panel-handle" aria-hidden="true"></span>
+					<section class="ck-psec" aria-labelledby="ck-h-doc">
+						<h3 id="ck-h-doc">Document</h3>
+						<p class="ck-summary" id="ck-summary">No drawing open. Open a file or a sample to see its format, units, layers and entities here.</p>
+						<div class="ck-model" id="ck-model-wrap" hidden>
+							<label for="ck-model">Model</label>
+							<select id="ck-model"></select>
+						</div>
+						<dl class="ck-dl" id="ck-info"></dl>
+					</section>
+
+					<section class="ck-psec" aria-labelledby="ck-h-layers">
+						<div class="ck-psec-head">
+							<h3 id="ck-h-layers">Layers <span class="ck-count" id="ck-layer-count"></span></h3>
+							<div class="ck-psec-actions">
+								<button type="button" class="ck-link-btn" id="ck-layers-all" disabled>Show all</button>
+								<button type="button" class="ck-link-btn" id="ck-layers-none" disabled>Hide all</button>
+							</div>
+						</div>
+						<ul class="ck-layers" id="ck-layers"></ul>
+					</section>
+
+					<section class="ck-psec" aria-labelledby="ck-h-sel">
+						<div class="ck-psec-head">
+							<h3 id="ck-h-sel" tabindex="-1">Selection</h3>
+							<div class="ck-psec-actions">
+								<button type="button" class="ck-link-btn" id="ck-sel-clear" hidden>Clear</button>
+							</div>
+						</div>
+						<p class="ck-hint" id="ck-sel-hint">Click an entity, or press Enter in the drawing to pick at the crosshair.</p>
+						<dl class="ck-dl" id="ck-sel"></dl>
+					</section>
+
+					<section class="ck-psec" aria-labelledby="ck-h-warn">
+						<h3 id="ck-h-warn">Warnings <span class="ck-count" id="ck-warn-count"></span></h3>
+						<p class="ck-hint" id="ck-warn-hint">
+							Readers record what they could not model as warnings with stable codes and keep going.
+						</p>
+						<div id="ck-warnings"></div>
+					</section>
+
+					<section class="ck-psec" aria-labelledby="ck-h-export">
+						<h3 id="ck-h-export">Export</h3>
+						<ul class="ck-exports">
+							<li>
+								<button type="button" class="ck-btn" id="ck-exp-svg" disabled>SVG</button>
+								<span>The current model as shown, without hidden layers.</span>
+							</li>
+							<li>
+								<button type="button" class="ck-btn" id="ck-exp-dxf" disabled>DXF</button>
+								<span>ASCII DXF R2018 from cadkit's writer. Unknown entities are skipped, groups are flattened, handles are new.</span>
+							</li>
+							<li>
+								<button type="button" class="ck-btn" id="ck-exp-json" disabled>JSON</button>
+								<span>The whole format-neutral document, as the CLI and Python output it.</span>
+							</li>
+						</ul>
+					</section>
+				</aside>
+			</div>
+
+			<div class="ck-vstatus">
+				<p id="ck-status" role="status" aria-live="polite"></p>
+				<p class="ck-engine ck-mono" id="ck-engine">cadkit-wasm {CADKIT_VERSION} · <span id="ck-engine-state">engine not started</span></p>
+			</div>
+		</div>
+		<noscript>
+			<p class="ck-noscript">The viewer needs JavaScript and WebAssembly. The sample files are listed on the <a href="/demo/samples/">samples page</a>.</p>
+		</noscript>
+	</section>
+
+	<section class="ck-container ck-demo-notes" aria-label="About this demo">
+		<div>
+			<h2>Privacy</h2>
+			<ul class="ck-grips">
+				<li>Files you open are read by WebAssembly in a worker inside this tab. They are not uploaded or stored.</li>
+				<li>This page loads no analytics. The samples are downloaded from this site.</li>
+				<li>Exports are created in the browser and saved by your browser's download.</li>
+			</ul>
+		</div>
+		<div>
+			<h2>Limits</h2>
+			<ul class="ck-grips">
+				<li>Files up to {mb(MAX_FILE_BYTES)}; the preview SVG is capped at {mb(MAX_SVG_BYTES)}. The <a href="/docs/">CLI and libraries</a> take your own limits.</li>
+				<li>The preview is an SVG of one model at a time. 3D models are shown as a top view (X/Y).</li>
+				<li>Exports here are SVG, DXF and JSON. DWG has no writer; DGN V8 writing needs a seed file and CityGML writing an explicit CRS, so they are not offered. Coverage per format: <a href={LINKS.interchangeStatus}>INTERCHANGE_STATUS.md</a>.</li>
+			</ul>
+		</div>
+		<div>
+			<h2 id="ck-keys-heading">Keyboard</h2>
+			<p class="sr-only" id="ck-keys">Arrow keys pan, plus and minus zoom, 0 fits the drawing, Enter picks the entity at the crosshair, Escape clears the selection.</p>
+			<dl class="ck-keys" aria-labelledby="ck-keys-heading">
+				<div><dt><kbd>←</kbd> <kbd>↑</kbd> <kbd>→</kbd> <kbd>↓</kbd></dt><dd>Pan (Shift: faster)</dd></div>
+				<div><dt><kbd>+</kbd> <kbd>−</kbd></dt><dd>Zoom in, out</dd></div>
+				<div><dt><kbd>0</kbd></dt><dd>Fit the drawing</dd></div>
+				<div><dt><kbd>Enter</kbd></dt><dd>Pick at the crosshair</dd></div>
+				<div><dt><kbd>Esc</kbd></dt><dd>Clear the selection</dd></div>
+			</dl>
+			<p class="ck-small">Samples, their sources and licences: <a href="/demo/samples/">demo samples</a>.</p>
+		</div>
+	</section>
+</PageLayout>
+
+<script>
+	import { mount } from '../../demo/viewer';
+	mount();
+</script>

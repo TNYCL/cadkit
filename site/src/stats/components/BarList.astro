@@ -1,0 +1,103 @@
+---
+// Ranked horizontal bars in HTML: name, bar, value (and share). One hue; bars grow from one
+// baseline, square there and slightly rounded at the data end. Every value is printed, so the
+// chart reads without hover; rows marked "muted" (for example "not reported") use the neutral
+// context colour.
+import { formatCount, formatPercent } from '../chart.mjs';
+
+interface Row {
+	label: string;
+	value: number;
+	/** Monospace label (crate and package names). */
+	code?: boolean;
+	muted?: boolean;
+}
+interface Props {
+	rows: Row[];
+	/** Show each value's share of this total. */
+	total?: number;
+	/** Accessible name of the list. */
+	label: string;
+}
+const { rows, total, label } = Astro.props;
+const max = Math.max(1, ...rows.map((r) => r.value));
+---
+
+<ol class="ck-bars" aria-label={label}>
+	{
+		rows.map((r) => (
+			<li class:list={['ck-bar-row', { 'is-muted': r.muted }]}>
+				<span class="ck-bar-name">{r.code ? <code>{r.label}</code> : r.label}</span>
+				<span class="ck-bar-track" aria-hidden="true">
+					{r.value > 0 && <span class="ck-bar" style={`width:${Math.max(0.5, (r.value / max) * 100)}%`} />}
+				</span>
+				<span class="ck-bar-value">
+					{formatCount(r.value)}
+					{total !== undefined && <span class="ck-bar-share">{formatPercent(r.value, total)}</span>}
+				</span>
+			</li>
+		))
+	}
+</ol>
+
+<style>
+	.ck-bars {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: grid;
+		gap: var(--ck-space-3);
+	}
+	.ck-bar-row {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
+		grid-template-areas: 'name value' 'bar bar';
+		gap: var(--ck-space-1) var(--ck-space-3);
+		align-items: center;
+		font-size: var(--sl-text-sm);
+	}
+	@media (min-width: 40rem) {
+		.ck-bar-row {
+			grid-template-columns: 11rem minmax(0, 1fr) 8.5rem;
+			grid-template-areas: 'name bar value';
+		}
+	}
+	.ck-bar-name {
+		grid-area: name;
+		min-width: 0;
+		overflow-wrap: anywhere;
+		color: var(--ck-text);
+	}
+	.ck-bar-name code {
+		font-size: var(--sl-text-xs);
+		color: var(--ck-text);
+	}
+	.ck-bar-track {
+		grid-area: bar;
+		display: block;
+		height: 0.75rem;
+	}
+	.ck-bar {
+		display: block;
+		height: 100%;
+		background: var(--ck-accent);
+		border-radius: 0 4px 4px 0;
+	}
+	.is-muted .ck-bar {
+		background: var(--ck-stats-context);
+	}
+	.ck-bar-value {
+		grid-area: value;
+		text-align: right;
+		font-family: var(--__sl-font-mono);
+		font-size: var(--sl-text-xs);
+		font-variant-numeric: tabular-nums;
+		color: var(--ck-text);
+		white-space: nowrap;
+	}
+	.ck-bar-share {
+		display: inline-block;
+		min-width: 3.5rem;
+		color: var(--ck-muted);
+	}
+</style>

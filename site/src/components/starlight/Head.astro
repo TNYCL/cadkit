@@ -1,0 +1,70 @@
+---
+// Extends Starlight's <head>: self-hosted fonts, Open Graph card, JSON-LD, robots, theme colour
+// and the optional Cloudflare Web Analytics beacon.
+import Default from '@astrojs/starlight/components/Head.astro';
+import { Font } from 'astro:assets';
+import { SITE, NO_ANALYTICS_PREFIXES } from '../../config';
+import { ogImagePath } from '../../lib/og-path.mjs';
+import { breadcrumbJsonLd } from '../../lib/json-ld';
+
+const route = Astro.locals.starlightRoute;
+const page = Astro.locals.cadkitPage;
+const path = Astro.url.pathname;
+const title = route.entry.data.title;
+const is404 = path === '/404/' || path === '/404.html' || route.entry.id === '404';
+const noindex = is404 || page?.noindex === true;
+
+type HeadEntry = (typeof route.head)[number];
+let head: HeadEntry[] = route.head.filter(
+	(e) => !(noindex && e.tag === 'link' && e.attrs?.rel === 'canonical')
+);
+const setMeta = (key: 'name' | 'property', value: string, content: string) => {
+	head = head.filter((e) => !(e.tag === 'meta' && e.attrs?.[key] === value));
+	head.push({ tag: 'meta', attrs: { [key]: value, content } });
+};
+
+setMeta('property', 'og:type', page?.ogType ?? 'article');
+if (noindex) {
+	setMeta('name', 'robots', 'noindex');
+} else {
+	const image = new URL(page?.ogImage ?? ogImagePath(path), SITE).href;
+	setMeta('property', 'og:image', image);
+	setMeta('property', 'og:image:width', '1200');
+	setMeta('property', 'og:image:height', '630');
+	setMeta('property', 'og:image:alt', title);
+	setMeta('name', 'twitter:image', image);
+}
+route.head = head;
+
+const crumbs = page?.breadcrumbs
+	? page.breadcrumbs
+	: path.startsWith('/docs/') && path !== '/docs/'
+		? [{ label: 'Docs', href: '/docs/' }, { label: title }]
+		: undefined;
+const jsonLd = [...(page?.jsonLd ?? []), ...(crumbs && !noindex ? [breadcrumbJsonLd(crumbs, path)] : [])];
+
+const token = import.meta.env.PUBLIC_CF_WEB_ANALYTICS_TOKEN?.trim();
+const analytics =
+	Boolean(token) && page?.noAnalytics !== true && !NO_ANALYTICS_PREFIXES.some((p) => path.startsWith(p));
+---
+
+<Default />
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#fafaf7" />
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0b1324" />
+<Font cssVariable="--ck-font-sans-face" preload />
+<Font cssVariable="--ck-font-mono-face" preload />
+{
+	jsonLd.map((data) => (
+		<script is:inline type="application/ld+json" set:html={JSON.stringify(data).replace(/</g, '\\u003c')} />
+	))
+}
+{
+	analytics && (
+		<script
+			is:inline
+			defer
+			src="https://static.cloudflareinsights.com/beacon.min.js"
+			data-cf-beacon={JSON.stringify({ token })}
+		/>
+	)
+}
