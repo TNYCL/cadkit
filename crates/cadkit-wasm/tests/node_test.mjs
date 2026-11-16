@@ -376,3 +376,71 @@ test("inspect, pickEntity, convertUnits, explodeInserts, toDxfBytes and includeH
   const gmlDoc = wasm.CadDocument.fromCityGml(gmlBytes, 1, { maxDepth: 32 });
   gmlDoc.free();
 });
+
+test("bounded picking caps metadata before the JS boundary and preserves legacy picking", () => {
+  const source = wasm.read(new TextEncoder().encode(DXF));
+  const object = source.toJSON();
+  source.free();
+  const entity = object.models[0].entities[0];
+  entity.attributes = [{ tag: "TEST", value: Array(65_536).fill(7), invisible: true }];
+  entity.props = { "test.unexposed": "x".repeat(1_000_000) };
+  const doc = wasm.CadDocument.fromJsonString(JSON.stringify(object));
+  try {
+    const legacy = doc.pickEntity(0, 5, 2.5, 0.5);
+    const hit = doc.pickEntityBounded(0, 5, 2.5, 0.5, { maxOutputBytes: 4096 });
+    assert.equal(legacy.attributes[0].value.length, 65_536);
+    assert.equal(legacy.props["test.unexposed"].length, 1_000_000);
+    assert.equal(hit.index, legacy.index);
+    assert.equal(hit.kind, legacy.kind);
+    assert.deepEqual(hit.bbox, legacy.bbox);
+    assert.equal(hit.truncated, true);
+    assert.equal(Object.hasOwn(hit, "props"), false);
+    assert.equal(hit.attributes[0].value.match(/7/g).length, 16);
+    // Rust's wire JSON keeps e.g. 0.0, while JSON.stringify returns 0. Find the
+    // producer boundary rather than treating reserialized JS as the wire size.
+    let size = Buffer.byteLength(JSON.stringify(hit));
+    const ceiling = size + 128;
+    while (thrown(() => doc.pickEntityBounded(0, 5, 2.5, 0.5, { maxOutputBytes: size }))) {
+      assert.ok(++size < ceiling, "wire size stays near the JS reserialization size");
+    }
+    assert.deepEqual(doc.pickEntityBounded(0, 5, 2.5, 0.5, { maxOutputBytes: size }), hit);
+    assert.equal(thrown(() => doc.pickEntityBounded(0, 5, 2.5, 0.5, { maxOutputBytes: size - 1 }))?.kind, "limit_exceeded");
+    assert.equal(doc.pickEntityBounded(0, 500, 500, 0.5, { maxOutputBytes: 4096 }), null);
+    assert.equal(doc.pickEntityBounded(0, 500, 500, 0.5, { maxOutputBytes: 4 }), null);
+    assert.equal(thrown(() => doc.pickEntityBounded(0, 500, 500, 0.5, { maxOutputBytes: 3 }))?.kind, "limit_exceeded");
+    assert.equal(doc.pickEntityBounded(0, 5, 2.5, 0.5, { maxOutputBytes: 4096, excludedLayers: ["WALLS"] }), null);
+    assert.equal(thrown(() => doc.pickEntityBounded(0, 5, 2.5, 0.5, { maxOutputBytes: 4096, maxWork: 1 }))?.kind, "limit_exceeded");
+    for (const maxOutputBytes of [undefined, null, 0, -1, 1.5, 65_537, "4096", NaN, Infinity]) {
+      assert.equal(thrown(() => doc.pickEntityBounded(0, 5, 2.5, 0.5, { maxOutputBytes }))?.kind, "bad_argument");
+    }
+    for (const options of [
+      { maxWork: 0 }, { maxWork: 5_000_001 }, { excludedLayers: "WALLS" },
+      { excludedLayers: ["x".repeat(2049)] }, { excludedLayers: Array(20_001).fill("") },
+      { excludedLayers: Array(33).fill("x".repeat(2048)) },
+    ]) {
+      assert.equal(thrown(() => doc.pickEntityBounded(0, 5, 2.5, 0.5, { maxOutputBytes: 4096, ...options }))?.kind, "bad_argument");
+    }
+    assert.equal(thrown(() => doc.pickEntityBounded(999, 5, 2.5, 0.5, { maxOutputBytes: 4096 }))?.kind, "bad_argument");
+    assert.equal(thrown(() => doc.pickEntityBounded(0, NaN, 2.5, 0.5, { maxOutputBytes: 4096 }))?.kind, "bad_argument");
+  } finally { doc.free(); }
+});
+
+test("bounded picking preserves Unicode and reports text truncation", () => {
+  const source = wasm.read(new TextEncoder().encode(DXF));
+  const object = source.toJSON();
+  source.free();
+  const entity = object.models[0].entities[0];
+  entity.kind = {
+    type: "text", position: { x: 0, y: 0, z: 0 }, height: 1, rotation: 0,
+    width_factor: 1, oblique: 0, value: "🙂".repeat(501),
+    normal: { x: 0, y: 0, z: 1 }, halign: "left", valign: "baseline",
+  };
+  object.models[0].entities = [entity];
+  const doc = wasm.CadDocument.fromJsonString(JSON.stringify(object));
+  try {
+    const hit = doc.pickEntityBounded(0, 0, 0, 1, { maxOutputBytes: 4096 });
+    assert.equal(hit.text, "🙂".repeat(500));
+    assert.equal(hit.truncated, true);
+    assert.equal(doc.pickEntity(0, 0, 0, 1).text, "🙂".repeat(501));
+  } finally { doc.free(); }
+});

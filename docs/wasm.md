@@ -61,6 +61,8 @@ doc.toCityGmlWithReport("urn:ogc:def:crs:EPSG::4979", 1, false)    // JSON strin
 doc.pickEntity(0, 10, 5, 0.5) // closest visible entity summary or null; world XY coordinates
 // Optional fifth argument includes hidden/frozen layers; sixth accepts
 // {excludedLayers: ["WALLS"], excludedKinds: ["text"]} for viewer display filters.
+doc.pickEntityBounded(0, 10, 5, 0.5, { maxOutputBytes: 16 * 1024, maxWork: 2_000_000,
+                                    excludedLayers: ["WALLS"] }, false)
 doc.convertUnits("meter")    // mutates this document; returns the scale factor
 doc.explodeInserts()         // mutates; returns {truncated, work}
 doc.toDxfBytes("r2000", "DOS857") // Uint8Array with optional legacy output encoding
@@ -177,3 +179,30 @@ other curves, and bounding-box approximations for annotations and hatches. It fo
 nested block transforms and layer visibility; it is a viewer selection aid, not a CAD
 snapping or geometric intersection API. Browser appearance and pointer interactions need
 separate interactive QA; Node tests exercise the WASM contract only.
+
+For untrusted inspection metadata, use `pickEntityBounded` (added after 0.5.2).
+Its fifth argument requires `maxOutputBytes` (positive integer, at most 65,536)
+for the entire UTF-8 JSON result, including keys, escaping and punctuation.
+Optional `maxWork` is a positive integer up to 5,000,000; it defaults to that
+ceiling. The optional sixth argument includes hidden/frozen layers. Filters
+accept at most 20,000 names per array, 2,048 UTF-16 units per name and 65,536
+UTF-8 bytes per filter array. Invalid options throw `bad_argument`.
+
+Selection retains references to candidate entities instead of cloning their
+metadata. Only the final hit is summarized. The result includes index, id,
+layer, kind, color, bbox, distance, optional text/block, string-valued attributes
+and `truncated`; raw `props` are omitted. Previews cap layer/block at 200 Unicode
+scalars, text at 500, attribute tags at 100 and values at 200. At most 20
+attributes and 8 KiB of preview text are copied. List previews visit at most
+three levels, 16 entries per list and 64 value nodes per attribute. Limits are
+applied while reading the borrowed values, before allocation proportional to
+their full size. `truncated: true` identifies shortened or unsupported metadata;
+the underlying document is never modified.
+
+The JSON writer rejects overflow before extending its output. Exhausted output
+or traversal work throws `limit_exceeded`, including when an earlier candidate
+was found; it never returns a partial search result as success. `null` means
+no hit in a completed search. Legacy `pickEntity` keeps its full metadata shape.
+Neither API bounds the already parsed document or total process memory; retain
+parser limits and worker isolation. Hosts must wait for a package containing the
+new method before switching from legacy picking.

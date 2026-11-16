@@ -8,6 +8,10 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- WASM `CadDocument.pickEntityBounded` caps inspection metadata before copying
+  and JSON conversion, reports shortened previews, omits raw properties and
+  rejects exhausted output/work budgets. Legacy `pickEntity` remains compatible
+  and now copies metadata only after selecting the winning entity.
 - `cadkit_dgn::check_structure` (also `native::structure`, and `cadkit::dgn::check_structure`
   through the facade) returns a `StructureReport` of a DGN V8 file without the `write`
   feature: sibling trees that are ordered red-black trees and that have the writer's
