@@ -10,6 +10,7 @@ services around it and the one-time setup that lives outside the repository.
 |---|---|---|
 | Domain and DNS | Cloudflare (`cadkit.org`) | apex is canonical; `www` redirects to the apex |
 | Hosting | Cloudflare Pages, Git integration on this repository | settings in [site/README.md](../site/README.md#cloudflare-pages) |
+| Release downloads | Cloudflare R2 bucket `cadkit-release`, custom domain `release.cadkit.org` | public read through the custom domain only (the `r2.dev` address is off), minimum TLS 1.2; written by the release workflow, see [RELEASING.md](RELEASING.md) |
 | Web analytics | Cloudflare Web Analytics | cookieless; beacon only when `PUBLIC_CF_WEB_ANALYTICS_TOKEN` is set; never on `/demo/` |
 | Search | Google Search Console, Bing Webmaster Tools | domain property verified with a DNS TXT record; submit `https://cadkit.org/sitemap-index.xml` |
 | E-mail | Cloudflare Email Routing | role addresses below, forwarded to the maintainer |
@@ -46,6 +47,9 @@ DMARC record (start with `p=none` and a report address, then move to `p=quaranti
 5. Email Routing: create the addresses above; verify the destination address.
 6. Search Console and Bing: verify the domain, submit the sitemap.
 7. GitHub repository: website field `https://cadkit.org`, Discussions enabled.
+8. Release downloads: create the R2 bucket `cadkit-release`, attach the custom domain
+   `release.cadkit.org` (minimum TLS 1.2) and leave the `r2.dev` address disabled. The upload
+   token and its GitHub secrets are step 5 of the one-time setup in [RELEASING.md](RELEASING.md).
 
 ## Moving to a GitHub organization
 

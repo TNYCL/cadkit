@@ -10,6 +10,7 @@ artifact, waits for approval on the `release` environment, then publishes:
 | npm | `cadkit-wasm` | one package: `cadkit-wasm` (ES module, browser and bundlers) and `cadkit-wasm/node` (CommonJS) |
 | GitHub Releases | `cadkit-<target>` | CLI for Linux x86_64/aarch64 (static musl), macOS arm64/x86_64, Windows x64 |
 | GitHub Releases | `cadkit-capi-<target>` | C/C++ headers, shared and static libraries (Linux glibc 2.28+, macOS, Windows x64) |
+| release.cadkit.org | every file of the GitHub release | `/vX.Y.Z/<file>` with the same `SHA256SUMS`, and `/latest.txt`; the CLI installers download from here |
 
 `cadkit-py` and `cadkit-wasm` have `publish = false`: they are distributed through PyPI and
 npm, not crates.io. `cadkit-capi` is published to crates.io (sources, first published at
@@ -21,6 +22,31 @@ provenance through trusted publishing.
 Archive names carry no version, so the newest build always has a stable link, for example
 `https://github.com/TNYCL/cadkit/releases/latest/download/cadkit-x86_64-pc-windows-msvc.zip`.
 `cargo binstall cadkit-cli` downloads these archives.
+
+## release.cadkit.org and the installers
+
+`https://release.cadkit.org` is a Cloudflare R2 bucket (`cadkit-release`) behind a custom
+domain. The `publish-mirror` job runs `python scripts/release.py mirror dist --version X.Y.Z`,
+which checks the files against `SHA256SUMS`, uploads them to `/vX.Y.Z/`, downloads each one
+again through the public host and compares its checksum, and then writes the version into
+`/latest.txt`. Pre-releases and versions older than the current `latest.txt` leave that file
+alone. A version directory is never changed after its release.
+
+`https://cadkit.org/install.sh` and `https://cadkit.org/install.ps1`
+([site/public/](../site/public/)) install the CLI: they read `latest.txt`, download the
+archive for the platform and `SHA256SUMS` from `/vX.Y.Z/`, verify the checksum and copy the
+binary into a user directory. When release.cadkit.org cannot be reached they take the same
+files from the GitHub release. They are deployed with the website, not with a release, so an
+installer fix needs no new version. CI runs both on Linux, macOS and Windows against the
+published release (job `installer`).
+
+To mirror an existing release by hand (the same command, with the credentials of step 5
+below in the environment):
+
+```sh
+gh release download vX.Y.Z --dir dist
+python scripts/release.py mirror dist --version X.Y.Z
+```
 
 ## Dry run
 
@@ -52,6 +78,12 @@ Registry accounts belong to the maintainer; enable two-factor authentication on 
    the first release, add a trusted publisher in the `cadkit-wasm` package settings (GitHub
    Actions, `TNYCL/cadkit`, workflow `release.yml`, environment `release`), delete the secret
    and revoke the token.
+5. **release.cadkit.org.** In the Cloudflare dashboard (R2 → Manage API tokens) create an
+   account API token with *Object Read & Write*, limited to the bucket `cadkit-release`. Save
+   its S3 credentials as the secrets `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`, and the
+   Cloudflare account ID as `R2_ACCOUNT_ID`, in the `release` environment. R2 has no trusted
+   publishing, so this token stays; it can write to that one bucket and nothing else. The
+   bucket and its custom domain are described in [WEBSITE.md](WEBSITE.md).
 
 ## Each release
 
@@ -64,9 +96,10 @@ Registry accounts belong to the maintainer; enable two-factor authentication on 
    optionally run the dry run on the branch, and merge.
 3. Tag the merge commit on `main` and push the tag:
    `git tag -a vX.Y.Z -m "cadkit X.Y.Z" && git push origin vX.Y.Z`.
-4. When the builds pass, approve the `release` deployment on the workflow run. The three
+4. When the builds pass, approve the `release` deployment on the workflow run. The four
    publish jobs start together; the GitHub release is created after all of them succeed.
-5. Check docs.rs, the PyPI and npm pages, and the release assets.
+5. Check docs.rs, the PyPI and npm pages, the release assets, and that
+   `curl -fsSL https://cadkit.org/install.sh | sh` installs the new version.
 6. Update the website to the new version: merge Dependabot's `cadkit-wasm` update for `site/`
    (or bump it by hand) once the npm package is published; see [WEBSITE.md](WEBSITE.md).
 
@@ -77,7 +110,8 @@ A version with a suffix (`0.2.0-rc.1`) becomes a GitHub pre-release and npm dist
 - Before approval nothing is published: fix on `main`, delete the tag
   (`git push --delete origin vX.Y.Z && git tag -d vX.Y.Z`) and tag again.
 - After approval, use *Re-run failed jobs*. Every publish step is idempotent: crates already
-  on the index are skipped, PyPI uses `skip-existing`, npm skips an existing version.
+  on the index are skipped, PyPI uses `skip-existing`, npm skips an existing version, and
+  the mirror upload writes the same files again.
 - A published version cannot be replaced on any registry. If a release is broken, fix it in
   the next patch version; `cargo yank` and `npm deprecate` mark the bad one.
 
