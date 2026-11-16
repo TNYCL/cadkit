@@ -4,6 +4,10 @@ Thank you for helping. Read [AGENTS.md](AGENTS.md) and
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) first; they are binding for human and automated
 contributors alike. This file summarizes the practical parts.
 
+Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md). How decisions are made
+is described in [GOVERNANCE.md](GOVERNANCE.md); where to ask questions is in
+[SUPPORT.md](SUPPORT.md).
+
 ## Clean-room rules (summary)
 
 cadkit must stay free of encumbered code.

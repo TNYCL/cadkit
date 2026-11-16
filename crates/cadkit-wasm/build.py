@@ -88,7 +88,7 @@ def assemble_npm():
         "version": workspace_version(),
         "description": "CAD file I/O and document operations in browser/Node WebAssembly: read DWG/DGN/DXF/CityGML; write DXF, seed-based DGN V8, CityGML, SVG and JSON.",
         "license": "MIT OR Apache-2.0",
-        "author": "TNYCL (https://tnycl.com)",
+        "author": "cadkit maintainers <maintainers@cadkit.org> (https://cadkit.org)",
         "repository": {"type": "git", "url": "git+https://github.com/TNYCL/cadkit.git", "directory": "crates/cadkit-wasm"},
         "homepage": "https://github.com/TNYCL/cadkit/blob/main/docs/wasm.md",
         "bugs": "https://github.com/TNYCL/cadkit/issues",

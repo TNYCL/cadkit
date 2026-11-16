@@ -35,7 +35,10 @@ Please report privately and do not open a public issue:
 
 - Use GitHub private vulnerability reporting on the repository
   (Security tab, "Report a vulnerability"), or
-- email the maintainer listed on the GitHub profile of TNYCL.
+- email [security@cadkit.org](mailto:security@cadkit.org).
+
+The same policy is published at <https://cadkit.org/security/>, and
+<https://cadkit.org/.well-known/security.txt> lists the contact for automated tools.
 
 Include the affected version or commit, a minimal input file (or the generator), and what
 you observed (panic message, memory growth, hang). Do not send drawings that contain

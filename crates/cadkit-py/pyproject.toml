@@ -13,7 +13,7 @@ requires-python = ">=3.9"
 license = "MIT OR Apache-2.0"
 # Copies of the root files, kept identical by `python scripts/release.py sync-licenses`.
 license-files = ["LICENSE-MIT", "LICENSE-APACHE", "NOTICE"]
-authors = [{ name = "TNYCL" }]
+authors = [{ name = "cadkit maintainers", email = "maintainers@cadkit.org" }]
 keywords = ["cad", "dwg", "dgn", "dxf", "citygml"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -35,7 +35,8 @@ classifiers = [
 dynamic = ["version"]
 
 [project.urls]
-Homepage = "https://github.com/TNYCL/cadkit"
+Homepage = "https://cadkit.org"
+Source = "https://github.com/TNYCL/cadkit"
 Documentation = "https://github.com/TNYCL/cadkit/blob/main/docs/python.md"
 Changelog = "https://github.com/TNYCL/cadkit/blob/main/CHANGELOG.md"
 Issues = "https://github.com/TNYCL/cadkit/issues"

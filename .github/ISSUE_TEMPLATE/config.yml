@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and ideas
+    url: https://github.com/TNYCL/cadkit/discussions
+    about: Ask how to use cadkit or propose a format feature before opening an issue.
+  - name: Report a security vulnerability
+    url: https://github.com/TNYCL/cadkit/security/advisories/new
+    about: Report privately. Do not open a public issue for vulnerabilities (see SECURITY.md).
+  - name: Documentation
+    url: https://cadkit.org/docs/
+    about: Guides for Rust, Python, JavaScript and C, and the format reference.
