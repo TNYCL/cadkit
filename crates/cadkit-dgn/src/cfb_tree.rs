@@ -125,21 +125,47 @@ pub(crate) fn entry_utf16_name(data: &[u8], off: usize) -> Vec<u16> {
     out
 }
 
-fn u16_upper(unit: u16) -> u16 {
-    char::from_u32(u32::from(unit))
-        .and_then(|c| c.to_uppercase().next())
-        .and_then(|up| u16::try_from(u32::from(up)).ok())
-        .unwrap_or(unit)
+/// The upper-case form of `c` that CFB name order compares: the simple case conversion of
+/// [MS-CFB] 2.6.4, a character maps to one character or stays unchanged.
+///
+/// It equals the `cfb` crate's conversion, which checks sibling order when it opens a file:
+/// Rust's uppercase mapping where that is one character; otherwise (`ß`, `ŉ`, `ǰ`,
+/// ligatures, Greek with breathing or iota marks, ...) the character itself, except that
+/// the Greek letters with ypogegrammeni map to their titlecase form (`ᾀ` → `ᾈ`, `ᾳ` →
+/// `ᾼ`), as their simple uppercase mapping does. Letters that received an uppercase in
+/// Unicode 16 (`ƛ`, `ɤ`, `ᲊ`, `ꟍ`, `ꟛ` and Garay small letters) stay unchanged, as in
+/// the ICU data the `cfb` crate uses.
+fn cfb_upper(c: char) -> u32 {
+    let u = u32::from(c);
+    match u {
+        0x1F80..=0x1FA7 if u & 0x8 == 0 => u + 8,
+        0x1FB3 | 0x1FC3 | 0x1FF3 => u + 9,
+        0x019B | 0x0264 | 0x1C8A | 0xA7CD | 0xA7DB | 0x10D70..=0x10D85 => u,
+        _ => {
+            let mut up = c.to_uppercase();
+            match (up.next(), up.next()) {
+                (Some(one), None) => u32::from(one),
+                _ => u,
+            }
+        }
+    }
 }
 
-/// CFB sibling order ([MS-CFB] 2.6.4): shorter names first, then upper-cased UTF-16 units.
-pub(crate) fn cmp_cfb_name(a: &[u16], b: &[u16]) -> std::cmp::Ordering {
-    a.len().cmp(&b.len()).then_with(|| {
-        a.iter()
-            .copied()
-            .map(u16_upper)
-            .cmp(b.iter().copied().map(u16_upper))
+/// The characters of a UTF-16 name, upper-cased by [`cfb_upper`]; an unpaired surrogate
+/// stands for itself.
+fn cfb_key(name: &[u16]) -> impl Iterator<Item = u32> + '_ {
+    char::decode_utf16(name.iter().copied()).map(|r| match r {
+        Ok(c) => cfb_upper(c),
+        Err(e) => u32::from(e.unpaired_surrogate()),
     })
+}
+
+/// CFB sibling order ([MS-CFB] 2.6.4): shorter names (in UTF-16 units) first, then the
+/// upper-cased characters by code point, as the `cfb` crate orders them.
+pub(crate) fn cmp_cfb_name(a: &[u16], b: &[u16]) -> std::cmp::Ordering {
+    a.len()
+        .cmp(&b.len())
+        .then_with(|| cfb_key(a).cmp(cfb_key(b)))
 }
 
 /// Whether the 128 entry bytes are the free form of [MS-CFB] 2.6.3: all zero except the
@@ -186,25 +212,71 @@ pub(crate) fn tree_slots(data: &[u8], offsets: &[usize], first_child: u32) -> BT
     children
 }
 
-/// Every slot reachable from the root entry (slot 0) through child trees.
+/// Slots of the sibling tree under `first_child` that no earlier call claimed, now claimed,
+/// and whether the tree reaches a slot an earlier call claimed (an entry with two parents).
+/// The walk does not enter claimed slots, so calls over a whole directory walk every slot
+/// once, however many storages point at one shared subtree. Without an overlap the slots
+/// equal [`tree_slots`].
+pub(crate) fn claim_tree_slots(
+    data: &[u8],
+    offsets: &[usize],
+    first_child: u32,
+    claimed: &mut BTreeSet<u32>,
+) -> (BTreeSet<u32>, bool) {
+    let mut mine = BTreeSet::new();
+    let mut overlaps = false;
+    let mut stack = vec![first_child];
+    while let Some(idx) = stack.pop() {
+        if idx == NOSTREAM || (idx as usize) >= offsets.len() || mine.contains(&idx) {
+            continue;
+        }
+        if !claimed.insert(idx) {
+            overlaps = true;
+            continue;
+        }
+        mine.insert(idx);
+        if let Some(&off) = offsets.get(idx as usize) {
+            for field in [LEFT, RIGHT] {
+                let next = u32_le(data, off + field).unwrap_or(NOSTREAM);
+                if next != NOSTREAM {
+                    stack.push(next);
+                }
+            }
+        }
+    }
+    (mine, overlaps)
+}
+
+/// Every slot reachable from the root entry (slot 0) through child trees. Each slot's
+/// siblings are followed once, so a subtree shared by several storages costs one walk.
+#[cfg(feature = "write")]
 pub(crate) fn reachable_slots(data: &[u8], offsets: &[usize]) -> BTreeSet<u32> {
     let mut reached = BTreeSet::new();
     if offsets.is_empty() {
         return reached;
     }
+    let mut walked = BTreeSet::new();
     let mut storages = vec![0u32];
     reached.insert(0);
     while let Some(storage) = storages.pop() {
         let Some(&off) = offsets.get(storage as usize) else {
             continue;
         };
-        let child = u32_le(data, off + CHILD).unwrap_or(NOSTREAM);
-        if child == NOSTREAM {
-            continue;
-        }
-        for slot in tree_slots(data, offsets, child) {
-            if reached.insert(slot) {
-                storages.push(slot);
+        let mut stack = vec![u32_le(data, off + CHILD).unwrap_or(NOSTREAM)];
+        while let Some(idx) = stack.pop() {
+            if idx == NOSTREAM || (idx as usize) >= offsets.len() || !walked.insert(idx) {
+                continue;
+            }
+            if reached.insert(idx) {
+                storages.push(idx);
+            }
+            if let Some(&o) = offsets.get(idx as usize) {
+                for field in [LEFT, RIGHT] {
+                    let next = u32_le(data, o + field).unwrap_or(NOSTREAM);
+                    if next != NOSTREAM {
+                        stack.push(next);
+                    }
+                }
             }
         }
     }

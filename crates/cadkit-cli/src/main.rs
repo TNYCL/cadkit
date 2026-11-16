@@ -178,7 +178,7 @@ enum Command {
         input: PathBuf,
         /// Output DGN V8 seed; must not be the input file.
         output: PathBuf,
-        /// Keep the model's control records that reference no graphic (model settings).
+        /// Keep the model's control records (model settings), except those whose dependency linkages name a removed graphic.
         #[arg(long)]
         keep_controls: bool,
         /// Keep the seed's raster attachments (all of them) as templates for new ones.
@@ -607,10 +607,22 @@ fn run(cli: &Cli) -> Result<(), CliError> {
     Ok(())
 }
 
-/// Whether `a` and `b` name one existing file (stdin and stdout are never files here).
+/// Whether `a` and `b` name one existing file (stdin and stdout are never files here):
+/// the same canonical path (symbolic links and other spellings), or on Unix the same device
+/// and inode (hard links too).
 fn same_file(a: &Path, b: &Path) -> bool {
     if a == Path::new("-") || b == Path::new("-") {
         return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if let (Ok(a), Ok(b)) = (std::fs::metadata(a), std::fs::metadata(b))
+            && a.dev() == b.dev()
+            && a.ino() == b.ino()
+        {
+            return true;
+        }
     }
     match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
         (Ok(a), Ok(b)) => a == b,

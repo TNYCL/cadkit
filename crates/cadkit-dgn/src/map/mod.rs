@@ -123,7 +123,9 @@ pub(crate) fn tree_v8_counted(items: &[Item<'_>], max_depth: u32) -> (Vec<Node>,
             close(&mut stack, &mut roots);
         }
         let h = &item.el.header;
-        if h.complex_header && is_chain_or_shape(h.type_code) {
+        // Only a component header closes open chains early; any other element closes every
+        // open header below, which is no early close.
+        if h.complex_header && h.complex_component && is_chain_or_shape(h.type_code) {
             while stack.last().is_some_and(|o| o.chain) {
                 close(&mut stack, &mut roots);
                 closed_early += 1;
@@ -1432,11 +1434,16 @@ fn relative_to_owner(mut a: Attribute, owner: &Entity) -> Attribute {
 
 /// Rotation of a displayed tag about +Z in radians, in (-π, π], from its stored orientation
 /// (2D angle or 3D quaternion, same convention as text, see [`Rotation::matrix`]). An
-/// all-zero quaternion means none.
+/// all-zero quaternion means none, and so does a non-finite angle (degraded to 0, as text
+/// angles are, so that one bad double does not fail an export).
 pub(crate) fn tag_rotation(rotation: &Rotation) -> f64 {
     let [m00, _, _, m10, ..] = rotation.matrix();
     let a = m10.atan2(m00);
-    if a.abs() < 1e-12 { 0.0 } else { a }
+    if a.is_finite() && a.abs() >= 1e-12 {
+        a
+    } else {
+        0.0
+    }
 }
 
 /// Text length in UOR and whether it is estimated (`characters x character width`, the
@@ -1901,6 +1908,30 @@ mod tests {
             conic(c, 1.0, 1e-8, &none, 0.0, TAU),
             EntityKind::Ellipse { ratio, .. } if close(ratio, 1e-8) && ratio > 0.0
         ));
+        // A 3D quaternion: (cos 45°, sin 45°, 0, 0) turns local Y onto world -Z (matrix
+        // columns (1, 0, 0), (0, 0, -1), (0, 1, 0)), so a flat primary axis runs along -Z.
+        let r2 = std::f64::consts::FRAC_1_SQRT_2;
+        let about_x = Rotation::Quaternion([r2, r2, 0.0, 0.0]);
+        let (s, e) = line_ends(conic(c, 0.0, 3.0, &about_x, 0.0, std::f64::consts::PI));
+        assert!(
+            close(s.x, 1.0) && close(s.y, 1.0) && close(s.z, 0.0),
+            "{s:?}"
+        );
+        assert!(
+            close(e.x, 1.0) && close(e.y, 1.0) && close(e.z, -3.0),
+            "{e:?}"
+        );
+        // The +90° quaternion about Z of the text convention puts the primary axis on Y.
+        let about_z = Rotation::Quaternion([r2, 0.0, 0.0, -r2]);
+        let (s, e) = line_ends(conic(c, 2.0, 0.0, &about_z, 0.0, TAU));
+        assert!(near(s, 1.0, 3.0) && near(e, 1.0, -1.0), "{s:?} {e:?}");
+        // A NaN axis beside a zero one is a point at the center.
+        for (a, b) in [(f64::NAN, 0.0), (0.0, f64::NAN)] {
+            assert_eq!(
+                conic(c, a, b, &none, 0.0, TAU),
+                EntityKind::Point { position: c }
+            );
+        }
     }
 
     #[test]
@@ -2043,6 +2074,23 @@ mod tests {
         assert_eq!(t[0].children.len(), 2);
         assert_eq!(t[0].children[1].children.len(), 1);
         assert_eq!(t[1].children.len(), 1);
+        // An over-declared top-level chain followed by another top-level chain, a line or a
+        // cell: each closes it the same way, and none of them is an early close.
+        for next in [
+            item(h(12, true, false), ElementData::Complex { children: 1 }),
+            item(h(3, false, false), ElementData::Unknown),
+            item(h(2, true, false), ElementData::Cell(cell(1))),
+        ] {
+            let items = vec![
+                item(h(12, true, false), ElementData::Complex { children: 3 }),
+                item(h(3, false, true), ElementData::Unknown),
+                next,
+                item(h(3, false, true), ElementData::Unknown),
+            ];
+            let (t, closed_early) = tree_v8_counted(&items, 64);
+            assert_eq!(closed_early, 0);
+            assert_eq!(t[0].children.len(), 1);
+        }
     }
 
     #[test]
@@ -2054,26 +2102,33 @@ mod tests {
             .collect();
         let (s, e) = curve_end_tangents(&line).unwrap();
         assert!(close(s.x, 0.6) && close(s.y, 0.8) && close(e.x, 0.6) && close(e.y, 0.8));
-        // Turning chords: the Akima weighted mean at P[2] of m0 = (1,1)/√2, m1 = (1,0),
-        // m2 = (1,1)/√2, m3 = (1,2)/√5 and, at P[3], of m1, m2, m3 and m4 = (0,1).
+        // Turning unit chords m0..m4 = +X, +X, +Y, -X, +Y (points worked by hand). GDAL's
+        // slope at P[k] per component is (m[k-1]·|m[k+1] - m[k]| + m[k]·|m[k-1] - m[k-2]|)
+        // / (|m[k+1] - m[k]| + |m[k-1] - m[k-2]|), the mean of m[k-1] and m[k] when both
+        // weights are 0. At P[2]: x = (1·1 + 0·0) / 1 = 1, y = (0·1 + 1·0) / 1 = 0. At P[3]:
+        // x = (0·1 + (-1)·1) / 2 = -0.5, y = (1·1 + 0·1) / 2 = 0.5.
         let pts = [
-            [-1.0, -1.0, 0.0],
             [0.0, 0.0, 0.0],
             [1.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
             [2.0, 1.0, 0.0],
-            [3.0, 3.0, 0.0],
-            [3.0, 4.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [1.0, 2.0, 0.0],
         ];
-        let r2 = std::f64::consts::FRAC_1_SQRT_2;
-        let r5 = 1.0 / 5f64.sqrt();
-        let akima = |a: f64, b: f64, c: f64, d: f64| {
-            let (w1, w2) = ((d - c).abs(), (b - a).abs());
-            (b * w1 + c * w2) / (w1 + w2)
-        };
         let (s, e) = curve_end_tangents(&pts).unwrap();
-        assert!(close(s.x, akima(r2, 1.0, r2, r5)) && close(s.y, akima(r2, 0.0, r2, 2.0 * r5)));
-        assert!(close(e.x, akima(1.0, r2, r5, 0.0)) && close(e.y, akima(0.0, r2, 2.0 * r5, 1.0)));
-        assert!([s.x, s.y, e.x, e.y].iter().all(|v| v.abs() <= 1.0));
+        assert!(close(s.x, 1.0) && close(s.y, 0.0), "{s:?}");
+        assert!(close(e.x, -0.5) && close(e.y, 0.5), "{e:?}");
+        // Equal neighbours on both sides (both weights 0): the mean of m1 = +X and m2 = +Y.
+        let pts = [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+            [2.0, 1.0, 0.0],
+            [2.0, 2.0, 0.0],
+            [2.0, 3.0, 0.0],
+        ];
+        let (s, _) = curve_end_tangents(&pts).unwrap();
+        assert!(close(s.x, 0.5) && close(s.y, 0.5), "{s:?}");
         // Too few points, and a zero-length chord (direction 0, as GDAL treats it).
         assert!(curve_end_tangents(&pts[..5]).is_none());
         let mut dup = pts.to_vec();
@@ -2127,6 +2182,21 @@ mod tests {
             -1.1602
         ));
         assert_eq!(rotation(&mut m, [0.0; 4], false), 0.0);
+        // 2D tags written by cadkit up to 0.5.2 hold a quaternion: (-1, 0, 0, 0) unrotated and
+        // (cos θ/2, 0, 0, -sin θ/2) for θ. They are not read as the angle w.
+        assert_eq!(rotation(&mut m, [-1.0, 0.0, 0.0, 0.0], false), 0.0);
+        let q = |theta: f64| [(theta / 2.0).cos(), 0.0, 0.0, -(theta / 2.0).sin()];
+        for theta in [FRAC_PI_2, -0.75, 3.0] {
+            assert!(close(rotation(&mut m, q(theta), false), theta), "{theta}");
+        }
+        // Not that form: (w, 0, 0, z) off the unit circle, or x / y set, stays an angle.
+        assert!(close(rotation(&mut m, [0.5, 0.0, 0.0, 0.5], false), 0.5));
+        assert!(close(rotation(&mut m, [-0.5, 0.0, 0.0, 0.0], false), -0.5));
+        // A non-finite stored angle degrades to unrotated instead of a NaN rotation.
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert_eq!(rotation(&mut m, [bad, 0.0, 0.0, 0.0], false), 0.0);
+            assert_eq!(rotation(&mut m, [bad, 0.0, 0.0, 1.0], true), 0.0);
+        }
         // 3D: a quaternion; (-1, 0, 0, 0) is unrotated, (cos 45°, 0, 0, -sin 45°) is +90°.
         assert_eq!(rotation(&mut m, [-1.0, 0.0, 0.0, 0.0], true), 0.0);
         let h = std::f64::consts::FRAC_PI_4;

@@ -39,8 +39,8 @@ definitions stay byte for byte. Options: `--keep-controls`, `--keep-raster-templ
 `--drop-cell-definitions`, `--model-name NAME`, `--timestamp-ms MS`, `--application NAME`.
 `--report` prints what was removed and what remains (named levels, tag sets, cell
 definitions, model name and description, undecoded streams) as JSON. It refuses to
-overwrite its input. The result is not anonymous: review the names that remain before
-handing it on.
+overwrite its input (the same path, a symbolic link to it or, on Unix, a hard link). The
+result is not anonymous: review the names that remain before handing it on.
 
 `cadkit --help` lists every command and option. `info`, `layers`, `blocks`, and `inspect`
 support `--json`; `dump --json` writes the neutral document. Use `-` for stdin/stdout;

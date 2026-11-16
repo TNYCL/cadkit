@@ -317,11 +317,37 @@ fn transform_attribute(attr: &Attribute, tf: &Transform) -> Attribute {
     out
 }
 
+/// Format props that hold directions in the entity's coordinates: the end tangents of a
+/// DGN type 11 curve (`cadkit-dgn`), which the DXF writer emits as SPLINE groups 12/13.
+const DIRECTION_PROPS: [&str; 2] = ["dgn.curve_start_tangent", "dgn.curve_end_tangent"];
+
+/// The props of an entity mapped by `tf`. Format props are copied unchanged, except
+/// [`DIRECTION_PROPS`]: they would describe the untransformed geometry, so they are dropped
+/// unless the linear part of `tf` is a positive uniform scale (directions and the
+/// dimensionless slopes stay as they are).
+fn transformed_props(props: &crate::model::Props, tf: &Transform) -> crate::model::Props {
+    let mut out = props.clone();
+    let s = tf.x.x;
+    let keeps_directions = s.is_finite()
+        && s > 0.0
+        && tf.x == Vec3::new(s, 0.0, 0.0)
+        && tf.y == Vec3::new(0.0, s, 0.0)
+        && tf.z == Vec3::new(0.0, 0.0, s);
+    if !keeps_directions {
+        for key in DIRECTION_PROPS {
+            out.remove(key);
+        }
+    }
+    out
+}
+
 impl Entity {
     /// Returns a copy of this entity with its geometry and displayed attributes mapped by `tf`.
     ///
     /// Circles and circular arcs that undergo anisotropic scaling are promoted to exact
-    /// [`EntityKind::Ellipse`] entities.
+    /// [`EntityKind::Ellipse`] entities. Format `props` are copied unchanged, except the
+    /// direction props `dgn.curve_start_tangent` / `dgn.curve_end_tangent`, which are
+    /// dropped unless `tf` only translates and scales uniformly by a positive factor.
     pub fn transformed(&self, tf: &Transform) -> Entity {
         let kind = match &self.kind {
             EntityKind::Point { position } => EntityKind::Point {
@@ -655,7 +681,7 @@ impl Entity {
                 .iter()
                 .map(|a| transform_attribute(a, tf))
                 .collect(),
-            props: self.props.clone(),
+            props: transformed_props(&self.props, tf),
             raw: None,
         }
     }
@@ -1126,9 +1152,17 @@ impl<'a> Exploder<'a> {
                                 .layer
                                 .clone()
                                 .or_else(|| effective_layer.map(str::to_owned)),
-                            color: resolved_color,
+                            // The attribute record's own symbology wins; `ByBlock` and `None`
+                            // take the insert's.
+                            color: match attr.color {
+                                Some(Color::ByBlock) | None => resolved_color,
+                                Some(own) => own,
+                            },
                             linetype: None,
-                            lineweight: resolved_lw,
+                            lineweight: match attr.lineweight {
+                                Some(Lineweight::ByBlock) | None => resolved_lw,
+                                Some(own) => own,
+                            },
                             visible: e.visible,
                             kind: EntityKind::Text {
                                 position: pos,
@@ -1397,7 +1431,9 @@ impl Document {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{AttributeDisplay, GroupKind, HAlign, Layer, Linetype, TextStyle, VAlign};
+    use crate::model::{
+        AttributeDisplay, GroupKind, HAlign, Layer, Linetype, TextStyle, VAlign, Value,
+    };
 
     #[test]
     fn anisotropic_circle_promotes_to_ellipse_and_uniform_stays_circle() {
@@ -1533,5 +1569,90 @@ mod tests {
         assert_eq!(purged.blocks, 2); // SYM was exploded, UNUSED_BLK never used!
         assert_eq!(purged.linetypes, 1);
         assert_eq!(purged.text_styles, 1);
+    }
+
+    #[test]
+    fn exploded_attributes_keep_their_own_symbology() {
+        let display = || AttributeDisplay {
+            height: 1.0,
+            width: 1.0,
+            style: None,
+            halign: HAlign::Left,
+            valign: VAlign::Baseline,
+            rotation: 0.0,
+        };
+        let attribute = |tag: &str| Attribute {
+            tag: tag.into(),
+            value: "v".into(),
+            position: Some(Point3::xy(1.0, 1.0)),
+            display: Some(display()),
+            ..Attribute::default()
+        };
+        let mut doc = Document::new();
+        doc.blocks.push(Block {
+            name: "B".into(),
+            ..Block::default()
+        });
+        let mut ins = Entity::insert("B", Point3::ZERO)
+            .with_color(Color::aci(1))
+            .with_lineweight(Lineweight::Millimeters(0.25));
+        let mut own = attribute("OWN");
+        own.color = Some(Color::aci(5));
+        own.lineweight = Some(Lineweight::Millimeters(0.7));
+        let mut by_block = attribute("BYBLOCK");
+        by_block.color = Some(Color::ByBlock);
+        by_block.lineweight = Some(Lineweight::ByBlock);
+        ins.attributes = vec![own, by_block, attribute("NONE")];
+        doc.model_space_mut().entities.push(ins);
+        doc.explode_inserts(8);
+        let symbology: Vec<(Color, Lineweight)> = doc
+            .model_space()
+            .unwrap()
+            .entities
+            .iter()
+            .map(|e| (e.color, e.lineweight))
+            .collect();
+        assert_eq!(
+            symbology,
+            vec![
+                (Color::aci(5), Lineweight::Millimeters(0.7)),
+                (Color::aci(1), Lineweight::Millimeters(0.25)),
+                (Color::aci(1), Lineweight::Millimeters(0.25)),
+            ]
+        );
+    }
+
+    #[test]
+    fn curve_tangent_props_do_not_outlive_a_turn() {
+        let mut spline = Entity::line(Point3::ZERO, Point3::xy(1.0, 0.0));
+        for key in DIRECTION_PROPS {
+            spline.props.insert(
+                key.into(),
+                Value::List(vec![
+                    Value::Float(1.0),
+                    Value::Float(0.0),
+                    Value::Float(0.0),
+                ]),
+            );
+        }
+        spline.props.insert("dgn.level_id".into(), Value::Int(3));
+        let kept = |e: &Entity| DIRECTION_PROPS.map(|k| e.props.contains_key(k));
+        // Translation and positive uniform scale keep directions and slopes.
+        let mut moved = Transform::uniform_scale(2.5);
+        moved.t = Vec3::new(4.0, -1.0, 0.0);
+        assert_eq!(kept(&spline.transformed(&moved)), [true, true]);
+        // A turn, a mirror or a non-uniform scale drops them; other props stay.
+        let mut turned = Transform::uniform_scale(1.0);
+        turned.x = Vec3::new(0.0, 1.0, 0.0);
+        turned.y = Vec3::new(-1.0, 0.0, 0.0);
+        for tf in [
+            turned,
+            Transform::scaling(-1.0, 1.0, 1.0),
+            Transform::scaling(2.0, 1.0, 1.0),
+        ] {
+            let out = spline.transformed(&tf);
+            assert_eq!(kept(&out), [false, false]);
+            assert_eq!(out.props.get("dgn.level_id"), Some(&Value::Int(3)));
+        }
     }
 }

@@ -216,3 +216,77 @@ fn the_report_flags_damaged_outputs() {
     assert_eq!(codes(&untimed), ["dgn.record_time"]);
     assert_eq!(report(&untimed).model_records_without_time, 1);
 }
+
+/// Stream names whose CFB order depends on the case conversion: characters whose full
+/// uppercase is several characters (`ß`, `ŉ`, `ǰ`, `ΐ`, `ﬀ`), Greek with ypogegrammeni
+/// (simple uppercase `ᾈ`, `ᾼ`), letters the `cfb` crate keeps unchanged (`ƛ`, `ɤ`, `ꟍ`),
+/// plain letters, and two-unit names where a supplementary character meets a BMP one
+/// (order by code point, not by UTF-16 unit).
+const CASE_NAMES: [&str; 18] = [
+    "ß", "ŉ", "ǰ", "ΐ", "ᾀ", "ᾳ", "ﬀ", "ƛ", "ɤ", "ꟍ", "S", "T", "ω", "é", "ÿ", "𐐨", "ﬀﬀ", "Ta",
+];
+
+#[test]
+fn names_with_special_case_mappings_rewrite_and_reopen_strictly() {
+    let mut file = ::cfb::CompoundFile::open(Cursor::new(seed(false))).unwrap();
+    for (i, name) in CASE_NAMES.iter().enumerate() {
+        file.create_stream(name)
+            .unwrap()
+            .write_all(&[i as u8; 3])
+            .unwrap();
+    }
+    file.flush().unwrap();
+    let seed = file.into_inner().into_inner();
+    let written = write_v8(&document(false, vec![line()]), &seed, &timed()).unwrap();
+    let repacked = repack_v8(&seed, &ReadOptions::default()).unwrap();
+    let stripped = crate::strip_seed_v8(
+        &seed,
+        &crate::StripSeedOptions::new().with_timestamp_ms(1.7e12),
+        &ReadOptions::default(),
+    )
+    .unwrap()
+    .bytes;
+    for out in [written, repacked, stripped] {
+        // The cfb crate checks the sibling order when it opens a file.
+        let mut cf = ::cfb::CompoundFile::open_strict(Cursor::new(&out)).unwrap();
+        for (i, name) in CASE_NAMES.iter().enumerate() {
+            let mut data = Vec::new();
+            cf.open_stream(name)
+                .unwrap()
+                .read_to_end(&mut data)
+                .unwrap();
+            assert_eq!(data, [i as u8; 3], "{name}");
+        }
+        let r = report(&out);
+        assert!(
+            r.warnings
+                .iter()
+                .all(|w| w.code != "dgn.cfb_tree_unordered"),
+            "{:?}",
+            r.warnings
+        );
+        assert_eq!(r.red_black_trees, r.storages);
+    }
+}
+
+#[test]
+fn cfb_name_order_uses_simple_case_conversion() {
+    use std::cmp::Ordering::{Equal, Greater, Less};
+    let units = |s: &str| -> Vec<u16> { s.encode_utf16().collect() };
+    let cmp = |a: &str, b: &str| cfb_tree::cmp_cfb_name(&units(a), &units(b));
+    // ASCII: case-insensitive, shorter first.
+    assert_eq!(cmp("abc", "ABD"), Less);
+    assert_eq!(cmp("Dgn~H", "dgn~h"), Equal);
+    assert_eq!(cmp("Zz", "aaa"), Less);
+    // "ß" has no one-character uppercase: it stays U+00DF, after "T" (full uppercase "SS"
+    // would put it before).
+    assert_eq!(cmp("ß", "T"), Greater);
+    assert_eq!(cmp("é", "É"), Equal);
+    // Simple uppercase of U+1F80 is U+1F88; U+1FB3 maps to U+1FBC.
+    assert_eq!(cmp("ᾀ", "ᾈ"), Equal);
+    assert_eq!(cmp("ᾳ", "ᾼ"), Equal);
+    // Kept unchanged, as in the cfb crate: U+019B stays below its Unicode 16 uppercase.
+    assert_eq!(cmp("ƛ", "\u{A7DC}"), Less);
+    // A supplementary character (two units) orders by code point: U+10400 after U+FB00.
+    assert_eq!(cmp("𐐨", "ﬀﬀ"), Greater);
+}

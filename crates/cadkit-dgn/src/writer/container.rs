@@ -307,11 +307,12 @@ pub(super) struct BuildMeta {
     /// Colour flag of the root entry: 0 (red) in every observed V8 file (567 private, 3
     /// public), as [`seed_root_color`] reads it.
     pub root_color: u8,
-    /// Creation and modification time (FILETIME, 100 ns since 1601) of the root and of every
-    /// storage; 0 writes the zero form. Streams keep zero times as [MS-CFB] 2.6.1 requires:
-    /// the `cfb` crate reads a stream's times as zero (and its strict mode rejects others),
-    /// so the seed-based [`rewrite`] writes them zero too, although the observed MicroStation
-    /// files store a time on every entry.
+    /// Modification time (FILETIME, 100 ns since 1601) of the root and of every storage, and
+    /// creation time of every storage; 0 writes the zero form. The root's creation time is
+    /// zero and streams keep zero times, as [MS-CFB] 2.6.1 requires: the `cfb` crate reads
+    /// a stream's times as zero (and its strict mode rejects others), so the seed-based
+    /// [`rewrite`] writes them zero too, although the observed MicroStation files store a
+    /// time on every entry.
     pub filetime: u64,
 }
 
@@ -405,11 +406,20 @@ pub(super) fn build(
     balance_directory(&mut bytes, meta.root_color)?;
     let offsets = directory_entry_offsets(&bytes)?;
     for slot in reachable_slots(&bytes, &offsets) {
-        if let Some(&off) = offsets.get(slot as usize)
-            && matches!(bytes.get(off + OBJECT_TYPE), Some(1 | 5))
-        {
-            put_u64_le(&mut bytes, off + CREATED, meta.filetime)?;
-            put_u64_le(&mut bytes, off + MODIFIED, meta.filetime)?;
+        let Some(&off) = offsets.get(slot as usize) else {
+            continue;
+        };
+        match bytes.get(off + OBJECT_TYPE) {
+            // [MS-CFB] 2.6.1: the root storage's creation time MUST be all zeroes.
+            Some(5) => {
+                put_u64_le(&mut bytes, off + CREATED, 0)?;
+                put_u64_le(&mut bytes, off + MODIFIED, meta.filetime)?;
+            }
+            Some(1) => {
+                put_u64_le(&mut bytes, off + CREATED, meta.filetime)?;
+                put_u64_le(&mut bytes, off + MODIFIED, meta.filetime)?;
+            }
+            _ => {}
         }
     }
     Ok(bytes)
@@ -565,14 +575,15 @@ mod tests {
         assert_eq!(reachable.len(), 8);
         for (slot, &off) in offsets.iter().enumerate() {
             if reachable.contains(&(slot as u32)) {
-                // The root and the storages carry the time, streams none (MS-CFB 2.6.1).
-                let time = if built[off + OBJECT_TYPE] == 2 {
-                    0
-                } else {
-                    meta.filetime
+                // MS-CFB 2.6.1: storages carry the time, the root its modification time
+                // only (its creation time MUST be zero), streams none.
+                let (created, modified) = match built[off + OBJECT_TYPE] {
+                    5 => (0, meta.filetime),
+                    1 => (meta.filetime, meta.filetime),
+                    _ => (0, 0),
                 };
-                assert_eq!(crate::le::u64_at(&built, off + CREATED), Some(time));
-                assert_eq!(crate::le::u64_at(&built, off + MODIFIED), Some(time));
+                assert_eq!(crate::le::u64_at(&built, off + CREATED), Some(created));
+                assert_eq!(crate::le::u64_at(&built, off + MODIFIED), Some(modified));
             } else {
                 assert!(is_free_entry(&built[off..off + ENTRY_LEN]));
             }

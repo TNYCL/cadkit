@@ -245,6 +245,9 @@ def test_strip_dgn_seed_public_sample():
         cadkit.strip_dgn_seed(b"not a seed")
     with pytest.raises(TypeError):
         cadkit.strip_dgn_seed(42)
+    # A misspelt option is an error (keyword arguments), never a silent default.
+    with pytest.raises(TypeError):
+        cadkit.strip_dgn_seed(path.read_bytes(), keep_cell_definition=False)
     seed, report = cadkit.strip_dgn_seed(path.read_bytes(), model_name="Model", timestamp_ms=1.7e12)
     assert isinstance(seed, bytes)
     assert report["removed_graphic_records"] == 58

@@ -46,15 +46,17 @@ const SHARED_CELL_DEFINITION: u16 = 34;
 ///
 /// The defaults remove every control record of the model, the raster attachments and no
 /// shared cell definition, keep the model name and the seed's file header time, and name
-/// `"cadkit"` as the application.
+/// `"cadkit"` as the application. In JSON every field is optional and an unknown field is
+/// an error, so a misspelt option cannot silently keep what it meant to remove.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 #[non_exhaustive]
 pub struct StripSeedOptions {
-    /// Keep the model's control records that reference no graphic record (type 66 level 20
-    /// model settings, type 100 groups with their 99 components and type 39 tag set
-    /// definitions in the observed files) byte for byte, as
-    /// [`WriteOptions::preserve_seed_controls`] does. Raster control records follow
+    /// Keep the model's control records (type 66 level 20 model settings, type 100 groups
+    /// with their 99 components and type 39 tag set definitions in the observed files) byte
+    /// for byte, as [`WriteOptions::preserve_seed_controls`] does: a record whose dependency
+    /// linkage names a removed graphic is dropped (no observed non-raster control record has
+    /// one, so every one of them stays). Raster control records follow
     /// [`keep_raster_template`](Self::keep_raster_template) instead. Default `false`.
     pub keep_controls: bool,
     /// Keep the seed's raster attachments (the frame graphic, its control group and

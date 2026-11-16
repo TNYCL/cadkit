@@ -515,6 +515,64 @@ fn tag_rotation_is_an_angle_in_2d_and_a_quaternion_in_3d() {
 }
 
 #[test]
+fn tags_cadkit_0_5_2_wrote_into_2d_seeds_keep_their_rotation_and_bad_angles_degrade() {
+    use std::f64::consts::{FRAC_PI_2, FRAC_PI_4};
+    let seed = seed_with_fonts(false, &[(1042, "Arial")]);
+    // cadkit up to 0.5.2 stored a quaternion in 2D tags too: (-1, 0, 0, 0) unrotated,
+    // otherwise (cos θ/2, 0, 0, -sin θ/2).
+    for (angle, legacy) in [
+        (0.0, [-1.0, 0.0, 0.0, 0.0]),
+        (FRAC_PI_2, [FRAC_PI_4.cos(), 0.0, 0.0, -FRAC_PI_4.sin()]),
+        (-1.25, [0.625f64.cos(), 0.0, 0.0, 0.625f64.sin()]),
+        // Not a 0.5.2 form: a non-finite angle reads as unrotated and writes back as 0.
+        (0.0, [f64::NAN, 0.0, 0.0, 0.0]),
+    ] {
+        let e = line_with_tag(AttributeDisplay::new(0.5, 0.5).with_rotation(angle));
+        let bytes = write_v8(&document(false, vec![e]), &seed, &WriteOptions::default()).unwrap();
+        // The same file with the tag's doubles in the 0.5.2 form.
+        let native = v8::read(&bytes, &ReadOptions::default()).unwrap();
+        let graphic_page = &native.models[0].graphic_pages[0];
+        let records: Vec<Vec<u8>> = graphic_page
+            .elements
+            .iter()
+            .map(|r| {
+                let mut b = r.bytes.clone();
+                if r.type_code() == 37 {
+                    for (i, v) in legacy.iter().enumerate() {
+                        put(&mut b, 0x100 + 8 * i, &v.to_le_bytes()).unwrap();
+                    }
+                }
+                b
+            })
+            .collect();
+        let mut file = ::cfb::CompoundFile::open(Cursor::new(bytes.clone())).unwrap();
+        file.create_stream(&graphic_page.path)
+            .unwrap()
+            .write_all(&page(&records, graphic_page.header.format_version, 1).unwrap())
+            .unwrap();
+        file.flush().unwrap();
+        let old = file.into_inner().into_inner();
+        let tag = record(&old, 37);
+        let stored = [0, 1, 2, 3].map(|i| le::u64_at(&tag.bytes, 0x100 + i * 8).unwrap());
+        assert_eq!(stored, legacy.map(f64::to_bits));
+        assert_eq!(le::u32_at(&tag.bytes, 0x28).map(|w| w & 0x0800), Some(0));
+        let read = crate::read(&old, &ReadOptions::default()).unwrap();
+        let got = read.models[0].entities[0].attributes[0]
+            .display
+            .as_ref()
+            .unwrap()
+            .rotation;
+        assert!((got - angle).abs() < 1e-9, "{angle} {got}");
+        // Written again, the tag holds the angle form of a 2D tag.
+        let again = write_v8(&read, &seed, &WriteOptions::default()).unwrap();
+        let tag = record(&again, 37);
+        let stored = [0, 1, 2, 3].map(|i| le::f64_at(&tag.bytes, 0x100 + i * 8).unwrap());
+        assert!((stored[0] - angle).abs() < 1e-9, "{stored:?}");
+        assert_eq!(&stored[1..], &[0.0, 0.0, 0.0]);
+    }
+}
+
+#[test]
 fn typed_attribute_symbology_resolves_against_the_seed() {
     let seed = seed_with_fonts(true, &[(1042, "Arial")]);
     let magenta = cadkit_core::Color::Rgb {
@@ -582,7 +640,8 @@ fn hidden_tags_keep_an_empty_range_and_the_hidden_display_flag() {
 }
 
 /// A seed whose model control stream holds a coordinate-system-like record, a settings
-/// record and a record that names a seed graphic, with an auxiliary record and counter.
+/// record, a record whose dependency linkage names a seed graphic and one whose body holds
+/// that graphic's id as a plain value, with an auxiliary record and counter.
 fn seed_with_controls() -> Vec<u8> {
     let mut graphic = header(3, 0x98, 300, 0, 0., &line(), false, 0).unwrap();
     range(&mut graphic, &[[0., 0., 0.], [1000., 1000., 0.]]).unwrap();
@@ -593,9 +652,14 @@ fn seed_with_controls() -> Vec<u8> {
     let mut settings = prefix(57, 0x40, 401, 5, 0.).unwrap();
     put(&mut settings, 0x20, b"opaque settings").unwrap();
     let settings = finish(settings, &[]).unwrap();
-    let mut pointing = prefix(66, 0x40, 402, 21, 0.).unwrap();
-    u64_at(&mut pointing, 0x30, 300).unwrap();
-    let pointing = finish(pointing, &[]).unwrap();
+    // Names graphic 300 as the root of a dependency linkage.
+    let pointing = prefix(66, 0x40, 402, 21, 0.).unwrap();
+    let pointing = finish(pointing, &dependency(0x2710, 300).unwrap()).unwrap();
+    // Holds the value 300 in its body only, as field values of the observed model settings
+    // records coincide with graphic ids: not a reference.
+    let mut window = prefix(66, 0x40, 403, 20, 0.).unwrap();
+    u64_at(&mut window, 0x30, 300).unwrap();
+    let window = finish(window, &[]).unwrap();
     let mut aux = vec![0; 28];
     u32_at(&mut aux, 0, 0xa11b).unwrap();
     u32_at(&mut aux, 4, 4).unwrap();
@@ -617,7 +681,7 @@ fn seed_with_controls() -> Vec<u8> {
         ("Dgn-Md/#000000/Dgn^G/$1", page(&[graphic], 3, 1).unwrap()),
         (
             "Dgn-Md/#000000/Dgn^C/$1",
-            page(&[gcs, settings, pointing], 3, 1).unwrap(),
+            page(&[gcs, settings, pointing, window], 3, 1).unwrap(),
         ),
         ("Dgn-Md/#000000/Dgn^CA/$2", aux_page),
         ("Dgn-Md/#000000/Dgn^CA/^AH", 3u32.to_le_bytes().to_vec()),
@@ -629,7 +693,7 @@ fn seed_with_controls() -> Vec<u8> {
 }
 
 #[test]
-fn seed_control_records_survive_unless_they_name_a_seed_graphic() {
+fn seed_control_records_survive_unless_a_dependency_names_a_seed_graphic() {
     let seed = seed_with_controls();
     let source = v8::read(&seed, &ReadOptions::default()).unwrap();
     let original: Vec<_> = source.models[0]
@@ -637,7 +701,7 @@ fn seed_control_records_survive_unless_they_name_a_seed_graphic() {
         .iter()
         .flat_map(|p| p.elements.iter().map(|r| r.bytes.clone()))
         .collect();
-    assert_eq!(original.len(), 3);
+    assert_eq!(original.len(), 4);
     let clear = WriteOptions {
         clear_seed_model: true,
         ..WriteOptions::default()
@@ -651,8 +715,8 @@ fn seed_control_records_survive_unless_they_name_a_seed_graphic() {
         .collect();
     assert_eq!(
         controls,
-        original[..2],
-        "kept byte for byte, dangling one dropped"
+        [&original[0], &original[1], &original[3]].map(Vec::clone),
+        "kept byte for byte, the one depending on a removed graphic dropped"
     );
     let aux: Vec<_> = native.models[0]
         .control_aux

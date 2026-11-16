@@ -73,8 +73,18 @@ stream (the root entry's chain). Most observed DGN files are version 3; some see
 starts at `(n + 1) * 4096`.
 
 Directory slot order and sibling tree shape differ between writers. Readers find entries
-through the sibling trees ([MS-CFB] 2.6.4: shorter names first, then upper-cased UTF-16
-units), so neither affects a lookup. Structural counts (`tests/structure.rs`):
+through the sibling trees, so neither affects a lookup. Sibling order ([MS-CFB] 2.6.4):
+shorter names (in UTF-16 units) first, then the characters compared after the simple case
+conversion, as the `cfb` crate compares them (it checks the order when it opens a file, so
+the writer must agree with it): a character maps to its uppercase only when that is one
+character (`ß`, `ŉ`, ligatures and Greek letters with breathing marks stay as they are),
+the Greek letters with ypogegrammeni map to their titlecase form (`ᾀ` → `ᾈ`), the letters
+that received an uppercase in Unicode 16 stay unchanged (the crate's ICU data predates
+them), and a supplementary character compares by code point, not by UTF-16 unit
+(`cfb_tree::cmp_cfb_name`; before, the first character of the full uppercase was compared
+per UTF-16 unit, so a seed with a stream named, say, `ß…` next to `T…` was rewritten into
+a file the `cfb` crate rejects). ASCII names order as before. Structural counts
+(`tests/structure.rs`):
 
 | Property | Private corpus (567 files, all version 3) | Public V8 samples (test_dgnv8, TreeText, Water) |
 |---|---|---|
@@ -123,7 +133,7 @@ named `Dgn~H`; other OLE files (`.doc`, `.xls`, `.msg`) are rejected.
 | `Dgn-Md/#NNNNNN/Dgn^C/$n` | control element pages | page |
 | `Dgn-Md/#NNNNNN/Dgn^GA/$n`, `Dgn^CA/$n` | auxiliary (XAttribute) pages; `^AH` = 4-byte counter | page |
 | `Dgn^Nm/$n`, `Dgn^NmA/$n` | file-level ("non-model") elements: tables, tag sets, shared cell definitions | page |
-| `\u0005SummaryInformation` | OLE property set: PID 1 code page (1200 observed), PID `0x12` application (VT_LPWSTR), PID `0x80000000` locale; see "Property sets" under "Seed stripping" | — |
+| `\u0005SummaryInformation` | OLE property set: PID 1 code page (1200 observed), PID `0x12` application (`VT_LPWSTR` in the observed files; cadkit writes `VT_LPSTR`), PID `0x80000000` locale; see "Property sets" under "Seed stripping" | — |
 | `.Embedded/.Index`, `Oda~SH`, `DgnTk`, other `\u0005…` | not decoded | — |
 
 `$n` page numbers sort numerically (`$10` after `$9`). `#NNNNNN` is the decimal storage
@@ -267,17 +277,18 @@ store 3 doubles and a quaternion `(w, x, y, z)`. All coordinates are UOR doubles
 ### Level entry symbology
 
 Level entries (type 95, table 1) with a 240-byte fixed part are the only layout of the
-private corpus (205,849 entries, MicroStation 8.11). Fields beyond id, parent, flags and code,
-own structural counts:
+private corpus (205,849 entries); all three public V8 samples, written by two different
+applications, use 104-byte entries instead. Which applications write which layout is not
+known beyond that. Fields beyond id, parent, flags and code, own structural counts:
 
 | Offset | Type | Content | Evidence |
 |---|---|---|---|
-| `0x2C` | u32 | reads as Unix seconds (years 2019–2026); not decoded | 204,834 of 204,840 dated entries are not later than the newest element of their file; `0xFFFFFFFF` in 902, 0 in 107 |
-| `0x40` | i32 | presumably the level line style (weak); kept raw in `dgn.level_style_raw` | 0 (205,443), −1 (404), −435 (2); of the 41 graphic elements with style `0x7FFFFFFF`, 39 are on levels with 0 and 2 on −435; no explicit style equals a nonzero value |
-| `0x44` | u32 | presumably the level line weight (weak); kept raw in `dgn.level_weight_raw` | 0, 1, 2 or 10; nonzero only where `0x48` is nonzero; of the 41 by-level weight elements 39 are on levels with 0 and 2 on 2; on levels with 2, 783 of 2,742 explicit weights are 2 (29 %, against 3.2 % of all explicit weights) |
-| `0x48` | u32 | level color index (strong) → `Layer.color` through the file palette, raw in `dgn.color_index` | 0–205, inside the 256-entry table; 807 of the 853 by-level colored elements with a level entry are on a level with `0x48` ≠ 0 (94.6 %), against 5,627 of 205,849 entries (2.7 %) and 2,053 of 1,071,651 explicitly colored elements (0.19 %); the 19 used levels that hold only by-level colored elements all have `0x48` ≠ 0, and of the levels with `0x48` = 0 that hold elements, 3 of 44,019 hold any by-level colored element; color 114 is used by exactly 100 elements, all on levels whose `0x48` is 114; a level name found in two or more files keeps its nonzero `0x48` in 29 of 40 cases |
+| `0x2C` | u32 | reads as Unix seconds (plausible dates); not decoded | 204,834 of 204,840 dated entries are not later than the newest element of their file; `0xFFFFFFFF` in 902, 0 in 107 |
+| `0x40` | i32 | presumably the level line style (weak); kept raw in `dgn.level_style_raw` | 0 (205,443), −1 (404), one other negative value (2); of the 41 graphic elements with style `0x7FFFFFFF`, 39 are on levels with 0 and 2 on that other value; no explicit style equals a nonzero value |
+| `0x44` | u32 | presumably the level line weight (weak); kept raw in `dgn.level_weight_raw` | 0 or one of three small nonzero values; nonzero only where `0x48` is nonzero; of the 41 by-level weight elements 39 are on levels with 0 and 2 on a level with a nonzero value; on the levels with one of these nonzero values, 783 of 2,742 explicit weights equal it (29 %, against 3.2 % of all explicit weights) |
+| `0x48` | u32 | level color index (strong) → `Layer.color` through the file palette, raw in `dgn.color_index` | every value inside the 256-entry table; 807 of the 853 by-level colored elements with a level entry are on a level with `0x48` ≠ 0 (94.6 %), against 5,627 of 205,849 entries (2.7 %) and 2,053 of 1,071,651 explicitly colored elements (0.19 %); the 19 used levels that hold only by-level colored elements all have `0x48` ≠ 0, and of the levels with `0x48` = 0 that hold elements, 3 of 44,019 hold any by-level colored element; one nonzero index is used by exactly 100 elements, all on levels with that index; a level name found in two or more files keeps its nonzero `0x48` in 29 of 40 cases |
 | `0x4C` | u32 | equal to `0x48` in every entry; not read separately | 205,849 of 205,849 |
-| `0x58` | u32 | 0, or 4 in 102 entries; not decoded | — |
+| `0x58` | u32 | 0, or one small nonzero value in 102 entries; not decoded | — |
 | `0x5C` | u32 | level code (above) | — |
 
 The reader gives every layer from such an entry `Layer.color` (palette color of `0x48`,
@@ -286,7 +297,7 @@ index 0 included: index 0 is a color like any other) and the props `dgn.color_in
 `Layer.linetype` and does not use the layer's `dgn.weight` / `dgn.style`, which the writer
 interprets. Through the reader's own level mapping (a level id defined by two tables takes the
 later entry's name, open question 15) 813 of the 854 by-level colored elements are on a layer
-with a nonzero color index. 104-byte entries (ODA-written public files) are unchanged: their
+with a nonzero color index. 104-byte entries (all three public V8 samples) are unchanged: their
 symbology fields are not located (`0x3C`, `0x4C` and `0x5C` are 1 on the used level and 0 on
 "Default"), and their layers keep `Color::ByLayer`.
 
@@ -330,7 +341,7 @@ files) with the layout below; offsets from the element start.
 | `0xD0` / `0xD2` | tag number / value type |
 | `0xD4` | u32 `0x02000000` on most tags (meaning unknown) |
 | `0xF0` / `0xF8` | width / height multipliers (UOR = value × 6/1000) |
-| `0x100` | 3D tags: quaternion, `(-1, 0, 0, 0)` when unrotated (current private corpus: 226,755 of 267,273 3D tags; the other 40,518 hold other rotations). 2D tags: the rotation angle in radians in the first double and zeros in the other three, as 2D text stores it (issue #29: 1,074 zero and 82 `[a, 0, 0, 0]` 2D tags in the reporter's files, `a` ∈ {π, π/2, …}; TreeText: 13,808 2D tags, all zero) |
+| `0x100` | 3D tags: quaternion, `(-1, 0, 0, 0)` when unrotated (current private corpus: 226,755 of 267,273 3D tags; the other 40,518 hold other rotations). 2D tags: the rotation angle in radians in the first double and zeros in the other three, as 2D text stores it (issue #29 as reported: 1,074 zero and 82 `[a, 0, 0, 0]` 2D tags in the reporter's files, `a` ∈ {π, π/2, …}; those files were not available; TreeText: 13,808 2D tags, all zero). cadkit up to 0.5.2 wrote the 3D form into 2D tags as well (see Mapping decisions, Tags) |
 | `0x12C` / `0x130` | u32 font number / u32 justification (7 = center-middle) |
 | `0x138` / `0x140` | value length / value: 8-bit text in the locale code page with a counted NUL, i32, or f64 |
 | after the value | 10 bytes, then the linkages at a 2-byte boundary: set dependency (24 bytes), target dependency (56 bytes, root type 9) |
@@ -555,7 +566,10 @@ skipped (counted in `dgn.deleted_count`). Records without a display header and t
   keeps every stored point (document units, `[x, y, z]` lists in stored order, tangent
   points included), so the element can be reproduced. The end conditions are also given
   (issue #28) as `dgn.curve_start_tangent` / `dgn.curve_end_tangent`
-  (`[x, y, z]`), derived as GDAL dgnlib's `DGNStrokeCurve` derives the slopes at the
+  (`[x, y, z]`, in the entity's coordinates; `Entity::transformed` keeps them only under a
+  translation and positive uniform scale and drops them otherwise, so a rotated or mirrored
+  copy, such as an exploded shared cell instance, writes free fit-point ends instead of stale
+  tangents), derived as GDAL dgnlib's `DGNStrokeCurve` derives the slopes at the
   first fit point `P[2]` and the last one `P[n−3]`: with `m[k]` the unit direction of the
   chord `P[k] → P[k+1]` (zero for a zero-length chord), each component is the Akima mean
   `(m[k−1]·|m[k+1] − m[k]| + m[k]·|m[k−1] − m[k−2]|) / (|m[k+1] − m[k]| + |m[k−1] − m[k−2]|)`,
@@ -567,7 +581,8 @@ skipped (counted in `dgn.deleted_count`). Records without a display header and t
   in 0.5.x. The DXF writer emits them, normalised, as SPLINE groups 12/13 of fit-point
   splines; its R12 polyline output and the DGN writer (which samples splines into line
   strings) do not use them. Checked: the two test_dgnv8 curves get tangents and still meet
-  the oracle's start and end points.
+  the oracle's start and end points; their tangents, (0.5, −0.5) at the start and (0.5, 0.5)
+  at the end, equal those of an independent port of `DGNStrokeCurve` (`tests/v8_public.rs`).
 - **B-splines (27 + 21/26/28)** → `Spline`; uniform knots: clamped for open curves,
   periodic curves unwrapped into an open NURBS (poles + first `degree` poles, knots
   0..n+order) so standard evaluation traces the closed curve.
@@ -587,8 +602,11 @@ skipped (counted in `dgn.deleted_count`). Records without a display header and t
   The reporter's files (14 chains in chains, up to ~14 levels inside cells) were not
   available; the staircase they describe is what an over-declared count produces
   (`Cell → chain A (declares n, stores fewer) → … → chain B`, B becoming A's component), and
-  is reproduced synthetically. Such early closes are counted in the warning
-  `dgn.complex_count`. Not covered: an over-declared chain followed by a plain component
+  is reproduced synthetically. Such early closes (a chain or shape header that is itself a
+  component closing open chains or shapes) are counted in the warning `dgn.complex_count`;
+  a non-component element that closes an over-declared chain (another top-level chain, a
+  line, a cell) is no early close and is not counted. Not covered: an over-declared chain
+  followed by a plain component
   of the enclosing cell (it still joins the chain; nothing in the record distinguishes
   it), and B-spline curve headers (27), which may stay chain components.
 - **Line strings / shapes (4, 6)** → `Polyline` (`normal = +Z`: DGN has no bulges); shapes
@@ -601,8 +619,14 @@ skipped (counted in `dgn.deleted_count`). Records without a display header and t
   color / lineweight: the tag element's own, when they differ from the target's,
   props: symbology and flags that differ from the target's }` on the target entity (looked up by element
   id, also inside groups). The display rotation comes from `0x100`: an angle in 2D tag
-  elements, a quaternion in 3D ones (issue #29; before, a 2D `[π, 0, 0, 0]`
-  was normalised as a quaternion and read as unrotated). `color` is resolved like an
+  elements, a quaternion in 3D ones (issue #29 as reported; before, a 2D `[π, 0, 0, 0]`
+  was normalised as a quaternion and read as unrotated). cadkit up to 0.5.2 wrote
+  quaternions into 2D tags too (`(-1, 0, 0, 0)` unrotated, else `(cos θ/2, 0, 0, −sin θ/2)`),
+  so a 2D tag whose four doubles are exactly `(-1, 0, 0, 0)`, or `(w, 0, 0, z)` with `z ≠ 0`
+  and `|w² + z² − 1| < 1e-9`, is read as a quaternion (`TagData::display_rotation`); an
+  angle never has a nonzero fourth double, so the only ambiguity is a 2D tag stored at
+  exactly −1 rad, which reads as unrotated. A non-finite stored angle reads as 0, as for
+  text, instead of failing a later export. `color` is resolved like an
   entity color (file color table, else the default palette; `ByBlock` for
   `0xFFFFFFFE`) and `lineweight` like an entity lineweight; both stay `None` when the
   tag's `dgn.color_index` / `dgn.weight` equal the target's (then those props are dropped
@@ -620,7 +644,11 @@ skipped (counted in `dgn.deleted_count`). Records without a display header and t
   dgnlib's property flags (`DGNPF_*`) give `0x0080` no meaning. The writer sets the bit
   from `visible` only (`dgn.properties` contributes its `0x0600` bits), so it is not applied
   twice, and a hidden owner no longer hides the displayed tags written for it (their bit
-  comes from `Attribute::invisible`).
+  comes from `Attribute::invisible`). Limitation: the neutral document walk
+  (`Document::walk`, which SVG output uses) skips an invisible entity together with its
+  attributes, so the displayed tags of a hidden owner are not drawn in SVG although the
+  file shows them; the DGN writer keeps them. Neither the public nor the private corpus
+  has such a tag (the only hidden graphics are TreeText's tags themselves).
 - **Raster frames (94)** → `Image`: `position` = matrix translation (lower-left image
   corner), `u_vector = â·ext_x`, `v_vector = b̂·ext_y` with `â`, `b̂` the unit matrix X / Y
   columns and `ext` the edge lengths at `0x108`/`0x110` (see
@@ -735,10 +763,10 @@ the observation each needs.
    unused levels — no bit separates an observable state. Symbology: the color index of
    240-byte entries is located (`0x48`, [Level entry symbology](#level-entry-symbology));
    weight (`0x44`) and style (`0x40`) are weak and kept raw; the fields of 104-byte entries
-   (ODA) are not located. Settled by: a file saved with a level switched off, frozen or locked
-   next to the same file before; a file with a level whose weight and style are set to known
-   nonzero values and elements that use them by level; an ODA-written file with a colored
-   level.
+   (the layout of the three public samples) are not located. Settled by: a file saved with a
+   level switched off, frozen or locked next to the same file before; a file with a level
+   whose weight and style are set to known nonzero values and elements that use them by
+   level; a file with 104-byte level entries and a colored level.
 2. **B-spline "closed"**: both test_dgnv8 curves have `0x6C = 0x22` (bit `0x80` clear) and
    `0x6D = 0x01`, yet the oracle strokes them as periodic. cadkit treats bit 0 of `0x6D`
    as "closed" in V8. The private corpus has no B-spline. Settled by: a sample with an open
@@ -972,7 +1000,9 @@ paths, display properties and native props. Frame records (94), raster control
 records (90..93), and their auxiliary payloads retain their bytes and IDs; other
 graphics and attached tags are regenerated. `preserve_seed_controls` (default true)
 keeps every other seed control record (coordinate system, model settings and the like)
-and its auxiliary data byte for byte, unless the record holds the id of a seed graphic;
+and its auxiliary data byte for byte, unless a dependency linkage of the record names a
+seed graphic as a root (up to this change: unless any byte window of the record equalled a
+seed graphic id; see "Kept control records" under "Seed stripping");
 the control auxiliary page counter is kept while all of its pages are. Incomplete
 auxiliary pages, mixing preserved and new attachments, partial deletion of preserved
 seed attachments, or edited preserved attachment settings are rejected. An output is
@@ -1090,12 +1120,18 @@ storages with a non-empty child tree; how many of those are ordered red-black tr
 many have the top-down shape; unused slots not in the free form; whether the entries use
 the writer's slot order; page count and pages with a non-zero page number or population
 (information, not a warning); graphic and control records without a positive time; split
-dictionary pages. Warnings (stable codes):
+dictionary pages. Every directory slot is claimed by the first sibling tree that reaches it,
+so the work is proportional to the directory even when many storages point at one subtree
+(debug build, `cadkit check-dgn` on synthetic files of m storages sharing one subtree of n
+streams, m = n: 500 in 4.3 s before and 0.03 s after, 1,000 in 21.2 s and 0.06 s, 2,000
+(521 KB) in 0.11 s after; before, each storage analysed the shared subtree again).
+Warnings (stable codes):
 
 | Code | Meaning |
 |---|---|
 | `dgn.cfb_tree_unordered` | a sibling tree is not ordered by CFB name, reaches a slot twice or points outside the directory: lookups can miss entries |
 | `dgn.cfb_tree_unbalanced` | ordered, but the colours break a red-black rule (black tree root, no red parent of a red node, equal black height); MS-CFB permits this |
+| `dgn.cfb_tree_shared` | a storage's sibling tree reaches entries that an earlier storage's tree holds (an entry with two parents); the tree is counted as a storage but not analysed |
 | `dgn.cfb_free_entry` | an unused slot is not in the MS-CFB 2.6.3 free form |
 | `dgn.record_time` | a graphic or control record has no positive finite time at `+0x18` (`object` = first record id) |
 | `dgn.dictionary_page_split` | a `Dgn^Nm` page starts with a complex component |
@@ -1149,13 +1185,15 @@ Steps, each through code the writer already uses:
    removed property sets). Storages left without streams (the emptied `Dgn^C`, `Dgn^GA`,
    `Dgn^CA`) are dropped; test_dgnv8 (ODA) has no `Dgn^C` storage either.
 
-The result is accepted by `V8Seed::parse` as an empty seed, reports no warning in
-`check_structure`, and stripping it again with the same options returns the same bytes.
+With the default options the result is accepted by `V8Seed::parse` as an empty seed (with
+`keep_controls` or `keep_raster_template` it keeps those records, so it is not empty);
+with any options it reports no warning in `check_structure`, and stripping it again with
+the same options returns the same bytes.
 
 | Part | Default | Option | Evidence / reason |
 |---|---|---|---|
 | Graphic records and their XAttributes | removed | `keep_raster_template` keeps the raster frames (94) and their XAttribute 170 | drawing content |
-| Control records 66 (level 20) | removed | `keep_controls` | 1,594 records in 567 of 567 private files, 1 in TreeText and Water; not decoded (model settings; the research pass saw coordinate-system-like content), not needed by the writer, may describe a location |
+| Control records 66 (level 20) | removed | `keep_controls` | 1,594 records in 567 of 567 private files, 1 each in TreeText and Water (all kept by `keep_controls`, see below); not decoded (model settings; the research pass saw coordinate-system-like content), not needed by the writer, may describe a location |
 | Control records 100 with 99 components | removed | `keep_controls` | 350 + 2,800 records in 263 private files; not decoded |
 | Control records 39 (tag set definitions in the model) | removed | `keep_controls` | 274 private files; the writer resolves tag sets in the dictionary only, and the dictionary's tag sets are kept |
 | Raster control groups 90, 91 × 5, 92, 93 × 2 | removed | `keep_raster_template` (not `keep_controls`) | 2,457 groups in 339 private files; they reference the removed frames and hold file names and `file://` paths |
@@ -1164,6 +1202,35 @@ The result is accepted by `V8Seed::parse` as an empty seed, reports no warning i
 | Units, global origin, UOR, 2D/3D flag, every other model header field | kept | — | the model header element is kept except the fields below |
 | `Dgn~S`, `Dgn~Mf`, `Oda~SH`, `DgnTk`, other undecoded streams | kept byte for byte | — | not decoded; counted as `unknown_streams` (2 per private file, 3 per public file) |
 | Model index entry | kept, renamed with `model_name` | — | the entry's tail after name and description (26–94 bytes in every private file, none in the public ones) is not decoded and kept |
+
+#### Kept control records
+
+`keep_controls` (and the writer's `preserve_seed_controls`, on by default) keeps every
+non-raster control record of the model byte for byte except one whose dependency linkage
+names a graphic of the seed as a root (`writer/raster.rs` `references_graphics`; a linkage
+with an undecoded root type is searched byte window by byte window). Raster control groups
+(90–93) follow the raster rules instead. Up to this change every 8-byte window of the record
+from `0x18` was compared with the seed's graphic ids, aligned or not, and a match dropped the
+record. Measured over the non-raster control records of the model (own structural scan,
+counts and in-record offsets only):
+
+| | TreeText, Water | Private corpus (567 files) |
+|---|---|---|
+| non-raster control records | 1 + 1 (type 66) | 5,018 |
+| records with a dependency linkage | 0 | 0 |
+| records with a byte window equal to a graphic id | 2 (51 and 19 windows, at every alignment) | 83 (53 × 66, 18 × 99, 12 × 100; 108 windows at 19 positions) |
+| what the windows hold | the exponent bytes of a double followed by zero bytes (for example the high bytes `b9 3f` of 0.1 before an all-zero double) | at all 19 positions the matching value also occurs at the same offset in records of the same type and length whose file has no graphic with that id; 11 positions hold one value in every record of that shape |
+| kept by `keep_controls`, window rule | 0 | 4,935 |
+| kept by `keep_controls`, dependency rule | 2 | 5,018 |
+
+So no observed window match was a reference: graphic ids are small integers, and small
+integers and double exponents fill undecoded fields. The window rule also split control
+groups: 6 of the type 99 components it dropped belonged to a type 100 group whose header it
+kept. A record that refers to a graphic by an undecoded body field would now be kept; none
+is known, and the writer does not interpret those records. Writes into a seed whose model has no graphic
+record (an emptied template) are unchanged: both rules keep everything there (the
+private corpus stripped with `keep_controls` by either rule, written into with a line
+before and after the change: 1,134 of 1,134 outputs byte-identical).
 
 #### Times
 
@@ -1175,7 +1242,7 @@ of a kept record is raised to it. The time is written to:
 | `Dgn~H` `f64` at `0x130` (file save time) | a plausible millisecond time in 570 of 570 V8 files, never older than a record of the file (570 of 570) |
 | model header `f64` at `0x88` (model time) | a plausible time in 570 of 570 files, equal to `Dgn~H` `0x130` in 529 and not older than a record in 568 |
 | model header `f64` at `0x18`, model index entry `+8` | the element time: zero in 567 of 567 private files (left zero), a time in the 3 public files (replaced); the index entry's `+8` equals it in 557 of 570 files and follows it only where it was equal |
-| compound file root and storages (FILETIME) | [MS-CFB] 2.6.1; stream entries keep zero times as MS-CFB requires. The `cfb` crate reads a stream entry's times as zero (its strict mode rejects others), so the seed-based rewrite writes them zero as well, although the observed MicroStation files store a time on every entry |
+| compound file storages (creation and modification FILETIME) and the root entry (modification time only) | [MS-CFB] 2.6.1: the root's creation time MUST be zero and stream entries keep zero times. The `cfb` crate reads a stream entry's times as zero (its strict mode rejects others), so the seed-based rewrite writes them zero as well, although the observed MicroStation files store a time on every entry; the seed-based rewrite keeps the seed's root and storage times (all three public seeds store 1970-01-01 in the root's creation time) |
 | `\u{5}SummaryInformation` creation and last-save time | [MS-OLEPS] `PIDSI_CREATE_DTM` / `PIDSI_LASTSAVE_DTM`; omitted when there is no time |
 
 Records kept from the seed (dictionary, kept controls) keep their own times.
@@ -1184,7 +1251,8 @@ Records kept from the seed (dictionary, kept controls) keep their own times.
 
 Every observed V8 file has `\u{5}SummaryInformation` and `\u{5}DocumentSummaryInformation`
 ([MS-OLEPS]): byte order `0xFFFE`, version 0, system identifier `0x00020005`, null CLSID,
-code page 1200, the application name as `VT_LPWSTR` (3 public files). The private files
+code page 1200, the application name as `VT_LPWSTR` (3 public files; [MS-OLEPS] 2.25.1
+gives `PIDSI_APPNAME` the type `VT_LPSTR`). The private files
 also hold author (`0x04`) and last author (`0x08`) in 567 of 567, a thumbnail (`0x11`) in
 449, title, subject, keywords, comments and template (`0x02`–`0x07`) in 274, company
 (`0x0F`) in 567 and manager (`0x0E`) in 274; 326 carry a third, user-defined property set
@@ -1193,8 +1261,13 @@ stream. Each public sample names a person or a company and holds a thumbnail.
 Stripping removes every property set stream and writes `\u{5}SummaryInformation` with the
 code page, the application (`"cadkit"` by default; empty leaves it out) and the two times,
 and `\u{5}DocumentSummaryInformation` with the code page only (`writer/oleps.rs`; layout in
-its module comment). The locale property (`0x80000000`, in every observed file) is not
-written. The reader reads the code page and the application back.
+its module comment). The application name is written as the specification's `VT_LPSTR`
+(a 2.5 `CodePageString`: under code page 1200 NUL-terminated UTF-16LE characters with a size
+in bytes), not as the observed `VT_LPWSTR` (a size in characters); whether an application
+that reads the observed form also reads this one is untested. The locale property
+(`0x80000000`, in every observed file) is not written. The reader reads the code page and
+the application back in both forms (`VT_LPSTR` as UTF-16 under code page 1200, as 8-bit
+text otherwise).
 
 #### Corpus results
 

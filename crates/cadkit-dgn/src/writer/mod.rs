@@ -56,8 +56,11 @@ pub struct WriteOptions {
     /// built-in group when the seed has none (see [`seed_has_raster_template`]), whatever
     /// this option says.
     pub preserve_seed_rasters: bool,
-    /// Keep the seed model's control records that reference no seed graphic (coordinate
-    /// system, model settings and similar) with their auxiliary data, byte for byte.
+    /// Keep the seed model's control records (coordinate system, model settings and similar)
+    /// with their auxiliary data, byte for byte, except raster control records (kept only
+    /// with their unchanged attachment) and records whose dependency linkages name a seed
+    /// graphic as a root. Undecoded record bodies are not searched for ids (FORMAT_NOTES,
+    /// "Seed stripping").
     pub preserve_seed_controls: bool,
 }
 impl Default for WriteOptions {

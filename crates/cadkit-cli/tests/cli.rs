@@ -524,6 +524,19 @@ fn strip_seed_writes_a_clean_seed_and_reports_what_remains() {
         cadkit(&["strip-seed", dxf, "-", "--report"]).status.code(),
         Some(2)
     );
+    // Nor through a hard link to it (Unix: same device and inode).
+    #[cfg(unix)]
+    {
+        let link = dir.join("hard-link.dxf");
+        let _ = std::fs::remove_file(&link);
+        std::fs::hard_link(dxf, &link).expect("hard link");
+        let before = std::fs::read(dxf).expect("input");
+        let out = cadkit(&["strip-seed", dxf, link.to_str().expect("link path")]);
+        assert_eq!(out.status.code(), Some(2), "{}", text(&out.stderr));
+        assert!(text(&out.stderr).contains("does not overwrite"));
+        assert_eq!(std::fs::read(dxf).expect("input"), before);
+        std::fs::remove_file(&link).expect("remove link");
+    }
 
     let sample =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/public/gdal/test_dgnv8.dgn");

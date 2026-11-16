@@ -397,10 +397,10 @@ pub fn inspect(
 
 /// Copies a DGN V8 seed without its model's drawing content and without the document
 /// properties that name people or organisations. `options` follows the Rust
-/// `dgn::StripSeedOptions` contract (object or JSON string, camelCase accepted);
-/// `readOptions` sets the read limits as for [`read`]. Returns `{ seed, report }`; the report
-/// counts what was removed and what remains. Names in the kept tables remain: review them
-/// before handing the seed on. The result is not anonymous.
+/// `dgn::StripSeedOptions` contract (object or JSON string, camelCase accepted; an unknown key
+/// is a `bad_argument` error); `readOptions` sets the read limits as for [`read`]. Returns
+/// `{ seed, report }`; the report counts what was removed and what remains. Names in the kept
+/// tables remain: review them before handing the seed on. The result is not anonymous.
 #[wasm_bindgen(js_name = stripDgnSeed, unchecked_return_type = "StrippedDgnSeed")]
 pub fn strip_dgn_seed(
     seed: &[u8],
@@ -1069,6 +1069,16 @@ mod tests {
         assert_eq!(opts.application, "cadkit");
         let empty: cadkit::dgn::StripSeedOptions = serde_json::from_value(json!({})).unwrap();
         assert_eq!(empty, cadkit::dgn::StripSeedOptions::default());
+        // A misspelt key, in either spelling, is rejected instead of keeping a default.
+        for raw in [
+            json!({ "keepCellDefinition": false }),
+            json!({ "keep_cell_definition": false }),
+        ] {
+            let err =
+                serde_json::from_value::<cadkit::dgn::StripSeedOptions>(normalize_option_keys(raw))
+                    .unwrap_err();
+            assert!(err.to_string().contains("unknown field"), "{err}");
+        }
     }
 
     #[test]

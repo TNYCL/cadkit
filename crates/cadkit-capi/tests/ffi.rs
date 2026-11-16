@@ -437,6 +437,21 @@ fn dgn_seed_strip_returns_owned_bytes_and_report() {
             ),
             cadkit_status::InvalidArgument
         );
+        // A misspelt option ("keep_cell_definition") is an error, not a silent default.
+        assert_eq!(
+            cadkit_dgn_strip_seed(
+                garbage.as_ptr(),
+                garbage.len(),
+                c"{\"keep_cell_definition\":false}".as_ptr(),
+                ptr::null(),
+                &mut data,
+                &mut len,
+                &mut report
+            ),
+            cadkit_status::InvalidArgument
+        );
+        assert!(msg().contains("unknown field"), "{}", msg());
+        assert!(data.is_null() && report.is_null() && len == 0);
         assert_ne!(
             cadkit_dgn_strip_seed(
                 garbage.as_ptr(),

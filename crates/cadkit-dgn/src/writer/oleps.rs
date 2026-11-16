@@ -7,10 +7,12 @@
 //! `TypedPropertyValue`): a 28-byte stream header (byte order `0xFFFE`, version 0, system
 //! identifier, null CLSID, one property set), the set's FMTID and offset, then the set: its
 //! byte size, the property count, `(property id, offset)` pairs and the values, each padded
-//! to 4 bytes. The values follow the three public V8 samples (test_dgnv8, TreeText, Water;
-//! FORMAT_NOTES, "Property sets"): code page 1200 (UTF-16LE) as `VT_I2`, the application
-//! name as `VT_LPWSTR` with a counted NUL, times as `VT_FILETIME`, system identifier
-//! `0x00020005`.
+//! to 4 bytes. Code page 1200 (UTF-16LE) as `VT_I2`, times as `VT_FILETIME` and system
+//! identifier `0x00020005` follow the three public V8 samples (test_dgnv8, TreeText, Water;
+//! FORMAT_NOTES, "Property sets"). The application name is `VT_LPSTR`, the type [MS-OLEPS]
+//! 2.25.1 gives `PIDSI_APPNAME`: a 2.5 `CodePageString`, which under code page 1200 holds
+//! NUL-terminated UTF-16LE characters and a size in bytes. The public samples store it as
+//! `VT_LPWSTR` (2.7 `UnicodeString`, a size in characters) instead; the reader reads both.
 
 use cadkit_core::LimitKind;
 use cadkit_core::{Error, Result};
@@ -33,6 +35,8 @@ const PID_CREATE_DTM: u32 = 0x0c;
 const PID_LASTSAVE_DTM: u32 = 0x0d;
 const PID_APPNAME: u32 = 0x12;
 const VT_I2: u16 = 0x0002;
+const VT_LPSTR: u16 = 0x001e;
+#[cfg(test)]
 const VT_LPWSTR: u16 = 0x001f;
 const VT_FILETIME: u16 = 0x0040;
 
@@ -70,7 +74,7 @@ pub(super) fn summary_information(application: &str, time: Option<u64>) -> Resul
         properties.push((PID_LASTSAVE_DTM, filetime_value(t)));
     }
     if !application.is_empty() {
-        properties.push((PID_APPNAME, wide_string_value(application)?));
+        properties.push((PID_APPNAME, code_page_string_value(application)?));
     }
     stream(&FMTID_SUMMARY, &properties)
 }
@@ -98,9 +102,24 @@ fn filetime_value(t: u64) -> Vec<u8> {
     v
 }
 
+/// `VT_LPSTR` under code page 1200 ([MS-OLEPS] 2.5 `CodePageString`): the size in bytes of
+/// the characters including the NUL, the UTF-16LE characters and the NUL, zero padded to 4
+/// bytes.
+fn code_page_string_value(s: &str) -> Result<Vec<u8>> {
+    string_value(s, VT_LPSTR, 2)
+}
+
 /// `VT_LPWSTR` ([MS-OLEPS] 2.7 `UnicodeString`): the length in characters including the
-/// NUL, the UTF-16LE characters and the NUL, zero padded to 4 bytes.
+/// NUL, then the characters as in [`code_page_string_value`]. The observed files store
+/// their identifying strings this way.
+#[cfg(test)]
 fn wide_string_value(s: &str) -> Result<Vec<u8>> {
+    string_value(s, VT_LPWSTR, 1)
+}
+
+/// A UTF-16LE string property of type `vt` whose stored size counts `unit_size` per UTF-16
+/// unit, the NUL included.
+fn string_value(s: &str, vt: u16, unit_size: usize) -> Result<Vec<u8>> {
     let units: Vec<u16> = s.encode_utf16().collect();
     if units.len() > MAX_APPLICATION_UNITS {
         return Err(Error::limit(
@@ -111,12 +130,14 @@ fn wide_string_value(s: &str) -> Result<Vec<u8>> {
     if units.contains(&0) {
         return Err(Error::invalid(0, "DGN property set string holds a NUL"));
     }
-    let count = u32::try_from(units.len() + 1)
-        .map_err(|_| Error::limit(LimitKind::Capacity, "DGN property set string".into()))?;
+    let size = (units.len() + 1)
+        .checked_mul(unit_size)
+        .and_then(|n| u32::try_from(n).ok())
+        .ok_or_else(|| Error::limit(LimitKind::Capacity, "DGN property set string".into()))?;
     let mut v = Vec::with_capacity(8 + 2 * units.len() + 4);
-    v.extend(VT_LPWSTR.to_le_bytes());
+    v.extend(vt.to_le_bytes());
     v.extend([0, 0]);
-    v.extend(count.to_le_bytes());
+    v.extend(size.to_le_bytes());
     for u in units {
         v.extend(u.to_le_bytes());
     }
@@ -243,16 +264,29 @@ mod tests {
         // FILETIME values.
         assert_eq!(&set[48..52], &[0x40, 0, 0, 0]);
         assert_eq!(crate::le::u64_at(set, 52), Some(t));
-        // Application: 7 characters with the NUL, padded to 4 bytes.
-        assert_eq!(crate::le::u32_at(set, 72), Some(0x1f));
-        assert_eq!(crate::le::u32_at(set, 76), Some(7));
-        assert_eq!(set.len() % 4, 0);
+        // Application: VT_LPSTR, 7 UTF-16 characters with the NUL = 14 bytes, padded to 4.
+        assert_eq!(crate::le::u32_at(set, 72), Some(0x1e));
+        assert_eq!(crate::le::u32_at(set, 76), Some(14));
+        assert_eq!(&set[80..94], &utf16z("cadkit")[..]);
+        assert_eq!(set.len(), 96);
+        // The observed VT_LPWSTR form counts characters instead.
+        let wide = wide_string_value("cadkit").unwrap();
+        assert_eq!(crate::le::u32_at(&wide, 0), Some(0x1f));
+        assert_eq!(crate::le::u32_at(&wide, 4), Some(7));
+        assert_eq!(&wide[8..22], &utf16z("cadkit")[..]);
         // 1970-01-01 is FILETIME 116444736000000000; one millisecond is 10,000 ticks.
         assert_eq!(filetime(1.0), Some(UNIX_EPOCH_FILETIME + 10_000));
         assert_eq!(filetime(0.0), None);
         assert_eq!(filetime(-1.0), None);
         assert_eq!(filetime(f64::NAN), None);
         assert_eq!(filetime(1e300), None);
+    }
+
+    fn utf16z(s: &str) -> Vec<u8> {
+        s.encode_utf16()
+            .chain([0])
+            .flat_map(u16::to_le_bytes)
+            .collect()
     }
 
     #[test]

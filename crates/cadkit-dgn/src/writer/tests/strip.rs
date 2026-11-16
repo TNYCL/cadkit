@@ -183,20 +183,25 @@ fn times_and_model_name_follow_the_options() {
         (index.name.as_str(), index.description.as_str()),
         ("Blank", "Desc")
     );
-    // The root and every storage carry the time, streams none (MS-CFB 2.6.1); the summary
-    // holds the code page and the times only.
+    // MS-CFB 2.6.1: storages carry the time, the root its modification time only (its
+    // creation time MUST be zero), streams none; the summary holds the code page and the
+    // times only.
     let filetime = oleps::filetime(1.7e12).unwrap();
     let offsets = directory_entry_offsets(&out.bytes).unwrap();
+    let mut kinds = std::collections::BTreeSet::new();
     for slot in reachable_slots(&out.bytes, &offsets) {
         let off = offsets[slot as usize];
-        let time = if out.bytes[off + 0x42] == 2 {
-            0
-        } else {
-            filetime
+        let kind = out.bytes[off + 0x42];
+        kinds.insert(kind);
+        let (created, modified) = match kind {
+            5 => (0, filetime),
+            1 => (filetime, filetime),
+            _ => (0, 0),
         };
-        assert_eq!(le::u64_at(&out.bytes, off + 0x64), Some(time));
-        assert_eq!(le::u64_at(&out.bytes, off + 0x6c), Some(time));
+        assert_eq!(le::u64_at(&out.bytes, off + 0x64), Some(created), "{kind}");
+        assert_eq!(le::u64_at(&out.bytes, off + 0x6c), Some(modified), "{kind}");
     }
+    assert_eq!(kinds, std::collections::BTreeSet::from([1, 2, 5]));
     ::cfb::CompoundFile::open_strict(Cursor::new(&out.bytes)).unwrap();
     let summary = &streams(&out.bytes)["\u{5}SummaryInformation"];
     assert_eq!(oleps::property_ids(summary), vec![1, 0x0c, 0x0d]);
@@ -213,6 +218,7 @@ fn times_and_model_name_follow_the_options() {
     assert_eq!(plain.report.timestamp_ms, 0.0);
     let plain_offsets = directory_entry_offsets(&plain.bytes).unwrap();
     assert_eq!(le::u64_at(&plain.bytes, plain_offsets[0] + 0x64), Some(0));
+    assert_eq!(le::u64_at(&plain.bytes, plain_offsets[0] + 0x6c), Some(0));
     // Without a model index, the model header is still renamed and a warning says so.
     let unindexed = strip(
         &dirty,

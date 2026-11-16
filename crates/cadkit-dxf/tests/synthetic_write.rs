@@ -879,6 +879,56 @@ fn fit_point_splines_carry_dgn_curve_end_tangents() {
 }
 
 #[test]
+fn attribs_take_the_attribute_symbology_when_set() {
+    let mut insert = Entity::insert("B", p(0.0, 0.0, 0.0))
+        .with_color(Color::Aci { index: 1 })
+        .with_lineweight(Lineweight::Millimeters(0.25));
+    insert.attributes = vec![
+        Attribute::new("OWN", Value::Text("a".into()))
+            .with_color(Color::Aci { index: 5 })
+            .with_lineweight(Lineweight::Millimeters(0.7)),
+        Attribute::new("BYBLOCK", Value::Text("b".into()))
+            .with_color(Color::ByBlock)
+            .with_lineweight(Lineweight::ByBlock),
+        Attribute::new("NONE", Value::Text("c".into())),
+    ];
+    let mut doc = Document::default();
+    doc.blocks.push(Block::new("B"));
+    doc.models
+        .push(Model::new("Model", ModelKind::Model).with_entities(vec![insert]));
+    let text = cadkit_dxf::write(&doc, DxfVersion::R2013).unwrap();
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    // (62 color, 370 lineweight) of every ATTRIB, absent groups as None.
+    let mut attribs = Vec::new();
+    for start in lines
+        .windows(2)
+        .enumerate()
+        .filter(|(_, w)| *w == ["0", "ATTRIB"])
+        .map(|(i, _)| i)
+    {
+        let mut groups = (None, None);
+        for pair in lines[start + 2..].chunks(2) {
+            match pair[0] {
+                "0" => break,
+                "62" => groups.0 = Some(pair[1].to_owned()),
+                "370" => groups.1 = Some(pair[1].to_owned()),
+                _ => {}
+            }
+        }
+        attribs.push(groups);
+    }
+    let some = |s: &str| Some(s.to_owned());
+    assert_eq!(
+        attribs,
+        vec![
+            (some("5"), some("70")),
+            (some("0"), some("-2")),
+            (some("1"), some("25")),
+        ]
+    );
+}
+
+#[test]
 fn names_are_cleaned_and_duplicates_dropped() {
     let mut doc = Document::default();
     doc.layers = vec![

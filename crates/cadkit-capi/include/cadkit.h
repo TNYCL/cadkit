@@ -161,7 +161,8 @@ CADKIT_API cadkit_status cadkit_document_to_dgn(const cadkit_document *doc, cons
 CADKIT_API void cadkit_bytes_free(uint8_t *data);
 /* Copies a DGN V8 seed without its model's drawing content and without the document properties
  * that name people or organisations. options_json follows the Rust dgn::StripSeedOptions JSON
- * contract (NULL = defaults); options sets the read limits (NULL = defaults). On success
+ * contract (NULL = defaults; an unknown field is CADKIT_INVALID_ARGUMENT); options sets the
+ * read limits (NULL = defaults). On success
  * *out / *out_len hold the seed (release with cadkit_bytes_free) and *report_json the
  * dgn::StripSeedReport JSON (release with cadkit_string_free); on failure all are NULL / 0.
  * Names in the kept tables remain and are counted in the report; the result is not anonymous. */

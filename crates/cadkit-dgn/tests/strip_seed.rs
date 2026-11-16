@@ -184,6 +184,60 @@ fn public_samples_strip_to_clean_seeds_the_writer_fills() {
     }
 }
 
+/// Control records of the model, byte for byte.
+fn control_bytes(bytes: &[u8]) -> Vec<Vec<u8>> {
+    let native = cadkit_dgn::native::v8::read(bytes, &ReadOptions::default()).unwrap();
+    native.models[0]
+        .control_pages
+        .iter()
+        .flat_map(|p| p.elements.iter().map(|r| r.bytes.clone()))
+        .collect()
+}
+
+/// `keep_controls` keeps the one control record of TreeText and of Water (a type 66 model
+/// settings record without a dependency linkage, whose body holds many byte windows equal to
+/// graphic ids) byte for byte, and so does a default `write_v8` that clears the model;
+/// test_dgnv8 has no control record.
+#[test]
+fn keep_controls_keeps_the_public_model_settings_records() {
+    let read = ReadOptions::default();
+    for (rel, expected) in [(PUBLIC[0], 0u64), (PUBLIC[1], 1), (PUBLIC[2], 1)] {
+        let Some(seed) = corpus(rel) else { continue };
+        let original = control_bytes(&seed);
+        assert_eq!(original.len() as u64, expected, "{rel}");
+        let options = StripSeedOptions::new().with_keep_controls(true);
+        let out = strip_seed_v8(&seed, &options, &read).unwrap();
+        assert_eq!(out.report.kept_control_records, expected, "{rel}");
+        assert_eq!(out.report.removed_control_records, 0, "{rel}");
+        if expected > 0 {
+            assert_eq!(
+                out.report.kept_control_types,
+                BTreeMap::from([(66u16, 1u64)]),
+                "{rel}"
+            );
+        }
+        assert_eq!(control_bytes(&out.bytes), original, "{rel}");
+        assert!(
+            check_structure(&out.bytes, &read).unwrap().is_clean(),
+            "{rel}"
+        );
+        let again = strip_seed_v8(&out.bytes, &options, &read).unwrap();
+        assert_eq!(again.bytes, out.bytes, "{rel}");
+        // The default strip still removes it.
+        let default = strip_seed_v8(&seed, &StripSeedOptions::default(), &read).unwrap();
+        assert_eq!(default.report.kept_control_records, 0, "{rel}");
+        assert_eq!(default.report.removed_control_records, expected, "{rel}");
+        // A write that replaces the model keeps it too (`preserve_seed_controls`, default on).
+        let written = cadkit_dgn::write_v8(
+            &line_document(&seed),
+            &seed,
+            &WriteOptions::default().with_clear_seed_model(true),
+        )
+        .unwrap();
+        assert_eq!(control_bytes(&written), original, "{rel}");
+    }
+}
+
 #[test]
 fn cell_definitions_go_only_on_request() {
     let read = ReadOptions::default();
@@ -267,6 +321,15 @@ fn private_corpus_strips_like_the_writer_accepts() {
                 StripSeedOptions::new().with_keep_raster_template(true),
             ] {
                 let kept = strip_seed_v8(&bytes, &options, &read).unwrap();
+                if options.keep_controls {
+                    // No non-raster control record of the corpus has a dependency linkage
+                    // that names a graphic: all of them stay.
+                    let non_raster = control_bytes(&bytes)
+                        .iter()
+                        .filter(|b| !(90..=93).contains(&u16::from_le_bytes([b[0], b[1]])))
+                        .count() as u64;
+                    assert_eq!(kept.report.kept_control_records, non_raster, "file #{i}");
+                }
                 assert!(
                     check_structure(&kept.bytes, &read).unwrap().is_clean(),
                     "file #{i}"

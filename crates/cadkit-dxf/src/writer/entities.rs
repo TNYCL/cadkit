@@ -689,6 +689,14 @@ impl Writer<'_> {
                         if let Some(layer) = at.layer.as_deref().filter(|l| !l.trim().is_empty()) {
                             child.layer = self.layers.add(layer);
                         }
+                        // The attribute record's own symbology; `ByBlock` keeps its DXF
+                        // meaning (the INSERT's), `None` the INSERT's values.
+                        if let Some(color) = at.color {
+                            child.color = color;
+                        }
+                        if let Some(lineweight) = at.lineweight {
+                            child.lineweight = lineweight;
+                        }
                         let (height, width_factor, style, halign, valign, rotation) =
                             match &at.display {
                                 Some(d) => {

@@ -147,8 +147,8 @@ options use Rust `dgn::WriteOptions` JSON, including `clear_seed_model`.
 drawing content and without the document properties that name people or organisations and
 returns `{ seed: Uint8Array, report }`. `options` follows Rust `dgn::StripSeedOptions`
 (object or JSON string, camelCase accepted: `keepControls`, `keepRasterTemplate`,
-`keepCellDefinitions`, `modelName`, `timestampMs`, `application`); `readOptions` sets the read
-limits as for `read`. The report (`dgn::StripSeedReport`) counts what was removed and what
+`keepCellDefinitions`, `modelName`, `timestampMs`, `application`; any other key throws a
+`bad_argument` error); `readOptions` sets the read limits as for `read`. The report (`dgn::StripSeedReport`) counts what was removed and what
 remains; names in the kept tables remain, so the result is not anonymous. See
 [obtaining a seed](CADKIT_INTEGRATION.md#obtaining-a-seed).
 

@@ -213,9 +213,10 @@ fn length_from_range(t: &TextData, range: Option<[UorPoint; 2]>) -> Option<f64> 
     (!t.text.is_empty() && unrotated && (lx - ox).abs() <= 1.0 && hx > lx).then_some(hx - lx)
 }
 
-/// Symbology fields of a level entry (type 95, table 1) with a 240-byte fixed part, the
-/// layout MicroStation 8.11 writes (FORMAT_NOTES, "Level entry symbology"). Other layouts
-/// (104-byte entries) give `None`: their fields are not located.
+/// Symbology fields of a level entry (type 95, table 1) with a 240-byte fixed part, the only
+/// layout of the private corpus (FORMAT_NOTES, "Level entry symbology"). Other layouts (the
+/// 104-byte entries of the three public V8 samples) give `None`: their fields are not
+/// located.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct LevelSymbology {
     /// `0x48`: color index of the level (strong evidence).

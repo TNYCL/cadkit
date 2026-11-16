@@ -499,6 +499,105 @@ fn the_native_api_exposes_what_hosts_read() {
     assert!(entries.iter().all(|r| r.is_complex_component()));
 }
 
+/// Entry paths by directory slot (1, 2, ...) of the staged seed and of a write into it (the
+/// same), the order of FORMAT_NOTES ("Compound file") spelled out.
+const WRITER_SLOTS: [&str; 15] = [
+    "Dgn~H",
+    "Dgn-Md",
+    "Dgn-Md/#000000",
+    "Dgn-Md/#000000/Dgn^C",
+    "Dgn-Md/#000000/Dgn^C/$1",
+    "Dgn-Md/#000000/Dgn^G",
+    "Dgn-Md/#000000/Dgn~Mh",
+    "Dgn^Nm",
+    "Dgn^Nm/$1",
+    "Dgn^Nm/$2",
+    "Dgn^Nm/$3",
+    "Dgn-Md/#000000/Dgn^GA",
+    "Dgn-Md/#000000/Dgn^G/$1",
+    "Dgn-Md/#000000/Dgn^GA/^AH",
+    "Dgn-Md/#000000/Dgn^GA/$1",
+];
+
+/// Checks every sibling tree from the raw directory bytes, without the writer's tree code:
+/// a binary search tree by (UTF-16 length, ASCII upper case) — the names here are ASCII —
+/// with colours 0/1, a black tree root, no red node with a red child and one black height.
+/// Returns the number of storages with a child tree.
+fn independent_red_black_check(bytes: &[u8]) -> usize {
+    let offsets = crate::cfb_tree::directory_entry_offsets(bytes).unwrap();
+    let u32_at = |off: usize| u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap());
+    let key = |slot: u32| {
+        let off = offsets[slot as usize];
+        let len = usize::from(u16::from_le_bytes([bytes[off + 0x40], bytes[off + 0x41]])) - 2;
+        let name: Vec<u16> = (0..len / 2)
+            .map(|i| u16::from_le_bytes([bytes[off + 2 * i], bytes[off + 2 * i + 1]]))
+            .collect();
+        assert!(name.iter().all(|u| *u < 0x80), "ASCII names only");
+        let upper: Vec<u16> = name
+            .iter()
+            .map(|u| u8::try_from(*u).unwrap().to_ascii_uppercase().into())
+            .collect();
+        (name.len(), upper)
+    };
+    // (black height, in-order keys) of the subtree at `slot`.
+    fn walk(
+        slot: u32,
+        bytes: &[u8],
+        offsets: &[usize],
+        key: &dyn Fn(u32) -> (usize, Vec<u16>),
+        u32_at: &dyn Fn(usize) -> u32,
+        keys: &mut Vec<(usize, Vec<u16>)>,
+    ) -> usize {
+        if slot == u32::MAX {
+            return 1;
+        }
+        let off = offsets[slot as usize];
+        let red = match bytes[off + 0x43] {
+            0 => true,
+            1 => false,
+            other => panic!("colour {other}"),
+        };
+        let (left, right) = (u32_at(off + 0x44), u32_at(off + 0x48));
+        for child in [left, right] {
+            if red && child != u32::MAX {
+                assert_eq!(bytes[offsets[child as usize] + 0x43], 1, "red child of red");
+            }
+        }
+        let l = walk(left, bytes, offsets, key, u32_at, keys);
+        keys.push(key(slot));
+        let r = walk(right, bytes, offsets, key, u32_at, keys);
+        assert_eq!(l, r, "black height");
+        l + usize::from(!red)
+    }
+    let mut storages = 0;
+    let mut todo = vec![0u32];
+    while let Some(storage) = todo.pop() {
+        let off = offsets[storage as usize];
+        let child = u32_at(off + 0x4c);
+        if child == u32::MAX {
+            continue;
+        }
+        storages += 1;
+        assert_eq!(bytes[offsets[child as usize] + 0x43], 1, "black tree root");
+        let mut keys = Vec::new();
+        walk(child, bytes, &offsets, &key, &u32_at, &mut keys);
+        assert!(keys.windows(2).all(|w| w[0] < w[1]), "{keys:?}");
+        // Storages among the children: an in-order walk again, collecting slots.
+        let mut stack = vec![child];
+        while let Some(s) = stack.pop() {
+            if s == u32::MAX {
+                continue;
+            }
+            let o = offsets[s as usize];
+            stack.extend([u32_at(o + 0x44), u32_at(o + 0x48)]);
+            if bytes[o + 0x42] == 1 {
+                todo.push(s);
+            }
+        }
+    }
+    storages
+}
+
 #[test]
 fn outputs_hold_the_container_invariants() {
     let seed = stage_seed();
@@ -521,6 +620,23 @@ fn outputs_hold_the_container_invariants() {
             (r.storages, r.storages, 0)
         );
         assert!(r.writer_slot_order);
+        // Checks that share no code with the writer: the cfb crate's strict open, a red-black
+        // check from the raw directory, and the slot order as the reader lists it.
+        ::cfb::CompoundFile::open_strict(Cursor::new(&bytes)).unwrap();
+        assert_eq!(independent_red_black_check(&bytes), r.storages as usize);
+        let cf = crate::cfb::CompoundFile::parse(&bytes).unwrap();
+        let mut slots: Vec<(usize, String)> = cf
+            .paths()
+            .iter()
+            .map(|p| (p.index, p.path.clone()))
+            .collect();
+        slots.sort();
+        let order: Vec<&str> = slots.iter().map(|(_, p)| p.as_str()).collect();
+        assert_eq!(order, WRITER_SLOTS);
+        assert_eq!(
+            slots.iter().map(|(i, _)| *i).collect::<Vec<_>>(),
+            (1..=order.len()).collect::<Vec<_>>()
+        );
         assert_eq!(r.pages_with_number_or_population, 0);
         let mh = container::stream(&bytes, "Dgn-Md/#000000/Dgn~Mh", u64::MAX).unwrap();
         let counter = le::u32_at(&crate::zlib::inflate(&mh, 1 << 20).data, 0).unwrap();

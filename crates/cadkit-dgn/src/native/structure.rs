@@ -2,6 +2,8 @@
 //! a host checks them before handing a file on (see `docs/dgn/FORMAT_NOTES.md`,
 //! "Structural report").
 
+use std::collections::BTreeSet;
+
 use cadkit_core::{ReadOptions, Result, Warning};
 
 use crate::cfb::CompoundFile;
@@ -22,6 +24,7 @@ use crate::native::v8::{self, Page, V8File};
 /// |---|---|
 /// | `dgn.cfb_tree_unordered` | a sibling tree is not ordered by CFB name ([MS-CFB] 2.6.4), reaches a slot twice or points outside the directory: lookups by name can miss entries |
 /// | `dgn.cfb_tree_unbalanced` | a sibling tree is ordered, but its colours are not a red-black tree (MS-CFB permits this, an all-black tree for instance) |
+/// | `dgn.cfb_tree_shared` | a storage's sibling tree reaches entries an earlier storage's tree holds (an entry with two parents, which [MS-CFB] does not allow); the tree is counted in [`storages`](Self::storages) but not analysed |
 /// | `dgn.cfb_free_entry` | a slot the root does not reach is not in the free form of [MS-CFB] 2.6.3 |
 /// | `dgn.record_time` | a graphic or control record has no positive finite time at `+0x18` |
 /// | `dgn.dictionary_page_split` | a `Dgn^Nm` page starts with a complex component |
@@ -103,22 +106,41 @@ fn warn(code: &str, count: u32, what: &str, offset: Option<u64>, object: Option<
 
 fn directory(bytes: &[u8], report: &mut StructureReport) -> Result<()> {
     let offsets = directory_entry_offsets(bytes)?;
-    let reachable = cfb_tree::reachable_slots(bytes, &offsets);
     let mut unordered = (0u32, None);
     let mut unbalanced = (0u32, None);
-    // The root and the storages it reaches; a stale storage entry in an unused slot is an
+    let mut shared = (0u32, None);
+    // The root and the storages it reaches, each child tree walked once: every slot is
+    // claimed by the first tree that reaches it, and a tree reaching a claimed slot (a
+    // subtree several storages share) is reported, not analysed again, so the work stays
+    // proportional to the directory. A stale storage entry in an unused slot is an
     // irregular free entry instead.
-    for &slot in &reachable {
+    let mut claimed = BTreeSet::new();
+    let mut todo = Vec::new();
+    if !offsets.is_empty() {
+        claimed.insert(0u32);
+        todo.push(0u32);
+    }
+    while let Some(slot) = todo.pop() {
         let Some(&off) = offsets.get(slot as usize) else {
             continue;
         };
         let kind = bytes.get(off + OBJECT_TYPE).copied().unwrap_or(0);
         let child = cfb_tree::u32_le(bytes, off + CHILD).unwrap_or(NOSTREAM);
-        if !matches!(kind, 1 | 5) || child == NOSTREAM {
+        if child == NOSTREAM {
+            continue;
+        }
+        let (slots, overlaps) = cfb_tree::claim_tree_slots(bytes, &offsets, child, &mut claimed);
+        todo.extend(slots.iter().copied());
+        if !matches!(kind, 1 | 5) {
             continue;
         }
         report.storages += 1;
         let at = Some(off as u64);
+        if overlaps {
+            shared.0 += 1;
+            shared.1 = shared.1.or(at);
+            continue;
+        }
         match cfb_tree::check_tree(bytes, &offsets, child) {
             TreeCheck::RedBlack => report.red_black_trees += 1,
             TreeCheck::Unbalanced => {
@@ -130,7 +152,6 @@ fn directory(bytes: &[u8], report: &mut StructureReport) -> Result<()> {
                 unordered.1 = unordered.1.or(at);
             }
         }
-        let slots = cfb_tree::tree_slots(bytes, &offsets, child);
         if cfb_tree::top_down_shape(bytes, &offsets, &slots)
             == cfb_tree::stored_shape(bytes, &offsets, child)
         {
@@ -139,7 +160,7 @@ fn directory(bytes: &[u8], report: &mut StructureReport) -> Result<()> {
     }
     let mut irregular = None;
     for (slot, &off) in offsets.iter().enumerate() {
-        if u32::try_from(slot).is_ok_and(|s| reachable.contains(&s)) {
+        if u32::try_from(slot).is_ok_and(|s| claimed.contains(&s)) {
             continue;
         }
         let free = bytes
@@ -160,6 +181,11 @@ fn directory(bytes: &[u8], report: &mut StructureReport) -> Result<()> {
             "dgn.cfb_tree_unbalanced",
             unbalanced,
             "CFB sibling trees are ordered but not red-black",
+        ),
+        (
+            "dgn.cfb_tree_shared",
+            shared,
+            "CFB storages share sibling tree entries with an earlier storage",
         ),
         (
             "dgn.cfb_free_entry",
@@ -334,6 +360,148 @@ mod tests {
             assert!(codes.contains(&code), "{code} in {codes:?}");
         }
         assert!(!r.is_clean());
+    }
+
+    /// A version 3 compound file whose root holds `Dgn~H` and `m` storages that all point at
+    /// one subtree of `n` streams (a right-leaning chain of black entries). cadkit's reader
+    /// visits every slot once and accepts it; a checker that analyses the subtree per storage
+    /// does `m` times the work.
+    fn shared_subtree_file(m: u32, n: u32) -> Vec<u8> {
+        const NOS: u32 = u32::MAX;
+        const EOC: u32 = 0xffff_fffe;
+        let entry = |name: &str, kind: u8, right: u32, child: u32, start: u32, size: u64| {
+            let mut e = vec![0u8; 128];
+            let units: Vec<u16> = name.encode_utf16().collect();
+            for (i, u) in units.iter().enumerate() {
+                e[2 * i..2 * i + 2].copy_from_slice(&u.to_le_bytes());
+            }
+            let len = (units.len() as u16 + 1) * 2;
+            e[0x40..0x42].copy_from_slice(&len.to_le_bytes());
+            e[0x42] = kind;
+            e[0x43] = 1;
+            e[0x44..0x48].copy_from_slice(&NOS.to_le_bytes());
+            e[0x48..0x4c].copy_from_slice(&right.to_le_bytes());
+            e[0x4c..0x50].copy_from_slice(&child.to_le_bytes());
+            e[0x74..0x78].copy_from_slice(&start.to_le_bytes());
+            e[0x78..0x80].copy_from_slice(&size.to_le_bytes());
+            e
+        };
+        let subtree = 2 + m;
+        let mut entries = vec![
+            entry("Root Entry", 5, NOS, 1, EOC, 0),
+            entry("Dgn~H", 2, if m > 0 { 2 } else { NOS }, NOS, 0, 4096),
+        ];
+        for i in 0..m {
+            let right = if i + 1 < m { 3 + i } else { NOS };
+            entries.push(entry(&format!("d{i}"), 1, right, subtree, EOC, 0));
+        }
+        for j in 0..n {
+            let right = if j + 1 < n { subtree + 1 + j } else { NOS };
+            entries.push(entry(&format!("s{j}"), 2, right, NOS, EOC, 0));
+        }
+        while entries.len() % 4 != 0 {
+            // The MS-CFB 2.6.3 free form: zeros, sibling and child ids NOSTREAM.
+            let mut free = vec![0u8; 128];
+            free[0x44..0x50].fill(0xff);
+            entries.push(free);
+        }
+        // Sectors: 8 for the 4096-byte `Dgn~H`, then the directory, then the FAT.
+        let data_sectors = 8u32;
+        let dir_sectors = (entries.len() / 4) as u32;
+        let used = data_sectors + dir_sectors;
+        let mut fat_sectors = 1u32;
+        while fat_sectors * 128 < used + fat_sectors {
+            fat_sectors += 1;
+        }
+        assert!(fat_sectors <= 109);
+        let mut fat: Vec<u32> = Vec::new();
+        for s in 0..data_sectors {
+            fat.push(if s + 1 < data_sectors { s + 1 } else { EOC });
+        }
+        for k in 0..dir_sectors {
+            let s = data_sectors + k;
+            fat.push(if k + 1 < dir_sectors { s + 1 } else { EOC });
+        }
+        fat.extend(std::iter::repeat_n(0xffff_fffd, fat_sectors as usize));
+        fat.resize(fat_sectors as usize * 128, NOS);
+        let mut out = vec![0u8; 512];
+        out[..8].copy_from_slice(&[0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+        for (at, v) in [
+            (0x18, 0x3eu16),
+            (0x1a, 3),
+            (0x1c, 0xfffe),
+            (0x1e, 9),
+            (0x20, 6),
+        ] {
+            out[at..at + 2].copy_from_slice(&v.to_le_bytes());
+        }
+        for (at, v) in [
+            (0x2c, fat_sectors),
+            (0x30, data_sectors),
+            (0x38, 4096),
+            (0x3c, EOC),
+            (0x44, EOC),
+        ] {
+            out[at..at + 4].copy_from_slice(&v.to_le_bytes());
+        }
+        for i in 0..109u32 {
+            let v = if i < fat_sectors { used + i } else { NOS };
+            let at = 0x4c + 4 * i as usize;
+            out[at..at + 4].copy_from_slice(&v.to_le_bytes());
+        }
+        out.extend(vec![0u8; 4096]);
+        for e in entries {
+            out.extend(e);
+        }
+        for v in fat {
+            out.extend(v.to_le_bytes());
+        }
+        out
+    }
+
+    #[test]
+    fn storages_sharing_a_subtree_are_reported_once_each_without_reanalysis() {
+        let (m, n) = (300u32, 300u32);
+        let file = shared_subtree_file(m, n);
+        let r = check_structure(&file, &ReadOptions::default()).unwrap();
+        // The root and every storage hold a child tree; the shared subtree is analysed for
+        // the first storage that reaches it only (one all-black chain: ordered, not
+        // red-black), and the other m - 1 storages are reported instead of analysed.
+        assert_eq!(r.storages, m + 1);
+        let count = |code: &str| {
+            r.warnings
+                .iter()
+                .find(|w| w.code == code)
+                .map(|w| w.message.split(' ').next().unwrap().parse::<u32>().unwrap())
+        };
+        assert_eq!(count("dgn.cfb_tree_shared"), Some(m - 1));
+        assert_eq!(count("dgn.cfb_tree_unbalanced"), Some(1));
+        // The root's chain ("Dgn~H" before the shorter "d0") is not in name order.
+        assert_eq!(count("dgn.cfb_tree_unordered"), Some(1));
+        assert_eq!(r.red_black_trees + r.top_down_trees, 0);
+        assert_eq!(r.irregular_free_entries, 0);
+        // One storage only: nothing is shared, and the tree is analysed as before.
+        let single = check_structure(&shared_subtree_file(1, n), &ReadOptions::default()).unwrap();
+        assert!(
+            single
+                .warnings
+                .iter()
+                .all(|w| w.code != "dgn.cfb_tree_shared")
+        );
+        assert_eq!(single.storages, 2);
+        // The reader visits every slot once: it accepts the file with the n + 1 streams.
+        let doc = crate::read(&file, &ReadOptions::default()).unwrap();
+        assert_eq!(
+            doc.props.get("dgn.stream_count"),
+            Some(&cadkit_core::Value::Int(i64::from(n) + 1))
+        );
+        assert!(doc.models.is_empty());
+        assert_eq!(
+            v8::read(&file, &ReadOptions::default())
+                .unwrap()
+                .cfb_version,
+            3
+        );
     }
 
     #[test]

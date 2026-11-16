@@ -914,8 +914,8 @@ pub unsafe extern "C" fn cadkit_document_to_dgn(
 
 /// Copies a DGN V8 seed without the drawing content of its model and without the document
 /// properties that name people or organisations (`dgn::strip_seed_v8`). `options_json_text`
-/// follows the Rust `dgn::StripSeedOptions` JSON contract and `options` sets the read limits;
-/// NULL selects the defaults of either. On success `*out` / `*out_len` hold the seed (release
+/// follows the Rust `dgn::StripSeedOptions` JSON contract (an unknown field is
+/// `InvalidArgument`) and `options` sets the read limits; NULL selects the defaults of either. On success `*out` / `*out_len` hold the seed (release
 /// with [`cadkit_bytes_free`]) and `*report_json` the `dgn::StripSeedReport` JSON (release with
 /// [`cadkit_string_free`]); on failure all three are NULL / 0. Names in the kept tables remain
 /// and are counted in the report; the result is not anonymous.

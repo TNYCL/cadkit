@@ -72,8 +72,11 @@ names, font and style names, the model name (unless `model_name` replaces it) an
 description, kept control records, kept raster file paths and undecoded streams remain.
 `StripSeedReport` counts them (`named_levels`, `tag_sets`, `cell_definitions`,
 `model_name_from_seed`, `model_description`, `kept_control_records`,
-`raster_file_references`, `unknown_streams`); review them, for example with `cadkit layers`
-and `cadkit blocks`, before handing the seed to anyone. A seed made from a client drawing
+`raster_file_references`, `unknown_streams`); review them before handing the seed to anyone:
+`cadkit layers` and `cadkit blocks` list level and cell names, and `cadkit dump --json` shows
+the rest (tag sets and tag names in the document's `dgn.tag_sets`, the model description in
+the model's `dgn.description`, raster file names and paths in the image entities'
+`dgn.raster_file` / `dgn.raster_path`). A seed made from a client drawing
 carries that client's level and tag names. Stripping is deterministic for equal input and
 options (`timestamp_ms` fixes the stored times) and idempotent. The stripped seed is checked
 locally (`check_structure`, `V8Seed::parse`, `write_v8`); it has not been opened in another
@@ -95,10 +98,11 @@ A host needs no compound-file or page code of its own to check or prepare a writ
 - `dgn::check_structure(bytes, &ReadOptions)` returns a `StructureReport` of any V8 file (Rust
   and `cadkit check-dgn file.dgn`; the Python, WASM and C bindings do not expose it): sibling tree order and shape, unused directory slots, the
   writer's slot order, page headers, record times, split dictionary pages and the model
-  header's page count, with stable warning codes. Every `write_v8` / `repack_v8` output is
-  checked to report no warning when the write has a time (`WriteOptions::timestamp_ms` or the
-  seed's own). A slot order or a page number/population other than the writer's is not a
-  defect: observed files differ.
+  header's page count, with stable warning codes. The writer does not run it on its output;
+  tests check that writes and repacks of the public samples and of synthetic seeds, and
+  writes into 274 private plan seeds, report no warning when the write has a time
+  (`WriteOptions::timestamp_ms` or the seed's own). A slot order or a page number/population
+  other than the writer's is not a defect: observed files differ.
 - `dgn::V8Seed` gives the seed's palette, levels (reader names), font table
   (`font_entries` in stored order; `font_number` resolves a name exactly, then trimmed and
   ASCII case-insensitive, and tells an absent name from an ambiguous one) and file header
@@ -111,8 +115,9 @@ Policies stay with the host: loose or locale-aware matching of level, tag and fo
 (pass the resolved `dgn.font_number` / exact names on), resolving `ByBlock` from a parent,
 how far an RGB may move to a palette entry, and which time to give new records. The writer
 keeps unchanged seed pages byte for byte and writes level-sentinel symbology
-(`dgn.color_index` / `dgn.weight` `0xFFFFFFFF`) back as read. Layers read from
-MicroStation 8.11 level entries carry the level color (`Layer.color`, `dgn.color_index`);
+(`dgn.color_index` / `dgn.weight` `0xFFFFFFFF`) back as read. Layers read from 240-byte
+level entries (the only layout of the private corpus; the three public V8 samples use
+104-byte entries, which give no color) carry the level color (`Layer.color`, `dgn.color_index`);
 a `ByLayer` entity without its own index is written with the layer's `dgn.color_index`.
 
 Center/right text requires measured `dgn.text_length` in drawing units. The

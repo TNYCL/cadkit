@@ -205,8 +205,9 @@ values or struct layouts. New entry points are declared in `cadkit.h`:
 - `cadkit_dgn_strip_seed(seed, seed_len, options_json, options, &bytes, &len, &report)`
   copies a DGN V8 seed without the drawing content of its model and without the document
   properties that name people or organisations (`dgn::strip_seed_v8`). `options_json`
-  follows Rust `dgn::StripSeedOptions` JSON and `options` sets the read limits (NULL selects
-  the defaults of either). Release the seed with `cadkit_bytes_free` and the
+  follows Rust `dgn::StripSeedOptions` JSON (every field optional; an unknown field returns
+  `CADKIT_INVALID_ARGUMENT`) and `options` sets the read limits (NULL selects the defaults
+  of either). Release the seed with `cadkit_bytes_free` and the
   `dgn::StripSeedReport` JSON with `cadkit_string_free`; all outputs are NULL / 0 on
   failure. Names in the kept tables remain and are counted in the report; the result is
   not anonymous. C++: `cadkit::strip_dgn_seed(seed, options_json, read_options)` returns a
