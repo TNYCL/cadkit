@@ -152,7 +152,7 @@ dependencies = [
 
 [[package]]
 name = "cadkit"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "cadkit-core",
  "cadkit-dgn",
@@ -165,7 +165,7 @@ dependencies = [
 
 [[package]]
 name = "cadkit-capi"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "cadkit",
  "serde",
@@ -174,7 +174,7 @@ dependencies = [
 
 [[package]]
 name = "cadkit-cli"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "cadkit",
  "clap",
@@ -183,7 +183,7 @@ dependencies = [
 
 [[package]]
 name = "cadkit-core"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "schemars",
  "serde",
@@ -193,7 +193,7 @@ dependencies = [
 
 [[package]]
 name = "cadkit-dgn"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "cadkit-core",
  "cfb",
@@ -204,7 +204,7 @@ dependencies = [
 
 [[package]]
 name = "cadkit-dwg"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "cadkit-core",
  "cadkit-dxf",
@@ -214,7 +214,7 @@ dependencies = [
 
 [[package]]
 name = "cadkit-dxf"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "cadkit-core",
  "encoding_rs",
@@ -223,7 +223,7 @@ dependencies = [
 
 [[package]]
 name = "cadkit-geom"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "i_overlay",
  "robust",
@@ -235,7 +235,7 @@ dependencies = [
 
 [[package]]
 name = "cadkit-gml"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "cadkit-core",
  "quick-xml",
@@ -245,7 +245,7 @@ dependencies = [
 
 [[package]]
 name = "cadkit-gpu"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "cadkit",
  "cadkit-geom",
@@ -258,7 +258,7 @@ dependencies = [
 
 [[package]]
 name = "cadkit-py"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "cadkit",
  "pyo3",
@@ -268,7 +268,7 @@ dependencies = [
 
 [[package]]
 name = "cadkit-scene"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "cadkit-core",
  "cadkit-geom",
@@ -277,7 +277,7 @@ dependencies = [
 
 [[package]]
 name = "cadkit-wasm"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "cadkit",
  "js-sys",

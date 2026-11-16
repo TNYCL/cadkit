@@ -154,7 +154,7 @@ Pages that store numbers: test_dgnv8 3 of 4, Water 137 of 138, TreeText 1 of 4
 writer stores 0 in the pages it writes and keeps unchanged seed pages as they are. A page
 without records is the 16-byte header alone: every empty page observed (private corpus 644
 graphic and 1,087 dictionary pages; public: one `Dgn^GA` and one `Dgn^CA` page). The writer
-does the same (Unreleased); before, it appended a zlib stream of no data to the header.
+does the same (0.5.3); before, it appended a zlib stream of no data to the header.
 
 Records follow back to back: `u32` prefix (always 0 observed), then the element. Element
 length is `2 * words` (`u32` at element `+4`). On every page of every sample the walk ends
@@ -436,7 +436,7 @@ that count and the number of graphic and control pages. No observed file lies ou
 range; counting auxiliary pages too breaks the relation (260 of 567). The dwords at `+4` and
 `+8` are non-zero in every private file and in TreeText; their meaning is unknown (open
 question 14). The writer sets the first dword to the number of graphic and control pages it
-stores that hold records and keeps every other prefix byte (Unreleased; before, it copied
+stores that hold records and keeps every other prefix byte (0.5.3; before, it copied
 the seed's value, so 0.5.2 rewrites of TreeText and Water into themselves lay outside the
 observed range and `check_structure` reports them with `dgn.model_page_counter`).
 
@@ -932,7 +932,7 @@ is involved. Parent attributes remain attached to the resulting complex group.
 Faces and meshes become shapes/cells. Polygons with holes become a cell with
 hole-marked shape components. Polygon rings and mesh faces inherit the level, colour,
 line style, lineweight, visibility and `dgn.color_index` / `dgn.style` / `dgn.weight` of
-their entity (before the Unreleased version mesh faces took only level and colour). Polygon rings must lie within
+their entity (before 0.5.3 mesh faces took only level and colour). Polygon rings must lie within
 `WriteOptions::planarity_tolerance` (default 0.01 source units, 1 cm in metres) of the
 exterior ring's plane; 1e-6 rejected every polygon with a hole in 0.1 mm-rounded
 CityGML sources. Shared-cell instances, edited raster attachments, splines,
@@ -1054,7 +1054,7 @@ an entity's explicit `dgn.weight` takes precedence over the neutral layer's
 `dgn.weight`. A millimetre-only weight has no universal DGN index mapping and
 requires explicit caller conversion.
 
-**Level sentinels** (Unreleased). Elements store color `0xFFFFFFFF` and weight
+**Level sentinels** (0.5.3). Elements store color `0xFFFFFFFF` and weight
 `0xFFFFFFFF` (with style `0x7FFFFFFF`) when they take them from their level: 854 graphic
 records of 54 private files store the color value (text, shapes, a cell and raster
 frames), 42 records of 2 files the weight and style values; no public sample has them. The
@@ -1066,7 +1066,7 @@ Before, the writer rejected such a document ("extended DGN color table entries")
 54 private files could not be written back into themselves; now 52 of 54 can (the other
 two fail on unrelated content: an unknown element and a non-zero Z in a 2D model).
 
-**Level colors** (Unreleased). Layers read from 240-byte level entries carry the level color
+**Level colors** (0.5.3). Layers read from 240-byte level entries carry the level color
 (`Layer.color` and `dgn.color_index`, [Level entry symbology](#level-entry-symbology)). A
 `ByLayer` entity without its own `dgn.color_index` is written with the layer's
 `dgn.color_index` first, as it takes the layer's `dgn.weight`; before, only the layer's
@@ -1087,7 +1087,7 @@ seed Text/TextNode records; font zero is the default when a text names neither a
 a number (before 0.3.0 the first table entry by name was taken, an arbitrary seed font). A
 text style names a font by its exact table name. When the table stores that name with two
 different numbers the style is ambiguous: the write fails ("text font style is ambiguous in
-seed") unless `dgn.font_number` names one of the two (before the Unreleased version the
+seed") unless `dgn.font_number` names one of the two (before 0.5.3 the
 last entry won silently). A named style must agree with its numeric font index.
 `V8Seed::font_entries` lists the table as stored and `V8Seed::font_number` resolves a name
 (exact first, then trimmed and ASCII case-insensitive; absent and ambiguous names are
@@ -1300,7 +1300,7 @@ in the public V8 samples of both writer families, test_dgnv8 (ODA Teigha DGN 4.0
 MicroStation files TreeText (8.11) and Water (8.1), both 2D, with the private corpus as
 corroborating counts only. Bytes of third-party default templates (whose licence is undecided)
 are not embedded, and undecoded fields that differ between the writers are neither embedded,
-zero-filled nor guessed (maintainer decision, Unreleased).
+zero-filled nor guessed (maintainer decision, 0.5.3).
 
 Under these rules no blank seed can be built today, and cadkit ships none: `Dgn~H` and
 `Dgn~Mh`, which every seed needs (`V8Seed::parse` requires both), hold undecoded fields whose

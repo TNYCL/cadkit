@@ -420,7 +420,7 @@ fn private_seed_without_rasters_takes_the_builtin_group() {
     }
 }
 
-/// Level colors and text lengths on the private corpus (Unreleased; FORMAT_NOTES, "Level
+/// Level colors and text lengths on the private corpus (0.5.3; FORMAT_NOTES, "Level
 /// entry symbology" and "Mapping decisions"). Structural counts only: every layer read from a
 /// 240-byte entry has a palette color and its raw fields, every by-level element stays
 /// `ByLayer` with the sentinel, and every stored text length that the range rule could have
