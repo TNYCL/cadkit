@@ -4,13 +4,16 @@
 //     canonical (except noindex pages), og:image pointing at an existing file, img alt
 //   - internal links and fragment targets resolve (routes still to be built are listed in
 //     PENDING_ROUTES and reported as notices)
-//   - sitemap, robots.txt, llms.txt, .well-known/security.txt (RFC 9116 fields, Expires window)
+//   - sitemap (dates, the /sitemap.xml alias), robots.txt policy, llms.txt, llms-full.txt and the
+//     Markdown copy of every docs page, web manifest, changelog feed, IndexNow key,
+//     .well-known/security.txt (RFC 9116 fields, Expires window)
 //   - _headers: no placeholders left, every inline script hash present, lines under 2000 chars
 //   - no forbidden strings on hand-written pages, no secret-like strings anywhere, only role
 //     e-mail addresses, no build-machine paths
 //   - SEO: unique titles and descriptions of a sensible length, every indexable page (and no
-//     noindex page) in the sitemap, JSON-LD that parses, uses schema.org, has no rating, review
-//     or FAQ types, and whose breadcrumbs and logo point at existing pages
+//     noindex page) in the sitemap, Twitter and Open Graph tags, JSON-LD that parses, uses
+//     schema.org, has no rating, review or FAQ types, whose breadcrumbs and logo point at
+//     existing pages and whose dateModified equals the sitemap's lastmod
 //   - privacy: no resource loaded from another site except the analytics beacon, which never
 //     appears on demo or noindex pages
 // Exit code 1 on any error.
@@ -19,6 +22,7 @@ import { readFileSync, existsSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { listFiles, urlPathOf, inlineScripts, scriptHash } from './postbuild.mjs';
+import { parseSitemap } from './lib/sitemap.mjs';
 import { SITE, EMAIL, CADKIT_VERSION } from '../src/config.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -116,6 +120,9 @@ const allHashes = new Set();
 /** One entry per built page, for the cross-page checks below (titles, descriptions, sitemap). */
 const pages = [];
 
+/** W3C datetime in UTC with seconds, as written by scripts/prebuild.d/40-lastmod.mjs. */
+const UTC_SECONDS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
+
 /** Schema types that would claim ratings, reviews or Q&A content this site does not have. */
 const BANNED_LD_TYPES = /^(AggregateRating|Rating|Review|FAQPage|QAPage|HowTo|Product|Offer)$/;
 
@@ -147,6 +154,15 @@ function checkJsonLd(where, path, data) {
 			for (const k of ['name', 'description', 'url', 'codeRepository', 'license']) if (!data[k]) err(where, `SoftwareSourceCode lacks ${k}`);
 			if (data.version !== CADKIT_VERSION) err(where, `SoftwareSourceCode version ${data.version} != ${CADKIT_VERSION}`);
 			break;
+		case 'WebSite':
+			if (!data.name || data.url !== SITE + '/' || data.inLanguage !== 'en') err(where, 'WebSite needs a name, the site url and inLanguage');
+			break;
+		case 'TechArticle':
+			for (const k of ['headline', 'description', 'author', 'publisher']) if (!data[k]) err(where, `TechArticle lacks ${k}`);
+			if (data.url !== SITE + path || data.mainEntityOfPage !== SITE + path) err(where, 'TechArticle url must be this page');
+			if (!onSite(data.image)) err(where, `TechArticle image is not a file of this site: ${data.image}`);
+			if (data.dateModified !== undefined && !UTC_SECONDS.test(data.dateModified)) err(where, `TechArticle dateModified is not a UTC datetime: ${data.dateModified}`);
+			break;
 		case 'Organization':
 			if (!data.name || !onSite(data.url) || !onSite(data.logo)) err(where, 'Organization needs a name, a site url and an existing logo');
 			break;
@@ -170,7 +186,9 @@ for (const file of htmlFiles) {
 	if (!/<meta\b[^>]*name="description"[^>]*content="[^"]{20,}"/.test(html)) err(where, 'missing or short meta description');
 	if (!/<meta\b[^>]*name="viewport"/.test(html)) err(where, 'missing viewport meta');
 	const description = /<meta\b[^>]*name="description"[^>]*content="([^"]*)"/.exec(html)?.[1] ?? '';
-	pages.push({ path, title: title ?? '', description, noindex });
+	/** @type {{path: string, title: string, description: string, noindex: boolean, ldTypes: string[], dateModified?: string, markdown?: string}} */
+	const pageInfo = { path, title: title ?? '', description, noindex, ldTypes: [] };
+	pages.push(pageInfo);
 
 	for (const m of html.matchAll(/<script\b[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/g)) {
 		let data;
@@ -181,6 +199,8 @@ for (const file of htmlFiles) {
 			continue;
 		}
 		checkJsonLd(where, path, data);
+		pageInfo.ldTypes.push(String(data?.['@type']));
+		if (data?.['@type'] === 'TechArticle') pageInfo.dateModified = data.dateModified;
 	}
 
 	// The privacy page promises that pages load nothing from other sites except the optional
@@ -205,6 +225,11 @@ for (const file of htmlFiles) {
 		else if (!og.startsWith(SITE + '/')) err(where, `og:image not on ${SITE}: ${og}`);
 		else if (!resolveTarget(new URL(og).pathname)) err(where, `og:image file missing: ${og}`);
 		if (!/<meta\b[^>]*name="twitter:card"/.test(html)) err(where, 'missing twitter:card');
+		for (const name of ['twitter:title', 'twitter:description', 'twitter:image'])
+			if (!new RegExp(`<meta\\b[^>]*name="${name}"[^>]*content="[^"]+"`).test(html)) err(where, `missing ${name}`);
+		if (!/<meta\b[^>]*property="og:locale"[^>]*content="en_US"/.test(html)) err(where, 'og:locale must be en_US');
+		if (!/<link\b[^>]*rel="manifest"[^>]*href="\/site\.webmanifest"/.test(html)) err(where, 'missing web manifest link');
+		pageInfo.markdown = /<link\b[^>]*rel="alternate"[^>]*type="text\/markdown"[^>]*href="([^"]+)"/.exec(html)?.[1];
 	}
 
 	for (const m of html.matchAll(/<img\b[^>]*>/g)) if (!/\balt="/.test(m[0])) err(where, `img without alt: ${m[0].slice(0, 80)}`);
@@ -331,6 +356,105 @@ else {
 	if (!(days > 150 && days < 366)) err('security.txt', `Expires should be about 180 days ahead, got ${exp}`);
 }
 
+// robots.txt policy: nothing disallowed, the main search and AI crawlers named.
+if (robots) {
+	if (!/^User-agent: \*\nAllow: \/$/m.test(robots)) err('robots.txt', 'missing "User-agent: *" with "Allow: /"');
+	if (/^Disallow:\s*\S/m.test(robots)) err('robots.txt', 'a Disallow rule hides part of a fully public site');
+	for (const bot of ['Googlebot', 'Bingbot', 'GPTBot', 'OAI-SearchBot', 'ClaudeBot', 'PerplexityBot', 'Google-Extended'])
+		if (!robots.includes(`User-agent: ${bot}\n`)) err('robots.txt', `crawler ${bot} is not named`);
+}
+
+// Sitemap dates and the /sitemap.xml alias.
+{
+	const dated = new Map();
+	for (const f of files.filter((f) => /[\\/]sitemap-\d+\.xml$/.test(f)))
+		for (const { loc, lastmod } of parseSitemap(readFileSync(f, 'utf8'))) if (lastmod) dated.set(loc, lastmod);
+	for (const [loc, lastmod] of dated) {
+		// The sitemap integration re-serialises dates with milliseconds.
+		if (!UTC_SECONDS.test(lastmod.replace(/\.\d{3}Z$/, 'Z'))) err('sitemap', `lastmod of ${loc} is not a UTC datetime: ${lastmod}`);
+		else if (Date.parse(lastmod) > Date.now() + 864e5) err('sitemap', `lastmod of ${loc} is in the future: ${lastmod}`);
+	}
+	const instant = (date) => (date === undefined ? undefined : Date.parse(date));
+	for (const p of pages.filter((p) => p.ldTypes.includes('TechArticle')))
+		if (instant(p.dateModified) !== instant(dated.get(SITE + p.path))) err(p.path, `JSON-LD dateModified ${p.dateModified} differs from the sitemap lastmod ${dated.get(SITE + p.path)}`);
+	notices.push(dated.size ? `sitemap: ${dated.size} URLs with lastmod` : 'sitemap: no lastmod (git history unavailable to the build)');
+	if (!/^\/sitemap\.xml\s+\/sitemap-index\.xml\s+301$/m.test(read('_redirects') ?? '')) err('_redirects', 'missing /sitemap.xml -> /sitemap-index.xml (301)');
+}
+
+// Structured data: the site on the home page, an article and a breadcrumb trail elsewhere.
+for (const p of pages.filter((p) => !p.noindex)) {
+	if (p.path === '/') {
+		for (const type of ['Organization', 'WebSite', 'SoftwareSourceCode']) if (!p.ldTypes.includes(type)) err(p.path, `missing ${type} JSON-LD`);
+	} else if (!p.ldTypes.includes('BreadcrumbList')) err(p.path, 'missing BreadcrumbList JSON-LD');
+	if (p.markdown && !p.ldTypes.includes('TechArticle')) err(p.path, 'docs page without TechArticle JSON-LD');
+}
+
+// Markdown copies of the docs pages, llms.txt and llms-full.txt.
+{
+	const full = read('llms-full.txt');
+	if (!full?.startsWith('# cadkit documentation')) err('llms-full.txt', 'missing or malformed');
+	const docs = pages.filter((p) => p.markdown);
+	if (docs.length === 0) err('llms.txt', 'no page links a Markdown copy');
+	for (const p of pages.filter((p) => !p.noindex && SYNCED_PREFIXES.some((s) => p.path.startsWith(s)) && !p.markdown))
+		err(p.path, 'docs page without a Markdown alternate link');
+	for (const p of docs) {
+		const md = read(p.markdown);
+		if (p.markdown !== p.path.replace(/\/$/, '') + '.md') err(p.path, `unexpected Markdown path ${p.markdown}`);
+		if (!md) {
+			err(p.path, `Markdown copy ${p.markdown} is missing`);
+			continue;
+		}
+		if (!md.startsWith('# ') || !md.includes(`Canonical page: ${SITE}${p.path}\n`)) err(p.markdown, 'Markdown copy lacks its title or canonical page');
+		if (md.length < 400) err(p.markdown, 'Markdown copy is nearly empty');
+		// MDX that the export did not convert would be published as text.
+		const leftover = /^import .+ from ['"]|<\/?(?:CodeTabs|Code|Callout|Tabs|TabItem)\b/m.exec(md.replace(/^(`{3,}|~{3,})[\s\S]*?^\1\s*$/gm, ''));
+		if (leftover) err(p.markdown, `unconverted MDX: ${leftover[0]}`);
+		if (llms && !llms.includes(`(${SITE}${p.markdown})`)) err('llms.txt', `docs page not listed: ${p.markdown}`);
+		if (full && !full.includes(`Canonical page: ${SITE}${p.path}\n`)) err('llms-full.txt', `docs page missing: ${p.path}`);
+	}
+	notices.push(`llms: ${docs.length} docs pages as Markdown, llms-full.txt ${Math.round((full?.length ?? 0) / 1024)} KiB`);
+}
+
+// Web manifest.
+{
+	const text = read('site.webmanifest');
+	let manifest;
+	try {
+		manifest = JSON.parse(text ?? '');
+	} catch {
+		err('site.webmanifest', 'missing or not JSON');
+	}
+	if (manifest) {
+		if (!manifest.name || manifest.start_url !== '/') err('site.webmanifest', 'needs a name and start_url "/"');
+		const icons = Array.isArray(manifest.icons) ? manifest.icons : [];
+		if (!icons.some((i) => i.sizes === '512x512')) err('site.webmanifest', 'needs a 512x512 icon');
+		for (const i of icons) if (!resolveTarget(String(i.src))) err('site.webmanifest', `icon file missing: ${i.src}`);
+	}
+}
+
+// Changelog feed: every entry points at a heading of the changelog page.
+{
+	const feed = read('changelog/feed.xml');
+	const page = join(dist, 'changelog', 'index.html');
+	if (!feed?.startsWith('<?xml') || !feed.includes('<feed xmlns="http://www.w3.org/2005/Atom">')) err('changelog/feed.xml', 'missing or not an Atom feed');
+	else {
+		const links = [...feed.matchAll(/<entry>[\s\S]*?<link rel="alternate"[^>]*href="([^"]+)"/g)].map((m) => m[1]);
+		if (links.length === 0) err('changelog/feed.xml', 'no entries');
+		for (const link of links) {
+			const u = new URL(link);
+			if (u.origin + u.pathname !== SITE + '/changelog/' || !existsSync(page) || !idsOf(page).has(decodeURIComponent(u.hash.slice(1))))
+				err('changelog/feed.xml', `entry link without a heading on the changelog page: ${link}`);
+		}
+	}
+}
+
+// IndexNow key: public/<key>.txt must hold its own name (scripts/indexnow.mjs submits with it).
+{
+	const keys = files.map((f) => /[\\/]([a-f0-9]{32})\.txt$/.exec(f)?.[1]).filter((k) => k && existsSync(join(dist, k + '.txt')));
+	if (keys.length !== 1) err('indexnow', `expected exactly one key file at the site root, found ${keys.length}`);
+	else if (read(keys[0] + '.txt')?.trim() !== keys[0]) err('indexnow', 'the key file does not contain its own name');
+}
+
 // _headers.
 const headers = read('_headers');
 if (!headers) err('_headers', 'missing');
@@ -348,6 +472,18 @@ else {
 	const demo = headers.split(/\n(?=\/)/).find((b) => b.startsWith('/demo/*'));
 	if (!demo || !demo.includes('! Content-Security-Policy')) err('_headers', '/demo/* must detach the site CSP');
 	if (demo && /cloudflareinsights/.test(demo)) err('_headers', '/demo/* must not allow the analytics beacon');
+	// Files that repeat a page or are not pages stay out of search results.
+	const rules = headers.split(/\n(?=\/)/);
+	for (const pattern of ['/*.md', '/llms-full.txt', '/samples/*', '/demo/samples/licenses/*', '/licenses/*', '/pagefind/*']) {
+		const rule = rules.find((b) => b.split('\n')[0].trim() === pattern);
+		if (!rule || !/^\s+X-Robots-Tag: noindex$/m.test(rule)) err('_headers', `${pattern} must be served with X-Robots-Tag: noindex`);
+	}
+	// A noindex header on a page, a sitemap or robots.txt would remove the site from search.
+	for (const rule of rules.filter((b) => /X-Robots-Tag/i.test(b))) {
+		const pattern = rule.split('\n')[0].trim();
+		if (pattern === '/*' || /(^|\/)(sitemap[^/]*|robots\.txt|llms\.txt)$/.test(pattern))
+			err('_headers', `X-Robots-Tag on ${pattern} would hide indexable content`);
+	}
 	for (const h of ['Strict-Transport-Security', 'X-Content-Type-Options', 'Referrer-Policy: strict-origin-when-cross-origin', 'Permissions-Policy'])
 		if (!headers.includes(h)) err('_headers', `missing ${h}`);
 }

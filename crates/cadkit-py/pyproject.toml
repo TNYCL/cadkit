@@ -37,7 +37,7 @@ dynamic = ["version"]
 [project.urls]
 Homepage = "https://cadkit.org"
 Source = "https://github.com/TNYCL/cadkit"
-Documentation = "https://github.com/TNYCL/cadkit/blob/main/docs/python.md"
+Documentation = "https://cadkit.org/docs/reference/python/"
 Changelog = "https://github.com/TNYCL/cadkit/blob/main/CHANGELOG.md"
 Issues = "https://github.com/TNYCL/cadkit/issues"
 Author = "https://tnycl.com"
