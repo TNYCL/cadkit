@@ -29,3 +29,35 @@
 
 /.well-known/security.txt
   Content-Type: text/plain; charset=utf-8
+
+/site.webmanifest
+  Content-Type: application/manifest+json; charset=utf-8
+
+/changelog/feed.xml
+  Content-Type: application/atom+xml; charset=utf-8
+
+# Markdown copies of the docs pages and llms-full.txt repeat the HTML pages for language
+# models; sample drawings, licence texts, the search index and the IndexNow key are files, not
+# pages. None of them belongs in search results, so they are served with noindex. Crawlers may
+# still fetch them (robots.txt allows everything).
+/*.md
+  Content-Type: text/markdown; charset=utf-8
+  X-Robots-Tag: noindex
+
+/llms-full.txt
+  X-Robots-Tag: noindex
+
+/samples/*
+  X-Robots-Tag: noindex
+
+/demo/samples/licenses/*
+  X-Robots-Tag: noindex
+
+/licenses/*
+  X-Robots-Tag: noindex
+
+/pagefind/*
+  X-Robots-Tag: noindex
+
+/caad3c27949a6496fdf2ff7c64695c8a.txt
+  X-Robots-Tag: noindex

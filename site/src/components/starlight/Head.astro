@@ -1,16 +1,19 @@
 ---
-// Extends Starlight's <head>: self-hosted fonts, Open Graph card, JSON-LD, robots, theme colour
-// and the optional Cloudflare Web Analytics beacon.
+// Extends Starlight's <head>: self-hosted fonts, Open Graph and Twitter card, JSON-LD, robots,
+// theme colour, web manifest, the Markdown and feed alternates and the optional Cloudflare Web
+// Analytics beacon.
 import Default from '@astrojs/starlight/components/Head.astro';
 import { Font } from 'astro:assets';
 import { SITE, NO_ANALYTICS_PREFIXES } from '../../config';
 import { ogImagePath } from '../../lib/og-path.mjs';
-import { breadcrumbJsonLd } from '../../lib/json-ld';
+import { breadcrumbJsonLd, techArticleJsonLd } from '../../lib/json-ld';
+import lastmod from '../../generated/lastmod.json';
 
 const route = Astro.locals.starlightRoute;
 const page = Astro.locals.cadkitPage;
 const path = Astro.url.pathname;
 const title = route.entry.data.title;
+const description = route.entry.data.description ?? '';
 const is404 = path === '/404/' || path === '/404.html' || route.entry.id === '404';
 const noindex = is404 || page?.noindex === true;
 
@@ -24,10 +27,14 @@ const setMeta = (key: 'name' | 'property', value: string, content: string) => {
 };
 
 setMeta('property', 'og:type', page?.ogType ?? 'article');
+// Open Graph locales are language_TERRITORY; Starlight emits the bare language tag.
+setMeta('property', 'og:locale', 'en_US');
+setMeta('name', 'twitter:title', title);
+if (description) setMeta('name', 'twitter:description', description);
+const image = new URL(page?.ogImage ?? ogImagePath(path), SITE).href;
 if (noindex) {
 	setMeta('name', 'robots', 'noindex');
 } else {
-	const image = new URL(page?.ogImage ?? ogImagePath(path), SITE).href;
 	setMeta('property', 'og:image', image);
 	setMeta('property', 'og:image:width', '1200');
 	setMeta('property', 'og:image:height', '630');
@@ -36,12 +43,25 @@ if (noindex) {
 }
 route.head = head;
 
-const crumbs = page?.breadcrumbs
+// Pages rendered from the docs collection (not through <PageLayout>): /docs/**, /changelog/
+// and /provenance/. Each also exists as Markdown (src/pages/[...doc].md.ts).
+const isDoc = !page && !is404;
+const crumbs = page
 	? page.breadcrumbs
-	: path.startsWith('/docs/') && path !== '/docs/'
-		? [{ label: 'Docs', href: '/docs/' }, { label: title }]
-		: undefined;
-const jsonLd = [...(page?.jsonLd ?? []), ...(crumbs && !noindex ? [breadcrumbJsonLd(crumbs, path)] : [])];
+	: !isDoc
+		? undefined
+		: path === '/docs/'
+			? [{ label: 'Docs' }]
+			: path.startsWith('/docs/')
+				? [{ label: 'Docs', href: '/docs/' }, { label: title }]
+				: [{ label: title }];
+const dateModified = (lastmod as Record<string, string>)[path];
+const jsonLd = [
+	...(page?.jsonLd ?? []),
+	...(isDoc && !noindex ? [techArticleJsonLd({ title, description, path, image, dateModified })] : []),
+	...(crumbs && !noindex ? [breadcrumbJsonLd(crumbs, path)] : []),
+];
+const markdownPath = isDoc && !noindex ? path.replace(/\/$/, '') + '.md' : undefined;
 
 const token = import.meta.env.PUBLIC_CF_WEB_ANALYTICS_TOKEN?.trim();
 const analytics =
@@ -51,6 +71,9 @@ const analytics =
 <Default />
 <meta name="theme-color" media="(prefers-color-scheme: light)" content="#fafaf7" />
 <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0b1324" />
+<link rel="manifest" href="/site.webmanifest" />
+<link rel="alternate" type="application/atom+xml" title="cadkit changelog" href="/changelog/feed.xml" />
+{markdownPath && <link rel="alternate" type="text/markdown" href={markdownPath} />}
 <Font cssVariable="--ck-font-sans-face" preload />
 <Font cssVariable="--ck-font-mono-face" preload />
 {
