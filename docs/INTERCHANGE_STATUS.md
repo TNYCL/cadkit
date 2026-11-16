@@ -42,7 +42,7 @@ contract-specific/online rules prevent a claim of universal TKGM acceptance.
 
 ## DGN reader, structure and seed follow-up (2026-11-15)
 
-What changed (details in the CHANGELOG "Unreleased" section and
+What changed (details in the CHANGELOG 0.5.3 section and
 [DGN format notes](dgn/FORMAT_NOTES.md)):
 
 - Reader corrections for issues #24–#30: flat ellipses read as lines or points, hidden V8
