@@ -1,0 +1,3 @@
+# Cloudflare static-asset redirects. The sitemap index is where the sitemap integration writes
+# it; /sitemap.xml is the address people and tools try first.
+/sitemap.xml /sitemap-index.xml 301

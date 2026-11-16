@@ -1,9 +1,17 @@
 // @ts-check
 import { defineConfig, fontProviders } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import sitemap from '@astrojs/sitemap';
+import { existsSync, readFileSync } from 'node:fs';
 import { SITE, REPO } from './src/config.ts';
 import { sidebar } from './src/sidebar.ts';
 import cadkitPostbuild from './scripts/postbuild.mjs';
+
+// Site path -> date of the last content change, written by scripts/prebuild.d/40-lastmod.mjs.
+// Empty when the git history is unavailable: those pages get no <lastmod>.
+const lastmodFile = new URL('./src/generated/lastmod.json', import.meta.url);
+/** @type {Record<string, string>} */
+const lastmod = existsSync(lastmodFile) ? JSON.parse(readFileSync(lastmodFile, 'utf8')) : {};
 
 const latin =
 	'U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD';
@@ -49,6 +57,13 @@ export default defineConfig({
 		},
 	],
 	integrations: [
+		// Listed before Starlight, which then keeps this instance instead of adding its own.
+		sitemap({
+			serialize(item) {
+				const date = lastmod[new URL(item.url).pathname];
+				return date ? { ...item, lastmod: date } : item;
+			},
+		}),
 		starlight({
 			title: 'cadkit',
 			description:

@@ -8,7 +8,7 @@ import ModuleGrid from '../components/ModuleGrid.astro';
 import DimensionDivider from '../components/DimensionDivider.astro';
 import { SAME_TASK } from '../data/snippets';
 import { LINKS, USED_BY, REPO } from '../config';
-import { organizationJsonLd, softwareJsonLd } from '../lib/json-ld';
+import { organizationJsonLd, websiteJsonLd, softwareJsonLd } from '../lib/json-ld';
 
 const title = 'The open CAD engine, in pure Rust';
 const description =
@@ -39,7 +39,7 @@ const useCases = [
 	description={description}
 	header={false}
 	ogType="website"
-	jsonLd={[organizationJsonLd, softwareJsonLd]}
+	jsonLd={[organizationJsonLd, websiteJsonLd, softwareJsonLd]}
 >
 	<section class="ck-hero ck-container" aria-labelledby="ck-hero-title">
 		<div class="ck-hero-copy">

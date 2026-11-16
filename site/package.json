@@ -19,9 +19,11 @@
 		"test": "node --test \"test/**/*.test.mjs\"",
 		"verify": "node scripts/verify.mjs",
 		"brand": "node scripts/brand.mjs",
+		"indexnow": "node scripts/indexnow.mjs",
 		"sample:plan": "node scripts/samples/plan.mjs"
 	},
 	"dependencies": {
+		"@astrojs/sitemap": "3.7.5",
 		"@astrojs/starlight": "0.43.1",
 		"@fontsource-variable/archivo": "5.3.0",
 		"@fontsource-variable/jetbrains-mono": "5.3.0",

@@ -42,11 +42,12 @@ src/styles/global.css   mapping onto Starlight variables, base type, grid, butto
 src/layouts/PageLayout.astro   layout for every hand-written page
 src/components/         shared components (below) and starlight/ overrides
 src/data/               formats matrix, module map, landing snippets
-src/lib/                brand mark geometry, OG path, JSON-LD, page meta types
-src/pages/              index, 404, robots.txt, llms.txt, .well-known/security.txt
+src/lib/                brand mark geometry, OG path, JSON-LD, page meta types, Markdown export, changelog feed
+src/pages/              index, 404, robots.txt, llms.txt, llms-full.txt, [...doc].md, site.webmanifest,
+                        changelog/feed.xml, .well-known/security.txt
 scripts/                build pipeline (hero, OG cards, CSP, verify, brand, sample plan)
 scripts/check-snippets/ the four landing snippets and their checks
-public/                 favicons, brand/, samples/, _headers template
+public/                 favicons, brand/, samples/, _headers template, _redirects, IndexNow key file
 test/                   node --test suites
 ```
 
@@ -77,7 +78,8 @@ Utility classes: `ck-container` (page width and gutters), `ck-eyebrow`, `ck-lead
   (verify then reports a notice instead of a broken link); the list is empty today.
 - **Build steps**: add a standalone script to `scripts/prebuild.d/` (run in name order before
   the hero render). Steps must be deterministic, idempotent, fast when cached and fail loudly.
-  Today: `10-samples.mjs` (demo samples), `20-docs.mjs` (docs sync), `30-stats.mjs` (stats).
+  Today: `10-samples.mjs` (demo samples), `20-docs.mjs` (docs sync), `30-stats.mjs` (stats),
+  `40-lastmod.mjs` (page modification dates from git history).
 - **Docs**: hand-written pages in `src/content/docs/docs/**` (`index.md` = `/docs/`,
   `getting-started/`, `guides/`), sidebar in `src/sidebar.ts`. Docs pages get
   BreadcrumbList JSON-LD automatically.
@@ -129,15 +131,41 @@ scratch crate (through the build lock); C is `gcc -fsyntax-only` against
   Twitter tags on every page. `scripts/postbuild.mjs` renders a 1200x630 card per page from
   its title and description (`/og/<path>.png`) with resvg; text is outlined with fontkit, so
   the build needs no system fonts.
-- JSON-LD: Organization and SoftwareSourceCode on `/`; BreadcrumbList on docs pages and on
-  pages that pass `breadcrumbs`.
-- `robots.txt`, `llms.txt` and `/.well-known/security.txt` (RFC 9116, `Expires` = build
-  date + 180 days, so every deploy renews it) are static endpoints in `src/pages/`.
+- JSON-LD: Organization, WebSite and SoftwareSourceCode on `/`; TechArticle (with
+  `dateModified`) and BreadcrumbList on every page of the docs collection; BreadcrumbList on
+  pages that pass `breadcrumbs`. There is no SoftwareApplication node: search engines accept
+  it only with a rating or review, which this project does not have and never invents.
+- Sitemap: `@astrojs/sitemap` writes `/sitemap-index.xml`; `/sitemap.xml` redirects to it
+  (`public/_redirects`). `<lastmod>` is the date of the last commit that changed the page's
+  content sources (`scripts/prebuild.d/40-lastmod.mjs`: the synced repository file, or the
+  page with the data and code samples it imports; layouts, components and `src/config.ts`
+  do not count). Shallow CI clones are deepened first; without history pages carry no date.
+- `robots.txt` allows everything and names the search and AI crawlers explicitly.
+  `/.well-known/security.txt` (RFC 9116, `Expires` = build date + 180 days, so every deploy
+  renews it). Both are static endpoints in `src/pages/`.
+- For language models (<https://llmstxt.org>): `/llms.txt` lists every page in sidebar order,
+  `/llms-full.txt` is the whole documentation in one file, and every docs page is also served
+  as Markdown at its path with `.md` instead of the trailing slash
+  (`/docs/getting-started/rust.md`, linked with `rel="alternate"`). MDX pages are converted by
+  `src/lib/md-export.mjs`, which knows `<Code>`, `<CodeTabs>` and `<Callout>` and fails the
+  build on any other component: add a conversion there when a docs page needs a new one.
+- `/changelog/feed.xml` is an Atom feed of the releases in `CHANGELOG.md`;
+  `/site.webmanifest` carries the name, colours and icons.
+- `X-Robots-Tag: noindex` (`public/_headers`) on the Markdown copies, `llms-full.txt`, sample
+  drawings, licence texts, the Pagefind index and the IndexNow key: they repeat a page or are
+  not pages. Pages, sitemaps, `robots.txt` and `llms.txt` never get that header (verify checks).
+- IndexNow (Bing, Yandex, Seznam, Naver; not Google): `public/<key>.txt` is the public key
+  file. After a deploy, `npm run indexnow -- --all` submits every URL of the live sitemap and
+  `npm run indexnow -- --since 2d` only the recently changed ones (`--dry-run` prints them).
+  Cloudflare Crawler Hints is also enabled on the zone. Google is reached through the
+  sitemap submitted in Search Console.
 - Font licences (SIL OFL 1.1 texts from the font packages) are served at `/licenses/archivo.txt`
   and `/licenses/jetbrains-mono.txt` and linked from `/brand/`.
 - `verify` also enforces unique titles and descriptions (70–170 characters), sitemap
-  completeness, valid JSON-LD (no rating/review/FAQ types), no third-party resources other than
-  the analytics beacon, and no build-machine paths in shipped files.
+  completeness and dates, the robots policy, a Markdown copy and an `llms.txt` entry for every
+  docs page, valid JSON-LD (no rating/review/FAQ types, `dateModified` equal to the sitemap's
+  `lastmod`), no third-party resources other than the analytics beacon, and no build-machine
+  paths in shipped files.
 - Cloudflare Web Analytics: the beacon is added only when `PUBLIC_CF_WEB_ANALYTICS_TOKEN` is
   set at build time, never on `/demo/` or the 404 page. No cookies, no other analytics.
 
@@ -207,7 +235,8 @@ Pages deploy hook after each daily snapshot, which also renews `security.txt`.
 | Environment | `NODE_VERSION=24`; optional `PUBLIC_CF_WEB_ANALYTICS_TOKEN` (public site token) |
 | Build watch paths | `site/*`, `docs/*`, `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md`, `README.md` |
 
-`www.cadkit.org` redirects to the apex at the Cloudflare level (not in this repository).
+`www.cadkit.org` redirects to the apex at the Cloudflare level (not in this repository): an
+originless proxied `AAAA 100::` record plus a Single Redirect rule (301, path and query kept).
 
 ## Dependencies
 
@@ -216,7 +245,8 @@ All exact-pinned; `package-lock.json` is committed.
 | Package | Why |
 |---|---|
 | `astro` | static site generator |
-| `@astrojs/starlight` | documentation framework: docs layout, sidebar, Pagefind search, sitemap, code blocks |
+| `@astrojs/starlight` | documentation framework: docs layout, sidebar, Pagefind search, code blocks |
+| `@astrojs/sitemap` | the sitemap integration Starlight already depends on, listed directly so that `astro.config.mjs` can add `<lastmod>` |
 | `cadkit-wasm` | renders the hero at build time; the displayed version comes from its package.json |
 | `@fontsource-variable/archivo`, `@fontsource-variable/jetbrains-mono` | self-hosted OFL variable fonts |
 | `@astrojs/check`, `typescript` (dev) | `astro check`; TypeScript 6 because `@astrojs/check` supports 5 and 6 |
