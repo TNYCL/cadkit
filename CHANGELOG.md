@@ -6,6 +6,8 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-11-16
+
 ### Added
 
 - Project website at <https://cadkit.org> (source in `site/`, Astro + Starlight): guides for
@@ -33,7 +35,7 @@ All notable changes are recorded here. The format follows
   GitHub Releases. 0.5.3 was published from the v0.5.3 sources.
 - Package metadata: homepage `https://cadkit.org` and authors
   `cadkit maintainers <maintainers@cadkit.org>` for every crate, `pycadkit` and
-  `cadkit-wasm` (visible on the registries from the next release). `SECURITY.md` lists
+  `cadkit-wasm` (visible on the registries from this release). `SECURITY.md` lists
   security@cadkit.org next to GitHub private vulnerability reporting.
 - New logo: the "C" drawn as a selected CAD arc with grips.
 
@@ -612,7 +614,8 @@ Fixed during development, before this first release:
 - No automatic TKGM/CityMax building inference or receiving-system acceptance.
 - DWG R13 (AC1012) is untested; entity coverage of all readers is still growing.
 
-[Unreleased]: https://github.com/TNYCL/cadkit/compare/v0.5.3...HEAD
+[Unreleased]: https://github.com/TNYCL/cadkit/compare/v0.5.4...HEAD
+[0.5.4]: https://github.com/TNYCL/cadkit/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/TNYCL/cadkit/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/TNYCL/cadkit/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/TNYCL/cadkit/compare/v0.5.0...v0.5.1
