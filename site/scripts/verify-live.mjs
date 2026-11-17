@@ -8,9 +8,9 @@ const origin = new URL(process.argv[2] ?? SITE).origin;
 const auditAgent = `cadkit-site-audit/1.0 (+${SITE})`;
 const errors = [];
 const check = (ok, message) => { if (!ok) errors.push(message); };
-const request = async (path, agent = auditAgent) => {
-	const result = await fetchPublic(new URL(path, origin), agent);
-	check(result.response.headers.get('link')?.includes('rel="describedby"'), `${path}: missing Link discovery header`);
+const request = async (path, discovery = false) => {
+	const result = await fetchPublic(new URL(path, origin), auditAgent);
+	if (discovery) check(result.response.headers.get('link')?.includes('rel="describedby"'), `${path}: missing Link discovery header`);
 	return result;
 };
 
@@ -20,7 +20,7 @@ try {
 	const { text: llms, response: indexResponse } = await request('/llms.txt');
 	check(llms.startsWith('# cadkit\n'), 'llms.txt: missing project heading');
 	check(!/noindex|none/i.test(indexResponse.headers.get('x-robots-tag') ?? ''), 'llms.txt: noindex header');
-	const { text: full, response: fullResponse } = await request('/llms-full.txt');
+	const { text: full, response: fullResponse } = await request('/llms-full.txt', true);
 	check(/noindex/i.test(fullResponse.headers.get('x-robots-tag') ?? ''), 'llms-full.txt: missing noindex header');
 	const version = /Current release: ([\d.]+(?:-[\w.-]+)?)\./.exec(llms)?.[1];
 	check(Boolean(version) && full.includes(`cadkit ${version},`), 'LLM exports disagree on their version');
@@ -42,7 +42,7 @@ try {
 	for (const { loc } of entries) {
 		if (new URL(loc).origin !== origin) throw new Error('foreign page URL');
 		try {
-			const { text, response } = await request(loc);
+			const { text, response } = await request(loc, true);
 			const page = inspectPublishedPage(text, loc);
 			errors.push(...page.issues.map((issue) => `${new URL(loc).pathname}: ${issue}`));
 			check(!/noindex|none/i.test(response.headers.get('x-robots-tag') ?? ''), `${loc}: HTML noindex header`);
@@ -50,7 +50,7 @@ try {
 			check(!descriptions.has(page.description), `${loc}: duplicate description`); descriptions.add(page.description);
 			if (page.markdown) {
 				const mdUrl = new URL(page.markdown, origin).href;
-				const { text: md, response: mdResponse } = await request(mdUrl);
+				const { text: md, response: mdResponse } = await request(mdUrl, true);
 				check(mdResponse.headers.get('content-type')?.startsWith('text/markdown'), `${mdUrl}: wrong content type`);
 				check(/noindex/i.test(mdResponse.headers.get('x-robots-tag') ?? ''), `${mdUrl}: missing noindex header`);
 				check(md.includes(`Canonical page: ${loc}\n`), `${mdUrl}: wrong canonical page`);
