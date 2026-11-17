@@ -7,6 +7,12 @@
 //!   back to the caller's CPU path.
 //! - [`mesh`]: [`Mesh3d`] triangle meshes in f64 world coordinates and
 //!   [`relative_positions`], the error-checked f64 to f32 conversion for upload.
+//! - [`triangulate()`]: ear clipping of one planar polygon with holes, bounded and panic-free
+//!   on any input.
+//! - [`buffers`]: [`SurfaceMesh`] and [`LineBuffer`], whole models as flat f32 / u8 / u32
+//!   buffers relative to an f64 origin, grouped by layer, with entity references and a ray
+//!   pick ([`SurfaceMesh::pick`]). Feature `document` builds them from a cadkit-core
+//!   document (`document::surface_mesh`, `document::line_buffer`).
 //!
 //! The crate knows how to draw, not what the geometry means: callers map their own objects to
 //! [`ObjectId`]s, decide colors and widths, track which objects changed and call
@@ -30,14 +36,20 @@
 //! assert!(frame.cpu.is_empty());
 //! ```
 
+pub mod buffers;
 #[cfg(feature = "document")]
 pub mod document;
 pub mod layout;
 pub mod mesh;
 pub mod plan;
+pub mod triangulate;
 
+pub use buffers::{
+    LayerRange, LineBuffer, LineReport, RayHit, SceneItem, SceneItems, SurfaceMesh, SurfaceReport,
+};
 pub use mesh::{Mesh3d, MeshBudget, MeshScene, relative_positions};
 pub use plan::{ChunkDraw, Plan2d, Plan2dOptions, PlanFrame, PlanItem, PlanView, curve_bounds};
+pub use triangulate::triangulate;
 
 /// Identifier of one caller object. The caller assigns it; [`Plan2d`] draws objects of a
 /// chunk in ascending id order, so later ids are drawn on top.

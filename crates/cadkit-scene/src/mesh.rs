@@ -136,29 +136,33 @@ pub fn relative_positions(
         .map(|(vertex, point)| {
             let mut gpu = [0f32; 3];
             for ((slot, coordinate), start) in gpu.iter_mut().zip(point).zip(origin) {
-                let coordinate = *coordinate;
-                // TwoDiff keeps the part of the subtraction that f64 rounds away.
-                let local = coordinate - start;
-                let virtual_start = coordinate - local;
-                let virtual_coordinate = local + virtual_start;
-                let subtraction_error = (coordinate - virtual_coordinate) + (virtual_start - start);
-                let encoded = local as f32;
-                let total_error =
-                    (subtraction_error.abs() + (local - f64::from(encoded)).abs()).next_up();
-                if !coordinate.is_finite()
-                    || !start.is_finite()
-                    || !local.is_finite()
-                    || !encoded.is_finite()
-                    || !total_error.is_finite()
-                    || total_error > max_error
-                {
-                    return Err(SceneError::Precision { vertex });
+                match encode_relative(*coordinate, start) {
+                    Some((encoded, error)) if error <= max_error => *slot = encoded,
+                    _ => return Err(SceneError::Precision { vertex }),
                 }
-                *slot = encoded;
             }
             Ok(gpu)
         })
         .collect()
+}
+
+/// `coordinate - start` as f32 and an upper bound of its absolute error in model units: the
+/// part of the f64 subtraction that rounding loses (recovered exactly with TwoDiff) plus the
+/// f32 rounding. `None` when an input or the result is not finite.
+pub(crate) fn encode_relative(coordinate: f64, start: f64) -> Option<(f32, f64)> {
+    // TwoDiff keeps the part of the subtraction that f64 rounds away.
+    let local = coordinate - start;
+    let virtual_start = coordinate - local;
+    let virtual_coordinate = local + virtual_start;
+    let subtraction_error = (coordinate - virtual_coordinate) + (virtual_start - start);
+    let encoded = local as f32;
+    let total_error = (subtraction_error.abs() + (local - f64::from(encoded)).abs()).next_up();
+    (coordinate.is_finite()
+        && start.is_finite()
+        && local.is_finite()
+        && encoded.is_finite()
+        && total_error.is_finite())
+    .then_some((encoded, total_error))
 }
 
 #[cfg(test)]

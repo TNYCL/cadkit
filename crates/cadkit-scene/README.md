@@ -41,7 +41,23 @@ and groups items by layer. Curves that do not stay circular are flattened to pol
 
 Inspect `DocumentPlanReport`: it counts flattened curves, dashes drawn solid, skipped
 entity kinds and traversal truncation. Text, hatches/fills, points, images and viewports
-are not drawn by this bridge. It does not produce a 3D mesh from a drawing document.
+are not drawn by this bridge.
+
+For renderers that draw a whole model at once, the same feature builds flat buffers
+(`cadkit_scene::buffers` documents the memory layout):
+
+- `document::surface_mesh` returns a `SurfaceMesh`: polygons with holes, faces, mesh faces,
+  solid straight-edged hatches and, optionally, closed planar polylines (`PolylineSurfaces`)
+  triangulated by ear clipping, with f32 positions relative to an f64 origin, per-vertex
+  normals and colors, triangles grouped by layer, an item table that leads every triangle
+  back to its entity's walk path, face outlines and wires as segments, and
+  `SurfaceMesh::pick` for ray picking with hidden layers. Faces with the same corners are
+  drawn once (the more deeply nested one wins).
+- `document::line_buffer` returns a `LineBuffer`: every curve as 2D or 3D segments with the
+  same origin, colors, layer ranges and item table, for canvas renderers.
+
+Both stop at triangle, segment and work budgets and say so in their reports.
+`cadkit_scene::triangulate` is the standalone polygon triangulation they use.
 
 A frame's CPU handoff must be drawn by the host. `PlanItem::force_cpu` explicitly keeps an
 item on that path; selection/preview cut-outs and precision failures also need host handling.
