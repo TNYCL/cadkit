@@ -38,6 +38,7 @@ import {
 	type OpenResult,
 	type Phase as WorkerPhase,
 	type PickedEntity,
+	type PickResult,
 	type RenderResult,
 	type RoundTrip,
 	type TransformResult,
@@ -55,6 +56,7 @@ const PHASE_TEXT: Record<Phase, string> = {
 	check: 'Running the check',
 };
 const PICK_TOLERANCE_PX = 6;
+const NO_OFFSET: V.Offset = { x: 0, y: 0 };
 /** The busy overlay appears only when work takes longer than this (no flash on fast files). */
 const BUSY_DELAY_MS = 180;
 /** Sample opened when the page is loaded without ?sample=. */
@@ -66,8 +68,15 @@ type TabId = (typeof TAB_IDS)[number];
 interface Selection {
 	/** Model the entity is in (model space for a pick through a layout viewport). */
 	model: number;
-	/** Index chain from the model's entity list down through groups. */
-	path: number[];
+	/**
+	 * Index chain from the model's entity list down through groups to the selected entity: for a
+	 * pick on a block part, the block reference that owns it. null when the worker keeps no JSON copy.
+	 */
+	path: number[] | null;
+	/** Index chain to the part that was hit when it is not the selected entity itself (a block part). */
+	part: number[] | null;
+	/** Blocks between the selected reference and the part, outermost first. */
+	blocks: string[];
 	/** 2D pick result; null for a 3D pick. */
 	hit: PickedEntity | null;
 	/** Face of the 3D mesh; -1 for a 2D pick. */
@@ -170,6 +179,10 @@ export function mount(): void {
 		layersHint: byId('ck-layers-hint'),
 		layersAll: byId<HTMLButtonElement>('ck-layers-all'),
 		layersNone: byId<HTMLButtonElement>('ck-layers-none'),
+		layersEmpty: byId<HTMLButtonElement>('ck-layers-empty'),
+		imagesWrap: byId('ck-images-wrap'),
+		images: byId<HTMLInputElement>('ck-images'),
+		imagesCount: byId('ck-images-count'),
 		selHeading: byId('ck-h-sel'),
 		selHint: byId('ck-sel-hint'),
 		sel: byId('ck-sel'),
@@ -232,6 +245,8 @@ export function mount(): void {
 	/** Bumped when another file is opened (or the viewer is emptied): panel results of the old file are dropped. */
 	let fileToken = 0;
 	let loaded: Loaded | null = null;
+	/** Why the sheet kept absolute coordinates although they needed a local origin (shown in the File tab). */
+	let relocation: string | null = null;
 	/** Model the viewports of the current layout look at. */
 	let layoutSource = 0;
 	let view: V.View | null = null;
@@ -243,6 +258,10 @@ export function mount(): void {
 	const hidden = new Set<string>();
 	let selection: Selection | null = null;
 	let sheet: Sheet = document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+	/** Raster image frames are shown (off for every new document: they rarely help and often cover the drawing). */
+	let showImages = false;
+	/** The layers panel lists the layers with nothing drawn as well. */
+	let showEmptyLayers = false;
 	let measuring = false;
 	let mPts: Pt[] = [];
 	let mClosed = false;
@@ -415,7 +434,7 @@ export function mount(): void {
 			return;
 		}
 		const { w, h } = stageSize();
-		const p = V.toWorld(view, w, h, px, py);
+		const p = V.toDrawing(view, w, h, px, py, loaded?.origin ?? NO_OFFSET);
 		const u = units();
 		el.readout.textContent = `${loaded?.layout ? 'Sheet  ' : ''}X ${V.formatCoord(p.x, view.s)}  Y ${V.formatCoord(p.y, view.s)}${u ? '  ' + u : ''}`;
 	}
@@ -427,7 +446,10 @@ export function mount(): void {
 	// --- rendering ---
 	const canvasNote = (text: string) => el.canvas.append(h('p', { class: 'ck-canvas-note' }, text));
 
-	/** Renders the current model into the 2D sheet. `start` is a part of the drawing to show first. */
+	/** Extents to fit: hidden raster image frames do not count. */
+	const homeOf = (l: Loaded): V.Box => (showImages ? l.homeWithImages : l.home);
+
+	/** Renders the current model into the 2D sheet. `start` is a part of the drawing to show first (absolute SVG units). */
 	async function render(fit: boolean, start: V.Box | null = null): Promise<void> {
 		if (!doc) return;
 		const info = doc.info;
@@ -435,6 +457,7 @@ export function mount(): void {
 		sheet2d.clear();
 		loaded = null;
 		view = null;
+		relocation = null;
 		if (!(info.models[model]?.entities ?? 0)) {
 			canvasNote('This model has no entities to draw.');
 			buildLayers();
@@ -456,7 +479,8 @@ export function mount(): void {
 			return;
 		}
 		const m = info.models[model];
-		loaded = sheet2d.load(result, sheet, Boolean(m?.is3d) && !result.layout);
+		loaded = sheet2d.load(result, sheet, Boolean(m?.is3d) && !result.layout, showImages);
+		relocation = result.relocation;
 		layoutSource = result.layout?.source ?? 0;
 		timings.svgBytes = result.svg.length + (result.layout?.sourceSvg.length ?? 0);
 		for (const name of sheet2d.layerNames()) if (hidden.has(name)) sheet2d.setLayerHidden(name, true);
@@ -464,11 +488,12 @@ export function mount(): void {
 			canvasNote(loaded.noWindows ? 'This layout has no viewport that shows the model, and no entities of its own.' : 'Nothing in this model can be drawn as a 2D sheet.');
 		}
 		const { w, h } = stageSize();
-		const home = loaded.home;
+		const home = homeOf(loaded);
 		const keep = !fit && previous && previous.home.x === home.x && previous.home.y === home.y && previous.home.w === home.w && previous.home.h === home.h;
 		if (keep && previous) view = { ...previous, home };
 		else {
-			view = V.fitBox(home, start ?? home, w, h, insets());
+			// The start box is in drawing units; the sheet is drawn relative to its origin.
+			view = V.fitBox(home, start ? V.toLocal(start, loaded.origin) : home, w, h, insets());
 			fitted = !start;
 		}
 		applyView();
@@ -480,6 +505,8 @@ export function mount(): void {
 	/** Set when WebGL2 turned out not to work here: the 3D view is not offered again. */
 	let gl3dBroken = false;
 	const has3d = () => can3d && !gl3dBroken && Boolean(doc?.extras?.[model]?.spatial);
+	/** The model opens in 3D (true surfaces, or closed polylines tall enough: see mesh.ts surfaceInfo). */
+	const opens3d = () => has3d() && Boolean(doc?.extras?.[model]?.open3d);
 
 	function syncMode(): void {
 		el.root.dataset.mode = mode;
@@ -562,6 +589,13 @@ export function mount(): void {
 			const kinds = Object.entries(doc.kinds).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 			rows.push(['Kinds', h('span', { class: 'ck-kinds' }, ...kinds.map(([k, n]) => h('span', {}, mono(k), ' ' + n.toLocaleString('en-US'))))]);
 		}
+		if (loaded?.imageFrames) {
+			rows.push(['Raster references', `${plural(loaded.imageFrames, 'image frame')}, ${showImages ? 'shown' : 'hidden'} (Layers tab). The image files are not loaded: the drawing only refers to them.`]);
+		}
+		if (loaded && (loaded.origin.x || loaded.origin.y)) {
+			rows.push(['Sheet origin', h('span', {}, mono(`X ${loaded.origin.x.toLocaleString('en-US')}  Y ${(-loaded.origin.y).toLocaleString('en-US')}`), ': the sheet is drawn relative to it, because browsers keep SVG coordinates in single precision. Readouts and exports use drawing coordinates.')]);
+		}
+		if (relocation) rows.push(['Coordinates', `Drawn as in the file: the sheet needs a local origin for full precision, but its SVG has markup the demo does not know (${relocation}).`]);
 		if (Number.isFinite(timings.read)) rows.push(['Read in', formatMs(timings.read)]);
 		if (loaded && Number.isFinite(timings.render)) {
 			rows.push(['Rendered in', `${formatMs(timings.render)}, ${formatBytes(timings.svgBytes)} of SVG, ${plural(loaded.nodes, 'node')}`]);
@@ -619,24 +653,35 @@ export function mount(): void {
 			return;
 		}
 		el.layersHint.hidden = true;
+		el.imagesWrap.hidden = !loaded?.imageFrames || mode === '3d';
+		el.images.checked = showImages;
+		el.imagesCount.textContent = loaded?.imageFrames ? `(${loaded.imageFrames.toLocaleString('en-US')})` : '';
 		const drawn = drawnLayers();
-		const names = doc.layers.map((l) => l.name);
-		for (const n of drawn) if (!names.includes(n)) names.push(n);
+		const all = doc.layers.map((l) => l.name);
+		for (const n of drawn) if (!all.includes(n)) all.push(n);
+		// Real drawings define hundreds of layers and use a few: the ones with something drawn come first.
+		const used = all.filter((n) => drawn.has(n));
+		const empty = all.filter((n) => !drawn.has(n));
 		const meta = new Map(doc.layers.map((l) => [l.name, l]));
-		el.layerCount.textContent = `(${names.length})`;
-		el.layerFilter.hidden = names.length <= 12;
-		if (!names.length) {
+		el.layerCount.textContent = empty.length && used.length ? `(${used.length} of ${all.length} drawn)` : `(${all.length})`;
+		el.layerFilter.hidden = all.length <= 12;
+		if (!all.length) {
 			el.layers.replaceChildren(h('li', { class: 'ck-hint' }, 'This drawing has no layers.'));
+			el.layersEmpty.hidden = true;
 			return;
 		}
 		const filter = el.layerFilter.hidden ? '' : el.layerFilter.value.trim().toLowerCase();
+		const match = (name: string) => !filter || name.toLowerCase().includes(filter);
+		const emptyShown = empty.filter(match);
+		el.layersEmpty.hidden = !emptyShown.length;
+		el.layersEmpty.textContent = showEmptyLayers ? `Hide ${plural(emptyShown.length, 'empty layer')}` : `Show ${plural(emptyShown.length, 'empty layer')}`;
+		el.layersEmpty.setAttribute('aria-expanded', String(showEmptyLayers));
+		const listed = [...used.filter(match), ...(showEmptyLayers ? emptyShown : [])];
 		el.layers.replaceChildren(
-			...names
-				.filter((name) => !filter || name.toLowerCase().includes(filter))
-				.map((name) => {
+			...listed.map((name) => {
 					const on = drawn.has(name);
 					const l = meta.get(name);
-					const id = 'ck-layer-' + names.indexOf(name);
+					const id = 'ck-layer-' + all.indexOf(name);
 					const cb = h('input', { type: 'checkbox', id });
 					cb.checked = on && !hidden.has(name);
 					cb.disabled = !on;
@@ -735,29 +780,34 @@ export function mount(): void {
 		const d = sel.detail;
 		const fmt = (n: number) => (view ? V.formatCoord(n, view.s) : String(n));
 		// A pick inside a block reference reports the part that was hit; the entity is the reference.
-		const kind = d?.kind ?? hit?.kind ?? '';
-		const layer = d?.layer ?? hit?.layer ?? '';
+		const ofPart = Boolean(hit && sel.part);
+		const kind = d?.kind ?? (ofPart ? '' : hit?.kind) ?? '';
+		const layer = d?.layer ?? (ofPart ? '' : hit?.layer) ?? '';
 		const rows: [string, string | Node][] = [
-			['Kind', mono(kind)],
+			['Kind', mono(kind || '-')],
 			['Layer', layer || '(unnamed)'],
 		];
-		if (hit && d && hit.kind !== d.kind) rows.push(['Picked part', h('span', {}, mono(hit.kind), hit.layer && hit.layer !== layer ? ' on ' + hit.layer : '')]);
-		if (sel.path.length === 1) rows.push(['Index', String(sel.path[0])]);
-		const id = hit?.id ?? d?.id ?? null;
+		if (hit && ofPart) {
+			const where = sel.blocks.length ? [' in block ', ...sel.blocks.flatMap((b, i) => (i ? [' › ', mono(b)] : [mono(b)]))] : [];
+			rows.push(['Picked part', h('span', {}, mono(hit.kind), hit.layer && hit.layer !== layer ? ' on ' + hit.layer : '', ...where, hit.id !== null ? h('span', { class: 'ck-muted' }, ' (id ' + hit.id + ')') : '')]);
+		}
+		if (sel.path?.length === 1) rows.push(['Index', String(sel.path[0])]);
+		const id = d ? d.id : ofPart ? null : (hit?.id ?? null);
 		if (id !== null) rows.push(['Handle / id', mono(String(id))]);
 		if (d?.parents.length) rows.push(['Part of', d.parents.join(' › ')]);
 		if (hit?.color) rows.push(['Colour in file', hit.color]);
 		const block = d?.block ?? hit?.block;
 		if (block) rows.push(['Block', mono(block)]);
-		if (hit?.text) rows.push(['Text', hit.text]);
+		if (hit?.text) rows.push([ofPart ? 'Text of the part' : 'Text', hit.text]);
 		if (hit) {
 			const [x0, y0] = hit.bbox.min;
 			const [x1, y1] = hit.bbox.max;
 			const u = units();
-			rows.push(['Bounds', mono(`(${fmt(x0)}, ${fmt(y0)}) to (${fmt(x1)}, ${fmt(y1)})${u ? ' ' + u : ''}`)]);
+			rows.push([ofPart ? 'Bounds of the part' : 'Bounds', mono(`(${fmt(x0)}, ${fmt(y0)}) to (${fmt(x1)}, ${fmt(y1)})${u ? ' ' + u : ''}`)]);
 			if (hit.truncated) rows.push(['Note', 'Some metadata was shortened to the demo limits.']);
 		}
-		for (const a of d?.attributes ?? hit?.attributes.map((x) => ({ ...x, invisible: false })) ?? []) rows.push(['Attribute ' + a.tag, a.value + (a.invisible ? ' (not displayed)' : '')]);
+		const attributes = d?.attributes ?? (ofPart ? [] : (hit?.attributes.map((x) => ({ ...x, invisible: false })) ?? []));
+		for (const a of attributes) rows.push(['Attribute ' + a.tag, a.value + (a.invisible ? ' (not displayed)' : '')]);
 		if (sel.inSource) rows.push(['Seen through', 'a viewport of this layout']);
 		fillDl(el.sel, rows);
 		el.selHint.hidden = true;
@@ -773,15 +823,18 @@ export function mount(): void {
 			el.selJson.textContent = d.json;
 			el.selJsonNote.textContent = d.jsonTruncated ? 'Cut to the demo limit; the JSON export has all of it.' : '';
 		}
-		el.selchipText.replaceChildren(mono(kind), ' on ' + (layer || '(unnamed)'));
+		el.selchipText.replaceChildren(mono(kind || hit?.kind || ''), ' on ' + (layer || hit?.layer || '(unnamed)'));
 		el.selchip.hidden = false;
 	}
 
 	/** Loads the full entity (properties, JSON, and the highlight for a 2D pick) into the selection. */
 	async function loadDetail(sel: Selection): Promise<void> {
-		if (!doc?.extras) return;
+		if (!doc?.extras || !sel.path) return;
+		// The highlight is drawn by the engine in absolute coordinates and moved onto the sheet (or
+		// the model seen through a viewport) by that sheet's own origin.
+		const origin = (sel.inSource ? loaded?.sourceOrigin : loaded?.origin) ?? NO_OFFSET;
 		try {
-			const detail = await engine.call<EntityResult>({ type: 'entity', model: sel.model, path: sel.path, highlight: sel.face < 0 });
+			const detail = await engine.call<EntityResult>({ type: 'entity', model: sel.model, path: sel.path, highlight: sel.face < 0, origin });
 			if (selection !== sel) return;
 			sel.detail = detail;
 			if (sel.face < 0 && detail.highlight && !sheet2d.setHighlight(detail.highlight, sel.inSource)) sel.detail = { ...detail, highlight: null };
@@ -801,7 +854,8 @@ export function mount(): void {
 		fillSelection();
 		const kind = sel.hit?.kind ?? (mesh && sel.face >= 0 ? mesh.faces[sel.face]?.kind : '') ?? '';
 		const layer = sel.hit?.layer ?? (mesh && sel.face >= 0 ? mesh.faces[sel.face]?.layer : '') ?? '';
-		announce(`Selected ${kind} on layer ${layer || 'unnamed'}.`);
+		const block = sel.part && sel.blocks.length ? `, part of block ${sel.blocks[0]}` : '';
+		announce(`Selected ${kind} on layer ${layer || 'unnamed'}${block}.`);
 		void loadDetail(sel);
 	}
 
@@ -816,12 +870,12 @@ export function mount(): void {
 				announce('Nothing to pick there.');
 				return;
 			}
-			select({ model, path: ref.path, hit: null, face, inSource: false, detail: null });
+			select({ model, path: ref.path, part: null, blocks: [], hit: null, face, inSource: false, detail: null });
 			return;
 		}
 		if (!view || !loaded) return;
 		const { w, h } = stageSize();
-		const p = V.toWorld(view, w, h, px, py);
+		const p = V.toDrawing(view, w, h, px, py, loaded.origin);
 		if (measuring) {
 			addMeasurePoint(p);
 			return;
@@ -830,16 +884,21 @@ export function mount(): void {
 		const through = loaded.layout ? paperToModel(loaded.layout, p.x, p.y) : null;
 		const pickModel = through ? layoutSource : model;
 		try {
-			const hit = await engine.call<PickedEntity | null>({
+			const picked = await engine.call<PickResult | null>({
 				type: 'pick',
 				model: pickModel,
 				x: through ? through.x : p.x,
 				y: through ? through.y : p.y,
 				tolerance: PICK_TOLERANCE_PX * view.s * (through ? through.scale : 1),
 				excludedLayers: [...hidden],
+				// Hidden raster frames cannot be picked.
+				excludedKinds: showImages ? [] : ['image'],
 			});
-			if (hit) select({ model: pickModel, path: [hit.index], hit, face: -1, inSource: Boolean(through), detail: null });
-			else {
+			if (picked) {
+				const t = picked.target;
+				const part = t && t.part.length !== t.owner.length ? t.part : null;
+				select({ model: pickModel, path: t ? t.owner : null, part, blocks: t?.blocks ?? [], hit: picked.hit, face: -1, inSource: Boolean(through), detail: null });
+			} else {
 				clearSelection(false);
 				announce('Nothing to pick there.');
 			}
@@ -859,7 +918,7 @@ export function mount(): void {
 		const bw = Math.max(x1 - x0, min);
 		const bh = Math.max(y1 - y0, min);
 		const box = { x: (x0 + x1) / 2 - bw * 0.75, y: -(y0 + y1) / 2 - bh * 0.75, w: bw * 1.5, h: bh * 1.5 };
-		setView(V.fitBox(view.home, box, w, h, insets()));
+		setView(V.fitBox(view.home, V.toLocal(box, loaded?.origin ?? NO_OFFSET), w, h, insets()));
 		showCentre();
 	}
 
@@ -966,8 +1025,9 @@ export function mount(): void {
 		showNotice();
 		await render(true, opts.start);
 		syncMode();
-		// Models with surfaces that leave the XY plane (CityGML buildings, 3D faces) open in 3D.
-		if (has3d()) await setMode('3d');
+		// Models with surfaces that leave the XY plane (CityGML buildings, 3D faces, DGN buildings
+		// made of shapes) open in 3D; flatter shape models open on the sheet with 3D offered.
+		if (opens3d()) await setMode('3d');
 		fillDocument();
 		fillWarnings();
 		el.chkLimit.value = String(Math.max(1, Math.floor(result.info.models.reduce((n, m) => n + m.entities, 0) / 2)));
@@ -990,6 +1050,8 @@ export function mount(): void {
 			doc = result;
 			fileToken++;
 			defaultHidden();
+			showImages = false;
+			showEmptyLayers = false;
 			const start = sampleId ? (sampleById(sampleId)?.start ?? null) : null;
 			await showDocument(result, { keepModel: false, start: start ? { x: start[0], y: -start[3], w: start[2] - start[0], h: start[3] - start[1] } : null });
 			el.filename.replaceChildren(h('span', { class: 'ck-fname' }, name), h('span', { class: 'ck-fmt' }, formatWithVersion(result.info.format, result.info.version)));
@@ -1323,7 +1385,7 @@ export function mount(): void {
 		if (e.pointerType === 'mouse') {
 			showCoords(e.clientX - left, e.clientY - top);
 			if (measuring && view && mPts.length && !mClosed && !pointers.size) {
-				mCursor = V.toWorld(view, w, h, e.clientX - left, e.clientY - top);
+				mCursor = V.toDrawing(view, w, h, e.clientX - left, e.clientY - top, loaded?.origin ?? NO_OFFSET);
 				sheet2d.setMeasure(mPts, mClosed, mCursor);
 			}
 		}
@@ -1513,7 +1575,7 @@ export function mount(): void {
 		try {
 			await render(true);
 			syncMode();
-			if (has3d()) await setMode('3d');
+			if (opens3d()) await setMode('3d');
 			fillDocument();
 		} catch (e) {
 			handleError(e);
@@ -1526,6 +1588,23 @@ export function mount(): void {
 	el.layersAll.addEventListener('click', () => setAllLayers(true));
 	el.layersNone.addEventListener('click', () => setAllLayers(false));
 	el.layerFilter.addEventListener('input', buildLayers);
+	el.layersEmpty.addEventListener('click', () => {
+		showEmptyLayers = !showEmptyLayers;
+		buildLayers();
+	});
+	el.images.addEventListener('change', () => {
+		showImages = el.images.checked;
+		sheet2d.setImagesShown(showImages);
+		if (selection?.hit?.kind === 'image' && !showImages) clearSelection(false);
+		// Fitting follows what is shown: hidden frames do not count.
+		if (view && loaded) {
+			view = { ...view, home: homeOf(loaded) };
+			if (fitted) fitView();
+			else applyView();
+		}
+		fillDocument();
+		announce(showImages ? 'Raster image frames shown.' : 'Raster image frames hidden.');
+	});
 	el.selClear.addEventListener('click', () => {
 		clearSelection();
 		el.selHeading.focus();

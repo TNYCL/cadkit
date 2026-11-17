@@ -5,8 +5,10 @@
 // so the page can show what was called.
 
 import type { CadDocument as Doc } from 'cadkit-wasm';
-import { buildMesh, entityAt, surfaceStats, type DocJson, type EntityJson } from './mesh.ts';
+import { buildMesh, surfaceInfo, type DocJson, type EntityJson } from './mesh.ts';
+import { localizeSvg, type Origin } from './origin.ts';
 import type { Viewport } from './scene2d.ts';
+import { entityAt, locatePick } from './walk.ts';
 import {
 	MAX_ENTITY_JSON_BYTES,
 	MAX_FILE_BYTES,
@@ -28,6 +30,7 @@ import {
 	type ModelExtras,
 	type OpenResult,
 	type Phase,
+	type PickResult,
 	type PreflightIssue,
 	type RenderResult,
 	type Request,
@@ -151,7 +154,8 @@ export function createCore(api: CadkitApi): Core {
 					if (k === 'viewport') viewports++;
 				}
 				unknowns(list, 0);
-				return { viewports, ...surfaceStats(copy, index) };
+				// Closed polylines are surfaces only in a 3D model: in a plan they are outlines.
+				return { viewports, ...surfaceInfo(copy, index, { shapes: info.models[index]?.is3d === true }) };
 			});
 			kinds = histogram;
 		}
@@ -237,20 +241,28 @@ export function createCore(api: CadkitApi): Core {
 
 	function render(model: number): RenderResult {
 		const d = requireDoc();
-		const svg = svgOf(d, model);
+		// Browsers keep SVG coordinates in float32: absolute (georeferenced) numbers are moved to a
+		// local origin here, and the page adds it back (src/demo/origin.ts).
+		const own = localizeSvg(svgOf(d, model));
+		const result: RenderResult = { model, svg: own.svg, origin: own.origin, frames: own.frames, relocation: own.problem, layout: null };
 		const viewports = viewportsOf(model);
-		if (!viewports.length || !json) return { model, svg, layout: null };
+		if (!viewports.length || !json) return result;
 		// Viewports of a DWG or DXF layout look at model space: the first model that is not a layout.
 		const models = json.models ?? [];
 		let source = models.findIndex((m) => m.kind === 'model');
 		if (source < 0) source = 0;
-		if (source === model) return { model, svg, layout: null };
-		return { model, svg, layout: { viewports, source, sourceSvg: svgOf(d, source) } };
+		if (source === model) return result;
+		const seen = localizeSvg(svgOf(d, source));
+		return {
+			...result,
+			relocation: result.relocation ?? seen.problem,
+			layout: { viewports, source, sourceSvg: seen.svg, sourceOrigin: seen.origin, sourceFrames: seen.frames },
+		};
 	}
 
 	const short = (text: string, max: number) => (text.length > max ? text.slice(0, max) + '…' : text);
 
-	function entity(model: number, path: number[], highlight: boolean): EntityResult {
+	function entity(model: number, path: number[], highlight: boolean, origin: Origin): EntityResult {
 		const j = requireJson();
 		const found = entityAt(j, model, path);
 		if (!found) fail('bad_argument', 'there is no such entity');
@@ -260,6 +272,8 @@ export function createCore(api: CadkitApi): Core {
 		const parents = found.parents.map((p) => {
 			const n = p.kind?.name;
 			const id = p.props?.['gml.id'];
+			const block = p.kind?.block;
+			if ((p.kind.type === 'insert' || p.kind.type === 'dimension') && typeof block === 'string') return `${p.kind.type} of block ${block}`;
 			return typeof n === 'string' && n ? n : typeof id === 'string' && id ? id : p.kind.type;
 		});
 		let svg: string | null = null;
@@ -271,7 +285,10 @@ export function createCore(api: CadkitApi): Core {
 			let one: Doc | null = null;
 			try {
 				one = api.CadDocument.fromJsonString(JSON.stringify(mini));
-				svg = one.toSvgBounded({ model: 0, maxOutputBytes: MAX_HIGHLIGHT_BYTES, background: '#ffffff', images: false, includeHiddenLayers: true });
+				const drawn = one.toSvgBounded({ model: 0, maxOutputBytes: MAX_HIGHLIGHT_BYTES, background: '#ffffff', images: false, includeHiddenLayers: true });
+				// The sheet it lies on was moved to a local origin: move the highlight by the same one.
+				const local = localizeSvg(drawn, origin);
+				svg = local.problem ? null : local.svg;
 			} catch (err) {
 				if (err instanceof WebAssembly.RuntimeError) throw err;
 				svg = null;
@@ -297,8 +314,23 @@ export function createCore(api: CadkitApi): Core {
 		};
 	}
 
+	function pick(req: Extract<RequestBody, { type: 'pick' }>): PickResult | null {
+		const { model, x, y, tolerance, excludedLayers, excludedKinds } = req;
+		const options = { maxOutputBytes: MAX_PICK_BYTES, maxWork: MAX_PICK_WORK, excludedLayers, excludedKinds };
+		const hit = timed(
+			`doc.pickEntityBounded(${model}, x, y, tolerance, { maxOutputBytes: ${MAX_PICK_BYTES}, maxWork: ${MAX_PICK_WORK}, excludedLayers${excludedKinds.length ? ', excludedKinds' : ''} }, true)`,
+			'inspect',
+			() => requireDoc().pickEntityBounded(model, x, y, tolerance, options, true),
+			(h) => (h ? `${h.kind} on layer ${h.layer || '(unnamed)'}` : 'nothing there')
+		);
+		if (!hit) return null;
+		// `index` counts the entities the engine's walk visited (groups expanded, block references
+		// replaced by their blocks), not positions in the model list: repeat the walk to find it.
+		return { hit, target: json ? locatePick(json, model, hit.index) : null };
+	}
+
 	function mesh(model: number): { value: MeshResult; transfer: Transferable[] } {
-		const m = buildMesh(requireJson(), model);
+		const m = buildMesh(requireJson(), model, { shapes: requireDoc().info().models[model]?.is3d === true });
 		if (!m) fail('unsupported', 'this model has no surfaces to show in 3D');
 		return { value: m, transfer: [m.positions.buffer, m.normals.buffer, m.colors.buffer, m.faceOfTri.buffer, m.segments.buffer] };
 	}
@@ -593,19 +625,10 @@ export function createCore(api: CadkitApi): Core {
 			case 'render':
 				phase('render');
 				return { value: render(req.model) };
-			case 'pick': {
-				const { model, x, y, tolerance, excludedLayers } = req;
-				return {
-					value: timed(
-						`doc.pickEntityBounded(${model}, x, y, tolerance, { maxOutputBytes: ${MAX_PICK_BYTES}, maxWork: ${MAX_PICK_WORK}, excludedLayers }, true)`,
-						'inspect',
-						() => requireDoc().pickEntityBounded(model, x, y, tolerance, { maxOutputBytes: MAX_PICK_BYTES, maxWork: MAX_PICK_WORK, excludedLayers }, true),
-						(hit) => (hit ? `${hit.kind} on layer ${hit.layer || '(unnamed)'}` : 'nothing there')
-					),
-				};
-			}
+			case 'pick':
+				return { value: pick(req) };
 			case 'entity':
-				return { value: entity(req.model, req.path, req.highlight) };
+				return { value: entity(req.model, req.path, req.highlight, req.origin) };
 			case 'mesh':
 				phase('mesh');
 				return mesh(req.model);

@@ -1,9 +1,12 @@
 // 3D surfaces of a model for the orbit view (unit-tested in test/demo-scene.test.mjs). Runs in
-// the worker on the neutral document JSON: collects polygons, faces and meshes (through groups),
-// drops duplicate faces, triangulates them and packs the result into typed arrays the page can
-// hand to WebGL. No DOM and no WebGL here.
+// the worker on the neutral document JSON: collects polygons, faces and meshes (through groups)
+// and, in a 3D model, closed planar polylines (DGN shape elements arrive that way), drops
+// duplicate faces, triangulates them and packs the result into typed arrays the page can hand to
+// WebGL. No DOM and no WebGL here.
 
 import { modelRgb, type ModelColor, type Rgb } from './colors.ts';
+
+export { entityAt } from './walk.ts';
 
 export interface P3 {
 	x: number;
@@ -33,6 +36,21 @@ export const MAX_MESH_TRIANGLES = 600_000;
 export const MAX_MESH_SEGMENTS = 600_000;
 const MAX_RING_VERTICES = 4096;
 const MAX_WALK_DEPTH = 32;
+/** A closed polyline is a surface when no vertex is further than this from its plane (fraction of its size). */
+export const SHAPE_PLANAR_TOLERANCE = 1e-3;
+/**
+ * A model whose only surfaces are closed polylines opens in 3D when its height is at least this
+ * fraction of its larger horizontal extent. Below it, the polylines are mostly a plan drawn in
+ * 3D coordinates (footprints, slabs on a few levels) and the sheet is the better first view; the
+ * 3D view is still offered.
+ */
+export const SHAPES_OPEN_3D_RATIO = 0.12;
+
+/** Which entities count as surfaces. */
+export interface SurfaceOptions {
+	/** Closed, planar, bulge-free polylines with three or more vertices are surfaces (3D models). */
+	shapes?: boolean;
+}
 
 /** Colour of surfaces whose colour is the sheet foreground (index 7) or not set. */
 const NEUTRAL: Rgb = [201, 204, 210];
@@ -232,6 +250,8 @@ interface RawFace {
 	rings: P3[][];
 	ref: FaceRef;
 	color: Rgb;
+	/** From a closed polyline, not a polygon, face or mesh. */
+	shape: boolean;
 }
 interface RawWire {
 	pts: P3[];
@@ -252,7 +272,31 @@ const ringOf = (value: unknown): P3[] => {
 	return pts.slice(0, MAX_RING_VERTICES);
 };
 
-function collect(doc: DocJson, model: number): { faces: RawFace[]; wires: RawWire[] } {
+/** True when every point of the ring lies within SHAPE_PLANAR_TOLERANCE of its size from its plane. */
+function planar(ring: P3[]): boolean {
+	const [nx, ny, nz] = newell(ring);
+	const len = Math.hypot(nx, ny, nz);
+	if (!(len > 0)) return false; // Collinear or repeated points: no area.
+	let x0 = Infinity;
+	let y0 = Infinity;
+	let z0 = Infinity;
+	let x1 = -Infinity;
+	let y1 = -Infinity;
+	let z1 = -Infinity;
+	for (const p of ring) {
+		x0 = Math.min(x0, p.x);
+		y0 = Math.min(y0, p.y);
+		z0 = Math.min(z0, p.z);
+		x1 = Math.max(x1, p.x);
+		y1 = Math.max(y1, p.y);
+		z1 = Math.max(z1, p.z);
+	}
+	const tol = SHAPE_PLANAR_TOLERANCE * Math.max(x1 - x0, y1 - y0, z1 - z0);
+	const o = ring[0]!;
+	return ring.every((p) => Math.abs(((p.x - o.x) * nx + (p.y - o.y) * ny + (p.z - o.z) * nz) / len) <= tol);
+}
+
+function collect(doc: DocJson, model: number, opts: SurfaceOptions = {}): { faces: RawFace[]; wires: RawWire[] } {
 	const layerColor = new Map<string, ModelColor | undefined>((doc.layers ?? []).map((l) => [l.name, l.color]));
 	const faces: RawFace[] = [];
 	const wires: RawWire[] = [];
@@ -265,8 +309,8 @@ function collect(doc: DocJson, model: number): { faces: RawFace[]; wires: RawWir
 			const layer = e.layer ?? '';
 			const k = e.kind;
 			const ref = (): FaceRef => ({ path: here, layer, kind: k.type });
-			const face = (rings: P3[][]) => {
-				if (rings[0] && rings[0].length >= 3) faces.push({ rings, ref: ref(), color: tint(colorOf(e)) });
+			const face = (rings: P3[][], shape = false) => {
+				if (rings[0] && rings[0].length >= 3) faces.push({ rings, ref: ref(), color: tint(colorOf(e)), shape });
 			};
 			switch (k.type) {
 				case 'group':
@@ -290,7 +334,15 @@ function collect(doc: DocJson, model: number): { faces: RawFace[]; wires: RawWir
 					if (isP3(k.start) && isP3(k.end)) wires.push({ pts: [k.start, k.end], closed: false, layer });
 					break;
 				case 'polyline': {
-					const pts = (Array.isArray(k.vertices) ? (k.vertices as { position?: unknown }[]) : []).map((v) => v?.position).filter(isP3);
+					const vertices = Array.isArray(k.vertices) ? (k.vertices as ({ position?: unknown; bulge?: unknown } | null)[]) : [];
+					const pts = vertices.map((v) => v?.position).filter(isP3);
+					if (opts.shapes && k.closed === true && pts.length === vertices.length && pts.length <= MAX_RING_VERTICES && vertices.every((v) => !v?.bulge)) {
+						const ring = ringOf(pts);
+						if (ring.length >= 3 && planar(ring)) {
+							face([ring], true);
+							break;
+						}
+					}
 					if (pts.length >= 2) wires.push({ pts, closed: k.closed === true, layer });
 					break;
 				}
@@ -303,9 +355,24 @@ function collect(doc: DocJson, model: number): { faces: RawFace[]; wires: RawWir
 	return { faces, wires };
 }
 
-/** Number of surfaces in a model and whether they leave the XY plane (worth a 3D view). */
-export function surfaceStats(doc: DocJson, model: number): { surfaces: number; spatial: boolean } {
-	const { faces } = collect(doc, model);
+/** What the 3D view can show of a model. */
+export interface SurfaceInfo {
+	/** All surfaces, closed planar polylines included when `shapes` is on. */
+	surfaces: number;
+	/** Of those, closed planar polylines. */
+	shapes: number;
+	/** The surfaces leave the XY plane: the 3D view is worth offering. */
+	spatial: boolean;
+	/**
+	 * The model opens in 3D: it has polygons, faces or meshes that leave the XY plane, or only
+	 * closed polylines whose height is at least SHAPES_OPEN_3D_RATIO of its larger horizontal extent.
+	 */
+	open3d: boolean;
+}
+
+/** Surfaces of a model and how it should open (see SurfaceInfo). */
+export function surfaceInfo(doc: DocJson, model: number, opts: SurfaceOptions = {}): SurfaceInfo {
+	const { faces } = collect(doc, model, opts);
 	let zmin = Infinity;
 	let zmax = -Infinity;
 	let span = 0;
@@ -324,7 +391,16 @@ export function surfaceStats(doc: DocJson, model: number): { surfaces: number; s
 				y1 = Math.max(y1, p.y);
 			}
 	if (faces.length) span = Math.max(x1 - x0, y1 - y0);
-	return { surfaces: faces.length, spatial: faces.length > 0 && zmax - zmin > 1e-9 * Math.max(1, span) };
+	const shapes = faces.filter((f) => f.shape).length;
+	const spatial = faces.length > 0 && zmax - zmin > 1e-9 * Math.max(1, span);
+	const open3d = spatial && (shapes < faces.length || zmax - zmin >= SHAPES_OPEN_3D_RATIO * span);
+	return { surfaces: faces.length, shapes, spatial, open3d };
+}
+
+/** Number of polygons, faces and mesh faces in a model and whether they leave the XY plane. */
+export function surfaceStats(doc: DocJson, model: number): { surfaces: number; spatial: boolean } {
+	const { surfaces, spatial } = surfaceInfo(doc, model);
+	return { surfaces, spatial };
 }
 
 /** Newell normal of a ring (not normalised). */
@@ -348,8 +424,8 @@ function newell(ring: P3[]): [number, number, number] {
  * faces of its solid directly and again inside each boundary surface (wall, roof, ground), and
  * the nested copy carries the surface type as its layer.
  */
-export function buildMesh(doc: DocJson, model: number): MeshData | null {
-	const { faces: raw, wires } = collect(doc, model);
+export function buildMesh(doc: DocJson, model: number, opts: SurfaceOptions = {}): MeshData | null {
+	const { faces: raw, wires } = collect(doc, model, opts);
 	if (!raw.length) return null;
 
 	// Extents and local origin.
@@ -468,23 +544,6 @@ export function buildMesh(doc: DocJson, model: number): MeshData | null {
 		duplicates,
 		truncated,
 	};
-}
-
-/** The entity a face path points at, and its ancestors (outermost first). */
-export function entityAt(doc: DocJson, model: number, path: number[]): { entity: EntityJson; parents: EntityJson[] } | null {
-	let list = doc.models?.[model]?.entities;
-	const parents: EntityJson[] = [];
-	let entity: EntityJson | undefined;
-	for (let i = 0; i < path.length; i++) {
-		entity = list?.[path[i]!];
-		if (!entity) return null;
-		if (i < path.length - 1) {
-			parents.push(entity);
-			const children = entity.kind?.children;
-			list = Array.isArray(children) ? (children as EntityJson[]) : undefined;
-		}
-	}
-	return entity ? { entity, parents } : null;
 }
 
 /**

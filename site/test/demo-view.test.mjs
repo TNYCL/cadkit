@@ -89,6 +89,21 @@ test('zoomAt keeps the point under the cursor and clamps the range', () => {
 	close(out.s, V.fitScale(v.home, 200, 100) * V.MAX_ZOOM_OUT);
 });
 
+test('a sheet drawn relative to a local origin converts back to drawing coordinates', () => {
+	const home = { x: 0, y: 0, w: 16, h: 9 };
+	const v = V.fit(home, 1600, 900);
+	const origin = { x: 512340, y: -4087670 };
+	// The centre of the stage is the centre of the local box, plus the origin, Y flipped.
+	const p = V.toDrawing(v, 1600, 900, 800, 450, origin);
+	assert.ok(Math.abs(p.x - 512348) < 1e-9 && Math.abs(p.y - 4087665.5) < 1e-9);
+	assert.deepEqual(V.toDrawing(v, 1600, 900, 800, 450, { x: 0, y: 0 }), V.toWorld(v, 1600, 900, 800, 450));
+	// Drawing extents to a local box and back.
+	const box = V.svgBoxOf([512341, 4087661, 0], [512343, 4087665, 0]);
+	assert.deepEqual(box, { x: 512341, y: -4087665, w: 2, h: 4 });
+	assert.deepEqual(V.toLocal(box, origin), { x: 1, y: 5, w: 2, h: 4 });
+	assert.deepEqual(V.unionBox({ x: 0, y: 0, w: 1, h: 1 }, { x: -2, y: 0.5, w: 1, h: 3 }), { x: -2, y: 0, w: 3, h: 3.5 });
+});
+
 test('coordinate readout precision follows the scale', () => {
 	assert.equal(V.formatCoord(1.23456, 0.01), '1.23');
 	assert.equal(V.formatCoord(1234.5, 10), '1235');

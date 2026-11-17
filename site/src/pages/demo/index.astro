@@ -291,8 +291,13 @@ const TABS = [
 									<button type="button" class="ck-link-btn" id="ck-layers-none" disabled>Hide all</button>
 								</div>
 							</div>
+							<p class="ck-check" id="ck-images-wrap" hidden>
+								<input type="checkbox" id="ck-images" />
+								<label for="ck-images">Raster image frames <span class="ck-count" id="ck-images-count"></span></label>
+							</p>
 							<input type="search" class="ck-input" id="ck-layer-filter" placeholder="Filter layers" aria-label="Filter layers" hidden />
 							<ul class="ck-layers" id="ck-layers" aria-labelledby="ck-h-layers"></ul>
+							<button type="button" class="ck-link-btn ck-layers-more" id="ck-layers-empty" aria-controls="ck-layers" aria-expanded="false" hidden></button>
 							<p class="ck-hint" id="ck-layers-hint">Open a drawing to list its layers.</p>
 						</section>
 					</div>

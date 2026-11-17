@@ -164,6 +164,12 @@ test('layout: no model window gives null; own entities extend the home box', () 
 
 // ---- measure --------------------------------------------------------------------------------
 
+test('measure: areas stay exact far from zero', () => {
+	const sq = [{ x: 0, y: 0 }, { x: 1.5, y: 0 }, { x: 1.5, y: 1.5 }, { x: 0, y: 1.5 }];
+	const far = sq.map((q) => ({ x: q.x + 512345.125, y: q.y + 4087654.375 }));
+	assert.equal(S.polygonArea(far), 2.25);
+});
+
 test('measure: length, area and formatting', () => {
 	const sq = [
 		{ x: 0, y: 0 },
@@ -318,6 +324,84 @@ test('mesh: flat drawings are not offered in 3D; models without surfaces give nu
 	assert.equal(M.buildMesh(none, 0), null);
 	assert.equal(M.buildMesh({}, 0), null);
 	assert.equal(M.buildMesh({ models: [{ entities: [{ kind: { type: 'polygon', exterior: 'x' } }, null, {}] }] }, 0), null);
+});
+
+/** A closed polyline (a DGN shape), optionally with bulges. */
+const shape = (layer, pts, extra = {}) => ({
+	layer,
+	color: { type: 'by_layer' },
+	visible: true,
+	kind: { type: 'polyline', vertices: pts.map((q) => ({ position: q, bulge: 0, start_width: 0, end_width: 0 })), closed: true, normal: p(0, 0, 1) },
+	props: {},
+	...extra,
+});
+/** Walls and a slab of a w x d x h box, as closed polylines. */
+const boxShapes = (w, d, h) => [
+	shape('Slab', [p(0, 0, 0), p(w, 0, 0), p(w, d, 0), p(0, d, 0)]),
+	shape('Wall', [p(0, 0, 0), p(w, 0, 0), p(w, 0, h), p(0, 0, h), p(0, 0, 0)]),
+	shape('Wall', [p(w, 0, 0), p(w, d, 0), p(w, d, h), p(w, 0, h)]),
+	shape('Wall', [p(w, d, 0), p(0, d, 0), p(0, d, h), p(w, d, h)]),
+	shape('Wall', [p(0, d, 0), p(0, 0, 0), p(0, 0, h), p(0, d, h)]),
+];
+
+test('mesh: closed planar polylines are surfaces in a 3D model', () => {
+	const doc = { models: [{ entities: [...boxShapes(10, 8, 3), shape('Slab', [p(0, 0, 3), p(10, 0, 3), p(10, 8, 3), p(0, 8, 3)])] }] };
+	// Off (a 2D model): outlines only, as before.
+	assert.deepEqual(M.surfaceStats(doc, 0), { surfaces: 0, spatial: false });
+	assert.equal(M.buildMesh(doc, 0), null);
+	const info = M.surfaceInfo(doc, 0, { shapes: true });
+	assert.deepEqual(info, { surfaces: 6, shapes: 6, spatial: true, open3d: true });
+	const mesh = M.buildMesh(doc, 0, { shapes: true });
+	assert.equal(mesh.faces.length, 6);
+	assert.equal(mesh.faceOfTri.length, 12);
+	assert.deepEqual(mesh.faces[0], { path: [0], layer: 'Slab', kind: 'polyline' });
+	// The outlines come from the faces, not a second time as wires: 6 faces x 4 edges.
+	assert.equal(mesh.segments.length / 6, 24);
+	// Per-face picking: a ray down through the middle hits the top slab first.
+	const face = M.pickFace(mesh.positions, mesh.faceOfTri, [0, 0, 10], [0, 0, -1]);
+	assert.deepEqual(mesh.faces[face].path, [5]);
+	// Duplicates: the same outline twice is drawn once.
+	const twice = { models: [{ entities: [...boxShapes(10, 8, 3), ...boxShapes(10, 8, 3)] }] };
+	assert.equal(M.buildMesh(twice, 0, { shapes: true }).duplicates, 5);
+});
+
+test('mesh: bulged, open, non-planar and degenerate polylines stay wires', () => {
+	const bulged = shape('A', [p(0, 0, 0), p(1, 0, 0), p(1, 1, 1)]);
+	bulged.kind.vertices[1].bulge = 0.5;
+	const open = { ...shape('A', [p(0, 0, 0), p(1, 0, 0), p(1, 1, 1)]) };
+	open.kind = { ...open.kind, closed: false };
+	const warped = shape('A', [p(0, 0, 0), p(10, 0, 0), p(10, 10, 0.5), p(0, 10, 0)]);
+	const almost = shape('A', [p(0, 0, 0), p(10, 0, 0), p(10, 10, 0.005), p(0, 10, 0)]);
+	const line = shape('A', [p(0, 0, 0), p(1, 1, 1), p(2, 2, 2)]);
+	const two = shape('A', [p(0, 0, 0), p(1, 1, 1)]);
+	for (const e of [bulged, open, warped, line, two]) assert.equal(M.surfaceInfo({ models: [{ entities: [e] }] }, 0, { shapes: true }).surfaces, 0, JSON.stringify(e.kind.vertices.map((v) => v.position)));
+	// Within the tolerance (relative to its size) a polyline is planar.
+	assert.equal(M.surfaceInfo({ models: [{ entities: [almost] }] }, 0, { shapes: true }).surfaces, 1);
+	assert.ok(0.005 / 10 < M.SHAPE_PLANAR_TOLERANCE && 0.5 / 10 > M.SHAPE_PLANAR_TOLERANCE);
+});
+
+test('mesh: models of polylines only open in 3D when they are tall enough', () => {
+	const tall = { models: [{ entities: boxShapes(10, 8, 1.2) }] };
+	const flat = { models: [{ entities: boxShapes(10, 8, 1.1) }] };
+	assert.ok(1.2 / 10 >= M.SHAPES_OPEN_3D_RATIO && 1.1 / 10 < M.SHAPES_OPEN_3D_RATIO);
+	assert.deepEqual(M.surfaceInfo(tall, 0, { shapes: true }), { surfaces: 5, shapes: 5, spatial: true, open3d: true });
+	// Flatter: offered in 3D, opened on the sheet.
+	assert.deepEqual(M.surfaceInfo(flat, 0, { shapes: true }), { surfaces: 5, shapes: 5, spatial: true, open3d: false });
+	// A true surface keeps today's rule: any height opens in 3D.
+	const mixed = { models: [{ entities: [...boxShapes(10, 8, 0.5), { layer: '0', kind: { type: 'face', points: [p(0, 0, 0), p(1, 0, 0), p(1, 0, 0.5)] } }] }] };
+	assert.equal(M.surfaceInfo(mixed, 0, { shapes: true }).open3d, true);
+	// All at one height: nothing to see in 3D.
+	const plan = { models: [{ entities: [shape('A', [p(0, 0, 2), p(4, 0, 2), p(4, 4, 2)])] }] };
+	assert.deepEqual(M.surfaceInfo(plan, 0, { shapes: true }), { surfaces: 1, shapes: 1, spatial: false, open3d: false });
+});
+
+test('mesh: the triangle budget holds for many shapes', () => {
+	const entities = [];
+	for (let i = 0; i < 400; i++) entities.push(...boxShapes(10, 8, 3).map((e) => ({ ...e, kind: { ...e.kind, vertices: e.kind.vertices.map((v) => ({ ...v, position: p(v.position.x + i * 20, v.position.y, v.position.z) })) } })));
+	const mesh = M.buildMesh({ models: [{ entities }] }, 0, { shapes: true });
+	assert.equal(mesh.faces.length, 2000);
+	assert.ok(!mesh.truncated);
+	assert.ok(mesh.faceOfTri.length <= M.MAX_MESH_TRIANGLES);
 });
 
 test('mesh: the CityGML sample gives 13 faces on three surface layers', () => {

@@ -87,6 +87,40 @@ export function toWorld(v: View, w: number, h: number, px: number, py: number): 
 	return { x: p.x, y: -p.y };
 }
 
+/** A local origin in SVG user units (Y down): absolute SVG coordinates = local + origin. */
+export interface Offset {
+	x: number;
+	y: number;
+}
+
+/**
+ * Stage pixel to drawing coordinates on a sheet drawn relative to `origin` (src/demo/origin.ts):
+ * the view works in the sheet's local units, the drawing in absolute ones.
+ */
+export function toDrawing(v: View, w: number, h: number, px: number, py: number, origin: Offset): { x: number; y: number } {
+	const p = toSvg(v, w, h, px, py);
+	return { x: p.x + origin.x, y: -(p.y + origin.y) };
+}
+
+/** Drawing extents (min and max corner, Y up) as a box in absolute SVG units (Y down). */
+export function svgBoxOf(min: readonly number[], max: readonly number[]): Box {
+	const [x0 = 0, y0 = 0] = min;
+	const [x1 = 0, y1 = 0] = max;
+	return { x: x0, y: -y1, w: x1 - x0, h: y1 - y0 };
+}
+
+/** A box in absolute SVG units moved onto a sheet drawn relative to `origin`. */
+export function toLocal(box: Box, origin: Offset): Box {
+	return { x: box.x - origin.x, y: box.y - origin.y, w: box.w, h: box.h };
+}
+
+/** The smallest box holding both. */
+export function unionBox(a: Box, b: Box): Box {
+	const x = Math.min(a.x, b.x);
+	const y = Math.min(a.y, b.y);
+	return { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y };
+}
+
 /** Pans by a pixel delta (content follows the pointer). */
 export function pan(v: View, dx: number, dy: number): View {
 	return { ...v, cx: v.cx - dx * v.s, cy: v.cy - dy * v.s };

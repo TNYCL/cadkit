@@ -2,7 +2,10 @@
 // Keep this file free of runtime code other than constants: both sides import it.
 
 import type { FaceRef, LayerRange } from './mesh.ts';
+import type { Origin } from './origin.ts';
 import type { Viewport } from './scene2d.ts';
+import type { Box } from './view.ts';
+import type { PickTarget } from './walk.ts';
 
 /** Largest file the demo opens (bytes). Larger files get a clear message instead of a parse. */
 export const MAX_FILE_BYTES = 64 * 1024 * 1024;
@@ -95,6 +98,17 @@ export interface PickedEntity {
 	truncated: boolean;
 }
 
+/** A pick: the engine's hit and where it is in the document. */
+export interface PickResult {
+	/** The entity that was hit, as cadkit-wasm reports it (for a block part: the part). */
+	hit: PickedEntity;
+	/**
+	 * The hit's `index` mapped to index chains into the document (src/demo/walk.ts); null when the
+	 * worker keeps no JSON copy or the walk could not be repeated within its budget.
+	 */
+	target: PickTarget | null;
+}
+
 /** One cadkit-wasm call made by the worker, as shown in the Calls tab. */
 export interface CallRecord {
 	/** The call as JavaScript, for example `doc.toDxfBytes("r2000", "windows-1254")`. */
@@ -110,10 +124,14 @@ export interface CallRecord {
 export interface ModelExtras {
 	/** Viewport entities (paper-space layouts). */
 	viewports: number;
-	/** Polygons, faces and mesh faces. */
+	/** Surfaces: polygons, faces, mesh faces and, in a 3D model, closed planar polylines. */
 	surfaces: number;
+	/** How many of `surfaces` are closed planar polylines (DGN shapes). */
+	shapes: number;
 	/** The surfaces leave the XY plane: a 3D view is offered. */
 	spatial: boolean;
+	/** The model opens in the 3D view (see src/demo/mesh.ts, surfaceInfo). */
+	open3d: boolean;
 }
 
 export interface OpenResult {
@@ -141,14 +159,24 @@ export interface LayoutResult {
 	viewports: Viewport[];
 	/** Model the viewports look at (model space). */
 	source: number;
-	/** SVG of that model. */
+	/** SVG of that model, relative to `sourceOrigin`. */
 	sourceSvg: string;
+	/** Local origin of `sourceSvg` (SVG units: absolute = local + origin). */
+	sourceOrigin: Origin;
+	/** Extents of the raster image frames in `sourceSvg`, or null. */
+	sourceFrames: Box | null;
 }
 
 export interface RenderResult {
 	model: number;
-	/** SVG of the model's own entities. */
+	/** SVG of the model's own entities, relative to `origin` (src/demo/origin.ts). */
 	svg: string;
+	/** Local origin of `svg` in SVG units (drawing X, drawing Y negated): absolute = local + origin. */
+	origin: Origin;
+	/** Extents of the raster image frames in `svg` (which its viewBox leaves out), or null. */
+	frames: Box | null;
+	/** Why the coordinates were left absolute although they needed a local origin; null otherwise. */
+	relocation: string | null;
 	/** Set for a paper-space layout with viewports. */
 	layout: LayoutResult | null;
 }
@@ -162,13 +190,13 @@ export interface EntityResult {
 	id: number | null;
 	/** Format-specific properties ("dgn.", "dwg.", "dxf.", "gml." keys), values as text. */
 	props: [string, string][];
-	/** Names of the groups the entity is nested in, outermost first. */
+	/** Names of the groups (and, for a block part, the block references) the entity is nested in, outermost first. */
 	parents: string[];
 	/** Block a block reference inserts; null for other kinds. */
 	block: string | null;
 	/** Attributes attached to the entity (block attributes, DGN tags), values as text. */
 	attributes: { tag: string; value: string; invisible: boolean }[];
-	/** SVG of this entity alone, for the highlight; null when it cannot be drawn. */
+	/** SVG of this entity alone, for the highlight, relative to the requested origin; null when it cannot be drawn. */
 	highlight: string | null;
 }
 
@@ -257,8 +285,8 @@ export interface GmlPreflight {
 export type Request =
 	| { id: number; type: 'open'; name: string; buffer: ArrayBuffer }
 	| { id: number; type: 'render'; model: number }
-	| { id: number; type: 'pick'; model: number; x: number; y: number; tolerance: number; excludedLayers: string[] }
-	| { id: number; type: 'entity'; model: number; path: number[]; highlight: boolean }
+	| { id: number; type: 'pick'; model: number; x: number; y: number; tolerance: number; excludedLayers: string[]; excludedKinds: string[] }
+	| { id: number; type: 'entity'; model: number; path: number[]; highlight: boolean; origin: Origin }
 	| { id: number; type: 'mesh'; model: number }
 	| { id: number; type: 'export'; format: 'dxf'; version: DxfVersion; codepage: string }
 	| { id: number; type: 'export'; format: 'json' | 'citygml' }

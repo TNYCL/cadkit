@@ -38,7 +38,7 @@ test('open: facts, header, kinds and the calls that were made', () => {
 	assert.equal(doc.bytes, readFileSync(sample('cadkit-sample-plan.dxf')).length);
 	assert.deepEqual(doc.kinds, { polyline: 27, line: 96, arc: 6, circle: 6, text: 26 });
 	assert.deepEqual(doc.notDrawn, {});
-	assert.deepEqual(doc.extras[0], { viewports: 0, surfaces: 0, spatial: false });
+	assert.deepEqual(doc.extras[0], { viewports: 0, surfaces: 0, shapes: 0, spatial: false, open3d: false });
 	assert.deepEqual(doc.changes, { units: null, exploded: false });
 	assert.equal(doc.model, 0);
 	assert.deepEqual(calls.map((c) => c.call.replace(/\(.*/, '')), ['inspect', 'read', 'doc.toJSON']);
@@ -67,13 +67,19 @@ test('render, pick and the entity with its highlight', () => {
 	const r = core.handle({ type: 'render', model: 0 }).value;
 	assert.equal(r.layout, null);
 	assert.match(r.svg, /^<svg[^>]*viewBox=/);
+	// Coordinates near zero keep their numbers: no local origin, nothing to report.
+	assert.deepEqual([r.origin, r.frames, r.relocation], [{ x: 0, y: 0 }, null, null]);
 	// The sheet is always rendered for the light background; the page restyles it for the dark one.
 	assert.match(r.svg, /<rect[^>]*fill="#ffffff"/);
-	const hit = core.handle({ type: 'pick', model: 0, x: 0.6, y: 0, tolerance: 0.05, excludedLayers: [] }).value;
+	const pick = (x, y, tolerance, excludedLayers = [], excludedKinds = []) => core.handle({ type: 'pick', model: 0, x, y, tolerance, excludedLayers, excludedKinds }).value;
+	const { hit, target } = pick(0.6, 0, 0.05);
 	assert.equal(hit.kind, 'polyline');
 	assert.equal(hit.layer, 'WALLS');
-	assert.equal(core.handle({ type: 'pick', model: 0, x: 0.6, y: 0, tolerance: 0.05, excludedLayers: ['WALLS'] }).value, null);
-	const e = core.handle({ type: 'entity', model: 0, path: [hit.index], highlight: true }).value;
+	assert.deepEqual(target, { part: target.owner, owner: target.owner, blocks: [] });
+	assert.equal(pick(0.6, 0, 0.05, ['WALLS']), null);
+	assert.notEqual(pick(0.6, 0, 0.05, [], ['polyline'])?.hit.kind, 'polyline', 'excluded kinds are not picked');
+	const e = core.handle({ type: 'entity', model: 0, path: target.owner, highlight: true, origin: r.origin }).value;
+	assert.equal(e.id, hit.id);
 	assert.equal(e.kind, 'polyline');
 	assert.equal(e.layer, 'WALLS');
 	assert.equal(e.block, null);
@@ -83,8 +89,8 @@ test('render, pick and the entity with its highlight', () => {
 	// The highlight is this entity alone, in the same coordinates as the sheet.
 	assert.equal((e.highlight.match(/<path /g) ?? []).length, 1);
 	assert.match(e.highlight, /<path d="M0 0L1\.2 0L1\.2 -0\.3L0 -0\.3L0 0Z"/);
-	assert.equal(core.handle({ type: 'entity', model: 0, path: [hit.index], highlight: false }).value.highlight, null);
-	assert.equal(kindOf(() => core.handle({ type: 'entity', model: 0, path: [99999], highlight: false })), 'bad_argument');
+	assert.equal(core.handle({ type: 'entity', model: 0, path: target.owner, highlight: false, origin: r.origin }).value.highlight, null);
+	assert.equal(kindOf(() => core.handle({ type: 'entity', model: 0, path: [99999], highlight: false, origin: r.origin })), 'bad_argument');
 });
 
 test('block references: the entity is the reference, with its block and attributes', () => {
@@ -92,16 +98,21 @@ test('block references: the entity is the reference, with its block and attribut
 	assert.equal(doc.layers.find((l) => l.name === 'SURVEY').visible, false);
 	const r = core.handle({ type: 'render', model: 0 }).value;
 	assert.match(r.svg, /data-layer="SURVEY"/, 'layers that are off in the file are rendered; the page hides them');
-	const hit = core.handle({ type: 'pick', model: 0, x: 21, y: 15, tolerance: 0.1, excludedLayers: [] }).value;
+	const pick = (x, y, tolerance, excludedLayers = []) => core.handle({ type: 'pick', model: 0, x, y, tolerance, excludedLayers, excludedKinds: [] }).value;
+	const { hit, target } = pick(21, 15, 0.1);
 	assert.equal(hit.kind, 'polyline', 'the pick reports the part of the block that was hit');
-	const e = core.handle({ type: 'entity', model: 0, path: [hit.index], highlight: true }).value;
+	assert.deepEqual(target.blocks, ['BAY']);
+	assert.equal(target.part.length, 2);
+	const e = core.handle({ type: 'entity', model: 0, path: target.owner, highlight: true, origin: r.origin }).value;
 	assert.equal(e.kind, 'insert');
 	assert.equal(e.block, 'BAY');
 	assert.deepEqual(e.attributes, [{ tag: 'NO', value: 'P03', invisible: false }]);
 	assert.match(e.highlight, /<path /, 'the highlight draws the block content');
+	// The part path names the entity inside the block that was hit.
+	assert.equal(core.handle({ type: 'entity', model: 0, path: target.part, highlight: false, origin: r.origin }).value.id, hit.id);
 	// A point on the layer that is off in the file can be picked once the page shows the layer.
-	assert.equal(core.handle({ type: 'pick', model: 0, x: 2, y: 2, tolerance: 0.2, excludedLayers: ['SURVEY'] }).value, null);
-	assert.equal(core.handle({ type: 'pick', model: 0, x: 2, y: 2, tolerance: 0.2, excludedLayers: [] }).value.layer, 'SURVEY');
+	assert.equal(pick(2, 2, 0.2, ['SURVEY']), null);
+	assert.equal(pick(2, 2, 0.2).hit.layer, 'SURVEY');
 });
 
 test('exports are read back and compared', () => {
@@ -168,13 +179,13 @@ test('checks: header only, an object limit, a truncated file', () => {
 
 test('CityGML: 3D mesh, entity by face, validation, preflight and the native export', () => {
 	const { core, doc } = opened('cadkit-sample-buildings.gml');
-	assert.deepEqual(doc.extras[0], { viewports: 0, surfaces: 26, spatial: true });
+	assert.deepEqual(doc.extras[0], { viewports: 0, surfaces: 26, shapes: 0, spatial: true, open3d: true });
 	assert.equal(doc.info.units, 'unitless');
 	const m = core.handle({ type: 'mesh', model: 0 });
 	assert.equal(m.value.faces.length, 13);
 	assert.equal(m.transfer.length, 5);
 	const roof = m.value.faces.find((f) => f.layer === 'RoofSurface');
-	const e = core.handle({ type: 'entity', model: 0, path: roof.path, highlight: false }).value;
+	const e = core.handle({ type: 'entity', model: 0, path: roof.path, highlight: false, origin: { x: 0, y: 0 } }).value;
 	assert.equal(e.kind, 'polygon');
 	assert.equal(e.parents[0], 'House');
 	assert.ok(e.props.some(([k, v]) => k === 'gml.id' && /roof/.test(v)));
@@ -231,7 +242,9 @@ test('documents too large to keep as JSON still open, render and pick', () => {
 	assert.equal(doc.extras, null);
 	assert.ok(!core.takeCalls().some((c) => c.call === 'doc.toJSON()'));
 	assert.ok(core.handle({ type: 'render', model: 0 }).value.svg.length > n * 10);
-	assert.equal(core.handle({ type: 'pick', model: 0, x: 7, y: 3, tolerance: 0.2, excludedLayers: [] }).value.kind, 'point');
-	assert.equal(kindOf(() => core.handle({ type: 'entity', model: 0, path: [0], highlight: true })), 'unsupported');
+	const picked = core.handle({ type: 'pick', model: 0, x: 7, y: 3, tolerance: 0.2, excludedLayers: [], excludedKinds: [] }).value;
+	assert.equal(picked.hit.kind, 'point');
+	assert.equal(picked.target, null, 'without the JSON copy there is nothing to map the pick to');
+	assert.equal(kindOf(() => core.handle({ type: 'entity', model: 0, path: [0], highlight: true, origin: { x: 0, y: 0 } })), 'unsupported');
 	assert.equal(kindOf(() => core.handle({ type: 'mesh', model: 0 })), 'unsupported');
 });

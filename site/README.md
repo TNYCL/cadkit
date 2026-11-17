@@ -229,9 +229,10 @@ and needs no other dependency.
 | Module | Role |
 |---|---|
 | `worker.ts`, `core.ts` | The worker hosts `core.ts`, which owns the document and answers the page's requests (`protocol.ts`): open, render, pick, entity, 3D mesh, exports with a read-back check, unit conversion and block explode, header/limit/truncation checks, CityGML validation and TKGM preflight. Every cadkit-wasm call is timed and shown in the Calls tab. `core.ts` takes the module as a parameter, so `test/demo-core.test.mjs` runs it in Node. |
+| `walk.ts`, `origin.ts` | Worker helpers without DOM: the engine's pick walk repeated over the JSON copy (pick counter to entity paths), and the local origin of the sheet's SVG. |
 | `viewer.ts`, `engine.ts`, `dom.ts` | Main thread: stage, input, tabbed panel, status; the worker client (restarted after a trap or a cancel). |
 | `sheet2d.ts`, `scene2d.ts`, `view.ts`, `colors.ts` | The 2D sheet: cadkit's SVG, sanitised; paper layouts composed from their viewports; point markers at constant size; the dark sheet restyled without a second render; selection highlight (the entity rendered alone by the engine) and measure overlay. |
-| `gl3d.ts`, `mesh.ts`, `camera.ts` | The 3D view: polygons, faces and meshes triangulated in the worker, drawn with WebGL2 (no library), orbit camera, picking by ray. |
+| `gl3d.ts`, `mesh.ts`, `camera.ts` | The 3D view: polygons, faces, meshes and (in 3D models) closed planar polylines triangulated in the worker, drawn with WebGL2 (no library), orbit camera, picking by ray. |
 
 Decisions worth knowing: the engine renders the sheet once, for the light background, with
 layers that are off in the file included; the page hides those layers, hides the non-plotting
@@ -240,6 +241,46 @@ highlight, layouts and the 3D view use a JSON copy of the document that the work
 `MAX_JSON_ENTITIES`; larger files still open, render, pick and export. cadkit-wasm 0.5 draws
 a point as a cross sized by the drawing extents; `scene2d.ts` recognises that shape so the
 page can draw a dot instead (a test pins the shape).
+
+- **Picking.** `pickEntityBounded` returns `index`, the position of the hit among the entities
+  the engine's walk visits: groups are replaced by their children, block references (and
+  dimensions with a block) by their block's entities once per array cell, down to depth 32 and
+  never into a block already being expanded; invisible entities are skipped with everything
+  below them. It is not an index into the model's entity list. `walk.ts` repeats that walk over
+  the JSON copy and maps the counter to two index chains: `part` (the entity that was hit,
+  through group children and block entities) and `owner` (the model entity that holds it: the
+  outermost block reference for a block part). The page selects the owner (the reference, with
+  its block, attributes and highlight) and names the part. `test/demo-walk.test.mjs` picks on
+  a grid over every bundled sample (and `corpus/public` when `CADKIT_PUBLIC_CORPUS` or
+  `../corpus/public` exists) and requires every hit to map to the entity id the engine
+  reported. Without the JSON copy a pick shows the engine's summary and a bounding box only.
+- **Local origin.** Browsers keep SVG coordinates in 32-bit floats, and cadkit writes absolute
+  drawing coordinates, so a georeferenced plan (x = 512,345, y = 4,087,654) loses its shape.
+  The worker rewrites the numbers of every sheet relative to an integer origin derived from the
+  viewBox (`origin.ts`) and returns it with the render (`origin`, and `sourceOrigin` for the
+  model seen through a layout's viewports). The rewrite knows exactly the markup the engine
+  emits (path `d` with M, L, A, Z; text and tspan x/y and `rotate(a cx cy)`; the background
+  rect; the viewBox; pattern-local hatch lines, whose tiles get an offset that keeps their
+  phase); anything else leaves the SVG untouched and the File tab says so. It is skipped when
+  float32 already resolves a tenth of a pixel at maximum zoom or when moving the origin would
+  not shrink the numbers fourfold. The view works in sheet units; the readout, picking,
+  measuring, the selection box, zoom to selection and sample start boxes add the origin, and
+  the one-entity highlight is moved by the same origin in the worker. The SVG export keeps the
+  local coordinates (absolute ones would break the file in every browser) and states the origin
+  in a comment, in `<desc>` and in `data-origin` on the root element.
+- **3D.** Polygons, faces and meshes are surfaces. In a 3D model, closed, planar (within 0.1 %
+  of their size), bulge-free polylines with three or more vertices are surfaces too: DGN shape
+  elements, the walls and slabs of building models, arrive that way. A model with true surfaces
+  that leave the XY plane opens in 3D; a model whose surfaces are only such polylines opens in
+  3D when its height is at least 12 % of its larger horizontal extent, otherwise on the sheet
+  with the 3D button offered.
+- **Raster references.** Images without their data are drawn by the engine as dashed frames in
+  `<g data-kind="images">`, outside its viewBox, and in real files they are larger than the
+  drawing. The page hides them (and does not pick them) until "Raster image frames" is checked
+  in the Layers tab; fitting includes them only while they are shown. The File tab counts them
+  and says that the image files are not loaded.
+- **Layers.** Layers with something drawn are listed first; the others are behind "Show N empty
+  layers". The filter applies to both.
 
 Samples are listed in `src/demo/samples.ts` and on `/demo/samples/`. Our own synthetic files
 come from the scripts in `scripts/samples/` (`plan.mjs`, `siteplan.mjs`, `buildings.mjs`,
@@ -253,7 +294,8 @@ texts are committed in `scripts/samples/licenses/` and served under
 
 The browser itself is not part of `npm test`: after changing the viewer, open `/demo/` and go
 through the samples (2D, a paper layout of the DWG sheet, the 3D district, the contour map),
-both sheet colours, a pick, an export and the Checks tab.
+both sheet colours, a pick on a block reference of the site plan, a georeferenced file, an
+export and the Checks tab.
 
 ## Statistics
 

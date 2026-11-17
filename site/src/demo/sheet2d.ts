@@ -8,13 +8,21 @@ import { s, SVG_NS } from './dom.ts';
 import { DemoError } from './engine.ts';
 import type { RenderResult } from './protocol.ts';
 import { planLayout, pointCross, type LayoutPlan, type Pt } from './scene2d.ts';
-import { parseViewBox, type Box } from './view.ts';
+import { parseViewBox, toLocal, unionBox, type Box, type Offset } from './view.ts';
 
 export interface Loaded {
-	/** Extents to fit: the drawing, or the sheet content of a layout. */
+	/** Extents to fit (sheet units, relative to `origin`): the drawing, or the sheet content of a layout. Raster image frames are left out. */
 	home: Box;
-	/** Set when the model is a paper-space layout shown through its viewports. */
+	/** `home` with the raster image frames of the sheet itself, for when they are shown. */
+	homeWithImages: Box;
+	/** Local origin of the sheet: absolute SVG coordinates = sheet coordinates + origin. */
+	origin: Offset;
+	/** Local origin of the model shown through a layout's viewports. */
+	sourceOrigin: Offset;
+	/** Set when the model is a paper-space layout shown through its viewports (absolute drawing units). */
 	layout: LayoutPlan | null;
+	/** Raster image frames drawn (the sheet's own and those seen through viewports). */
+	imageFrames: number;
 	/** The model has viewports but none of them shows the model. */
 	noWindows: boolean;
 	/** Nothing at all was drawn. */
@@ -81,6 +89,9 @@ export class Sheet2d {
 	private highlight: SVGGElement | null = null;
 	private box: SVGRectElement | null = null;
 	private measure: SVGGElement | null = null;
+	private origin: Offset = { x: 0, y: 0 };
+	private sourceOrigin: Offset = { x: 0, y: 0 };
+	private images: SVGGElement[] = [];
 
 	constructor(private readonly host: HTMLElement) {}
 
@@ -93,6 +104,9 @@ export class Sheet2d {
 		this.highlight = null;
 		this.box = null;
 		this.measure = null;
+		this.origin = { x: 0, y: 0 };
+		this.sourceOrigin = { x: 0, y: 0 };
+		this.images = [];
 	}
 
 	/** Names of the layers that have something drawn. */
@@ -100,18 +114,27 @@ export class Sheet2d {
 		return [...this.groups.keys()];
 	}
 
-	/** Builds the sheet from a render result and shows it; throws DemoError on unusable SVG. */
-	load(result: RenderResult, sheet: Sheet, translucentFaces: boolean): Loaded {
+	/**
+	 * Builds the sheet from a render result and shows it; throws DemoError on unusable SVG. The
+	 * SVG is relative to `result.origin`, the source of a layout to its own origin; viewports
+	 * come in drawing units and are placed by subtracting those origins.
+	 */
+	load(result: RenderResult, sheet: Sheet, translucentFaces: boolean, showImages: boolean): Loaded {
 		this.clear();
 		this.sheet = sheet;
+		const origin = result.origin;
+		const sourceOrigin = result.layout?.sourceOrigin ?? { x: 0, y: 0 };
 		const node = parseSvg(result.svg);
 		dropBackground(node);
 		const ownEmpty = !node.querySelector('g[data-layer]');
+		// cadkit-wasm 0.5 leaves raster image frames out of the viewBox (see origin.ts).
 		let home = parseViewBox(node.getAttribute('viewBox'));
+		let homeWithImages = result.frames ? unionBox(home, result.frames) : home;
 		let layout: LayoutPlan | null = null;
 		let noWindows = false;
 		if (result.layout) {
-			layout = planLayout(result.layout.viewports, ownEmpty ? null : home);
+			const abs = { ...home, x: home.x + origin.x, y: home.y + origin.y };
+			layout = planLayout(result.layout.viewports, ownEmpty ? null : abs);
 			noWindows = !layout;
 		}
 		if (layout && result.layout) {
@@ -142,18 +165,22 @@ export class Sheet2d {
 			const before = node.querySelector(':scope > g[data-layer]');
 			for (const f of layout.frames) {
 				const win = doc.createElementNS(SVG_NS, 'svg');
-				for (const [k, v] of Object.entries({ x: f.x, y: f.y, width: f.w, height: f.h, viewBox: `${f.viewBox.x} ${f.viewBox.y} ${f.viewBox.w} ${f.viewBox.h}`, preserveAspectRatio: 'none', class: 'ck-vp' })) {
+				const x = f.x - origin.x;
+				const y = f.y - origin.y;
+				const vb = toLocal(f.viewBox, sourceOrigin);
+				for (const [k, v] of Object.entries({ x, y, width: f.w, height: f.h, viewBox: `${vb.x} ${vb.y} ${vb.w} ${vb.h}`, preserveAspectRatio: 'none', class: 'ck-vp' })) {
 					win.setAttribute(k, String(v));
 				}
 				const use = doc.createElementNS(SVG_NS, 'use');
 				use.setAttribute('href', '#' + SOURCE_ID);
 				win.append(use);
 				const frame = doc.createElementNS(SVG_NS, 'rect');
-				for (const [k, v] of Object.entries({ x: f.x, y: f.y, width: f.w, height: f.h, class: 'ck-vp-frame', 'vector-effect': 'non-scaling-stroke' })) frame.setAttribute(k, String(v));
+				for (const [k, v] of Object.entries({ x, y, width: f.w, height: f.h, class: 'ck-vp-frame', 'vector-effect': 'non-scaling-stroke' })) frame.setAttribute(k, String(v));
 				node.insertBefore(win, before);
 				node.insertBefore(frame, before);
 			}
-			home = layout.home;
+			home = toLocal(layout.home, origin);
+			homeWithImages = result.frames ? unionBox(home, result.frames) : home;
 		}
 		node.removeAttribute('width');
 		node.removeAttribute('height');
@@ -179,11 +206,26 @@ export class Sheet2d {
 			const p: Painted = { el, stroke: parseHex(stroke) ? stroke : null, fill: parseHex(fill) ? fill : null };
 			if (p.stroke || p.fill) this.painted.push(p);
 		}
+		// Raster references without their image are dashed frames, usually larger than the drawing.
+		this.images = [...svg.querySelectorAll<SVGGElement>('g[data-kind="images"]')];
+		const imageFrames = this.images.reduce((n, g) => n + g.querySelectorAll('path').length, 0);
 		this.host.append(svg);
 		this.svg = svg;
 		this.layout = layout;
+		this.origin = origin;
+		this.sourceOrigin = sourceOrigin;
+		this.setImagesShown(showImages);
 		if (sheet !== 'light') this.paint();
-		return { home, layout, noWindows, empty: ownEmpty && !layout, nodes: svg.querySelectorAll('*').length, points };
+		return { home, homeWithImages, origin, sourceOrigin, layout, imageFrames, noWindows, empty: ownEmpty && !layout, nodes: svg.querySelectorAll('*').length, points };
+	}
+
+	/** Shows or hides the raster image frames. */
+	setImagesShown(on: boolean): void {
+		for (const g of this.images) {
+			g.style.display = on ? '' : 'none';
+			if (on) g.removeAttribute('data-ck-hidden');
+			else g.setAttribute('data-ck-hidden', '');
+		}
 	}
 
 	private paint(): void {
@@ -246,13 +288,14 @@ export class Sheet2d {
 		return true;
 	}
 
-	/** Fallback highlight: a rectangle around the bounding box (SVG units), padded. null clears it. */
-	setBox(box: Box | null, inSource = false): void {
-		if (!box || !this.svg) {
+	/** Fallback highlight: a rectangle around a box in absolute SVG units (padded by the caller). null clears it. */
+	setBox(abs: Box | null, inSource = false): void {
+		if (!abs || !this.svg) {
 			this.box?.remove();
 			this.box = null;
 			return;
 		}
+		const box = toLocal(abs, inSource ? this.sourceOrigin : this.origin);
 		if (!this.box) {
 			this.box = s('rect', { class: 'ck-selrect', 'vector-effect': 'non-scaling-stroke' });
 			const target = inSource ? this.svg.querySelector('#' + SOURCE_ID) : this.svg;
@@ -261,21 +304,27 @@ export class Sheet2d {
 		for (const [k, v] of Object.entries({ x: box.x, y: box.y, width: box.w, height: box.h })) this.box.setAttribute(k, String(v));
 	}
 
-	/** Draws the measure path through the points (drawing coordinates, Y up); [] clears it. */
+	/** Draws the measure path through the points (absolute drawing coordinates, Y up); [] clears it. */
 	setMeasure(pts: Pt[], closed: boolean, cursor: Pt | null): void {
 		this.measure?.remove();
 		this.measure = null;
 		if (!this.svg || !pts.length) return;
 		const g = s('g', { class: 'ck-measure' });
 		const all = cursor && !closed ? [...pts, cursor] : pts;
-		const d = all.map((p, i) => `${i ? 'L' : 'M'}${p.x} ${-p.y}`).join('') + (closed && pts.length > 2 ? 'Z' : '');
+		const o = this.origin;
+		const d = all.map((p, i) => `${i ? 'L' : 'M'}${p.x - o.x} ${-p.y - o.y}`).join('') + (closed && pts.length > 2 ? 'Z' : '');
 		g.append(s('path', { class: 'ck-m-line', d, 'vector-effect': 'non-scaling-stroke' }));
-		for (const p of pts) g.append(s('path', { class: 'ck-m-pt', d: `M${p.x} ${-p.y}h${this.unit}`, 'vector-effect': 'non-scaling-stroke' }));
+		for (const p of pts) g.append(s('path', { class: 'ck-m-pt', d: `M${p.x - o.x} ${-p.y - o.y}h${this.unit}`, 'vector-effect': 'non-scaling-stroke' }));
 		this.svg.append(g);
 		this.measure = g;
 	}
 
-	/** The sheet as shown (hidden layers and overlays removed) as a standalone SVG document. */
+	/**
+	 * The sheet as shown (hidden layers and overlays removed) as a standalone SVG document. Its
+	 * coordinates are those of the page: relative to the local origin, which the file states in
+	 * a comment and in its <desc>, because absolute georeferenced numbers would break in every
+	 * viewer that uses float32 (all browsers).
+	 */
 	exportSvg(home: Box): string | null {
 		if (!this.svg) return null;
 		const copy = this.svg.cloneNode(true) as SVGSVGElement;
@@ -296,6 +345,15 @@ export class Sheet2d {
 			el.removeAttribute('class');
 		}
 		copy.insertBefore(s('rect', { x: home.x, y: home.y, width: home.w, height: home.h, fill: SHEET_BG[this.sheet] }), copy.firstChild);
-		return '<?xml version="1.0" encoding="UTF-8"?>\n' + new XMLSerializer().serializeToString(copy);
+		const { x, y } = this.origin;
+		let note = '';
+		if (x || y) {
+			note = `Coordinates are relative to a local origin: drawing X = x + ${x}, drawing Y = -(y + ${y}), in drawing units.`;
+			const desc = document.createElementNS(SVG_NS, 'desc');
+			desc.textContent = note;
+			copy.insertBefore(desc, copy.firstChild);
+			copy.setAttribute('data-origin', `${x} ${y}`);
+		}
+		return '<?xml version="1.0" encoding="UTF-8"?>\n' + (note ? `<!-- ${note} -->\n` : '') + new XMLSerializer().serializeToString(copy);
 	}
 }

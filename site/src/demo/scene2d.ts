@@ -142,14 +142,19 @@ export function pathLength(pts: Pt[]): number {
 	return n;
 }
 
-/** Area enclosed by the points taken as a closed polygon (shoelace), in square drawing units. */
+/**
+ * Area enclosed by the points taken as a closed polygon (shoelace), in square drawing units.
+ * Computed relative to the first point: georeferenced coordinates are millions of units from
+ * zero, where the products of the plain formula lose the digits the area needs.
+ */
 export function polygonArea(pts: Pt[]): number {
 	if (pts.length < 3) return 0;
+	const o = pts[0]!;
 	let a = 0;
 	for (let i = 0; i < pts.length; i++) {
 		const p = pts[i]!;
 		const q = pts[(i + 1) % pts.length]!;
-		a += p.x * q.y - q.x * p.y;
+		a += (p.x - o.x) * (q.y - o.y) - (q.x - o.x) * (p.y - o.y);
 	}
 	return Math.abs(a) / 2;
 }
