@@ -19,7 +19,11 @@ import type { DocJson, EntityJson } from './mesh.ts';
 
 /** Nesting limit of the engine's walk (cadkit_core::ops::DEFAULT_WALK_DEPTH). */
 export const WALK_MAX_DEPTH = 32;
-/** Steps one lookup may take before it gives up (about what the pick's own work budget allows). */
+/**
+ * Steps one lookup may take before it gives up (about what the pick's own work budget allows).
+ * Every list entry counts one step, and every new chain of nested blocks the lookup meets costs
+ * its length, so the memory a lookup holds stays proportional to this budget.
+ */
 export const MAX_LOCATE_STEPS = 4_000_000;
 
 /** Where a picked entity sits in the document. */
@@ -72,16 +76,58 @@ function blockName(e: EntityJson): string | null {
 /** Thrown inside the walk when the step budget runs out. */
 const EXHAUSTED = Symbol('exhausted');
 
+/**
+ * The blocks being expanded, outermost first, with a small integer that names this exact
+ * sequence. Memo keys use the id: a key built from the names themselves grows with the nesting
+ * depth and the name lengths, and the walk can meet many different sequences (blocks that insert
+ * two others, nested a dozen deep, give thousands), which made the memo use more memory than the
+ * file it describes.
+ */
+interface Stack {
+	names: readonly string[];
+	id: number;
+}
+
+const ROOT: Stack = { names: [], id: 0 };
+
 interface Walk {
 	blocks: Blocks;
 	/** Steps left before the lookup gives up. */
 	left: number;
-	/** Visited-entity counts of one expansion of a block, by block, depth and stack. */
+	/** Visited-entity counts of one expansion of a block, by stack id (the block is its top) and depth. */
 	memo: Map<string, number>;
+	/** Stack ids by parent id and block number. */
+	stacks: Map<string, number>;
+	/** Block numbers by name, for the stack ids. */
+	names: Map<string, number>;
+}
+
+function newWalk(doc: DocJson): Walk {
+	return { blocks: blocksOf(doc), left: MAX_LOCATE_STEPS, memo: new Map(), stacks: new Map(), names: new Map() };
+}
+
+/** The stack with `name` entered on top of `s`. */
+function enter(w: Walk, s: Stack, name: string): Stack {
+	let n = w.names.get(name);
+	if (n === undefined) {
+		n = w.names.size;
+		w.names.set(name, n);
+	}
+	const key = s.id + ',' + n;
+	let id = w.stacks.get(key);
+	if (id === undefined) {
+		// A new sequence is kept for the rest of the lookup: charge it by its length, so the
+		// step budget also bounds the memory the lookup holds.
+		w.left -= s.names.length + 1;
+		if (w.left < 0) throw EXHAUSTED;
+		id = w.stacks.size + 1;
+		w.stacks.set(key, id);
+	}
+	return { names: [...s.names, name], id };
 }
 
 /** How a list entry is walked at this depth with these blocks on the stack. */
-function expansion(w: Walk, e: EntityJson, depth: number, stack: string[]): { list: EntityJson[]; name: string | null; cells: number } | null {
+function expansion(w: Walk, e: EntityJson, depth: number, stack: Stack): { list: EntityJson[]; name: string | null; cells: number } | null {
 	const k = e.kind;
 	if (k.type === 'group') {
 		return { list: depth < WALK_MAX_DEPTH && Array.isArray(k.children) ? (k.children as EntityJson[]) : [], name: null, cells: 1 };
@@ -89,33 +135,34 @@ function expansion(w: Walk, e: EntityJson, depth: number, stack: string[]): { li
 	const name = blockName(e);
 	if (name === null) return null;
 	const list = w.blocks.get(name);
-	if (!list || depth >= WALK_MAX_DEPTH || stack.includes(name)) return null;
+	if (!list || depth >= WALK_MAX_DEPTH || stack.names.includes(name)) return null;
 	return { list, name, cells: cellsOf(k) };
 }
 
 /** Number of entities the engine visits for one list entry. */
-function countEntity(w: Walk, e: EntityJson | null | undefined, depth: number, stack: string[]): number {
+function countEntity(w: Walk, e: EntityJson | null | undefined, depth: number, stack: Stack): number {
 	if (--w.left < 0) throw EXHAUSTED;
 	if (!e || !e.kind || typeof e.kind.type !== 'string' || e.visible === false) return 0;
 	const x = expansion(w, e, depth, stack);
 	if (!x) return 1;
 	if (x.name === null) return countList(w, x.list, depth + 1, stack);
-	const key = x.name + '\u0000' + depth + '\u0000' + stack.join('\u0000');
+	const inner = enter(w, stack, x.name);
+	const key = inner.id + ',' + depth;
 	let one = w.memo.get(key);
 	if (one === undefined) {
-		one = countList(w, x.list, depth + 1, [...stack, x.name]);
+		one = countList(w, x.list, depth + 1, inner);
 		w.memo.set(key, one);
 	}
 	return one * x.cells;
 }
 
-function countList(w: Walk, list: EntityJson[], depth: number, stack: string[]): number {
+function countList(w: Walk, list: EntityJson[], depth: number, stack: Stack): number {
 	let n = 0;
 	for (const e of list) n += countEntity(w, e, depth, stack);
 	return n;
 }
 
-function locateIn(w: Walk, list: EntityJson[], depth: number, stack: string[], target: number, path: number[], blocks: string[], ownerLength: number | null): PickTarget | null {
+function locateIn(w: Walk, list: EntityJson[], depth: number, stack: Stack, target: number, path: number[], blocks: string[], ownerLength: number | null): PickTarget | null {
 	for (let i = 0; i < list.length; i++) {
 		const e = list[i];
 		const n = countEntity(w, e, depth, stack);
@@ -129,7 +176,7 @@ function locateIn(w: Walk, list: EntityJson[], depth: number, stack: string[], t
 		if (x.name === null) return locateIn(w, x.list, depth + 1, stack, target, here, blocks, ownerLength);
 		// Every cell of an array visits the same block entities: only the position within one cell matters.
 		const one = n / x.cells;
-		return locateIn(w, x.list, depth + 1, [...stack, x.name], target % one, here, [...blocks, x.name], ownerLength ?? here.length);
+		return locateIn(w, x.list, depth + 1, enter(w, stack, x.name), target % one, here, [...blocks, x.name], ownerLength ?? here.length);
 	}
 	return null;
 }
@@ -141,9 +188,9 @@ function locateIn(w: Walk, list: EntityJson[], depth: number, stack: string[], t
 export function locatePick(doc: DocJson, model: number, index: number): PickTarget | null {
 	const list = doc.models?.[model]?.entities;
 	if (!Array.isArray(list) || !Number.isInteger(index) || index < 0) return null;
-	const w: Walk = { blocks: blocksOf(doc), left: MAX_LOCATE_STEPS, memo: new Map() };
+	const w = newWalk(doc);
 	try {
-		return locateIn(w, list, 0, [], index, [], [], null);
+		return locateIn(w, list, 0, ROOT, index, [], [], null);
 	} catch (e) {
 		if (e === EXHAUSTED) return null;
 		throw e;
@@ -154,9 +201,9 @@ export function locatePick(doc: DocJson, model: number, index: number): PickTarg
 export function walkCount(doc: DocJson, model: number): number | null {
 	const list = doc.models?.[model]?.entities;
 	if (!Array.isArray(list)) return 0;
-	const w: Walk = { blocks: blocksOf(doc), left: MAX_LOCATE_STEPS, memo: new Map() };
+	const w = newWalk(doc);
 	try {
-		return countList(w, list, 0, []);
+		return countList(w, list, 0, ROOT);
 	} catch (e) {
 		if (e === EXHAUSTED) return null;
 		throw e;

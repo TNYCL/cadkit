@@ -30,9 +30,13 @@ already in, and a level of detail from 0 to 4; cadkit writes the coordinates unc
 never guesses a CRS or reprojects.
 
 Points, straight lines and polylines, exact circles, closed polygons, faces, meshes and groups
-are written. Closed polylines stay curves, so create polygon entities for surfaces. Bulges,
-widths, arcs, splines, text, images and other kinds fail by default; with `metadata_only`
-(an explicit opt-in) they are kept only as JSON metadata and listed in the report.
+are written. Closed polylines stay curves, so create polygon entities for surfaces; the next
+release adds an export option (closed polylines as surfaces, off by default) that writes a
+closed, straight polyline with at least three distinct vertices as a polygon when it is planar
+and simple within its tolerance, and a building export that turns the surfaces of a model into
+buildings. Bulges, widths, arcs, splines, text, images and other kinds fail by default; with
+`metadata_only` (an explicit opt-in) they are kept only as JSON metadata and listed in the
+report.
 
 <CodeTabs
 	snippets={[

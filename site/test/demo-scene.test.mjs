@@ -387,6 +387,11 @@ test('mesh: models of polylines only open in 3D when they are tall enough', () =
 	assert.deepEqual(M.surfaceInfo(tall, 0, { shapes: true }), { surfaces: 5, shapes: 5, spatial: true, open3d: true });
 	// Flatter: offered in 3D, opened on the sheet.
 	assert.deepEqual(M.surfaceInfo(flat, 0, { shapes: true }), { surfaces: 5, shapes: 5, spatial: true, open3d: false });
+	// Exactly at the ratio, with coordinates whose difference does not come out exact in binary.
+	const wall = (z0, z1) => ({ models: [{ entities: [shape('A', [p(0, 0, z0), p(3, 0, z0), p(3, 0, z1), p(0, 0, z1)])] }] });
+	assert.ok(1.46 - 1.1 < 0.12 * 3, 'the float difference is just below the ratio');
+	assert.equal(M.surfaceInfo(wall(1.1, 1.46), 0, { shapes: true }).open3d, true);
+	assert.equal(M.surfaceInfo(wall(1.1, 1.459), 0, { shapes: true }).open3d, false);
 	// A true surface keeps today's rule: any height opens in 3D.
 	const mixed = { models: [{ entities: [...boxShapes(10, 8, 0.5), { layer: '0', kind: { type: 'face', points: [p(0, 0, 0), p(1, 0, 0), p(1, 0, 0.5)] } }] }] };
 	assert.equal(M.surfaceInfo(mixed, 0, { shapes: true }).open3d, true);
@@ -396,10 +401,20 @@ test('mesh: models of polylines only open in 3D when they are tall enough', () =
 });
 
 test('mesh: the triangle budget holds for many shapes', () => {
+	// 10,000 shapes (2,000 boxes) at map coordinates, as a district of DGN buildings arrives.
 	const entities = [];
-	for (let i = 0; i < 400; i++) entities.push(...boxShapes(10, 8, 3).map((e) => ({ ...e, kind: { ...e.kind, vertices: e.kind.vertices.map((v) => ({ ...v, position: p(v.position.x + i * 20, v.position.y, v.position.z) })) } })));
-	const mesh = M.buildMesh({ models: [{ entities }] }, 0, { shapes: true });
-	assert.equal(mesh.faces.length, 2000);
+	for (let i = 0; i < 2000; i++) {
+		const dx = 512000 + (i % 50) * 20;
+		const dy = 4087000 + Math.floor(i / 50) * 20;
+		entities.push(...boxShapes(10, 8, 3).map((e) => ({ ...e, kind: { ...e.kind, vertices: e.kind.vertices.map((v) => ({ ...v, position: p(v.position.x + dx, v.position.y + dy, v.position.z) })) } })));
+	}
+	const doc = { models: [{ entities }] };
+	assert.deepEqual(M.surfaceInfo(doc, 0, { shapes: true }), { surfaces: 10000, shapes: 10000, spatial: true, open3d: false });
+	const mesh = M.buildMesh(doc, 0, { shapes: true });
+	assert.equal(mesh.faces.length, 10000);
+	assert.equal(mesh.duplicates, 0);
+	// Relative to the mesh centre: the float32 positions keep centimetres.
+	assert.ok(mesh.positions.every((v) => Math.abs(v) < 1000));
 	assert.ok(!mesh.truncated);
 	assert.ok(mesh.faceOfTri.length <= M.MAX_MESH_TRIANGLES);
 });

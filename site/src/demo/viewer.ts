@@ -1063,7 +1063,8 @@ export function mount(): void {
 				history.replaceState(null, '', url);
 			}
 			setBusy(null);
-			el.touch.hidden = !coarse.matches;
+			// Opened while touch gestures are on (Done shown): the opt-in stays out of the way.
+			el.touch.hidden = touchActive || !coarse.matches;
 			if (!quiet) el.stage.focus({ preventScroll: true });
 			const i = result.info;
 			announce(

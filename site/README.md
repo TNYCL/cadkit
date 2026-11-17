@@ -253,7 +253,11 @@ page can draw a dot instead (a test pins the shape).
   its block, attributes and highlight) and names the part. `test/demo-walk.test.mjs` picks on
   a grid over every bundled sample (and `corpus/public` when `CADKIT_PUBLIC_CORPUS` or
   `../corpus/public` exists) and requires every hit to map to the entity id the engine
-  reported. Without the JSON copy a pick shows the engine's summary and a bounding box only.
+  reported, with `pickEntity` counting like `pickEntityBounded` and with a layer and text
+  excluded (the engine numbers excluded entities too). A lookup is bounded by
+  `MAX_LOCATE_STEPS`, which also charges every new chain of nested blocks by its length, so
+  the memory it holds stays proportional to the budget. Without the JSON copy a pick shows the
+  engine's summary and a bounding box only.
 - **Local origin.** Browsers keep SVG coordinates in 32-bit floats, and cadkit writes absolute
   drawing coordinates, so a georeferenced plan (x = 512,345, y = 4,087,654) loses its shape.
   The worker rewrites the numbers of every sheet relative to an integer origin derived from the
@@ -261,13 +265,18 @@ page can draw a dot instead (a test pins the shape).
   model seen through a layout's viewports). The rewrite knows exactly the markup the engine
   emits (path `d` with M, L, A, Z; text and tspan x/y and `rotate(a cx cy)`; the background
   rect; the viewBox; pattern-local hatch lines, whose tiles get an offset that keeps their
-  phase); anything else leaves the SVG untouched and the File tab says so. It is skipped when
-  float32 already resolves a tenth of a pixel at maximum zoom or when moving the origin would
-  not shrink the numbers fourfold. The view works in sheet units; the readout, picking,
-  measuring, the selection box, zoom to selection and sample start boxes add the origin, and
-  the one-entity highlight is moved by the same origin in the worker. The SVG export keeps the
+  phase); anything else, numbers included that plain notation cannot carry after the move,
+  leaves the SVG untouched and the File tab says so. It is skipped when moving the origin would
+  not shrink the numbers fourfold (a sheet around zero, a wide map near it). The other test in
+  `chooseOrigin`, float32 resolving a tenth of a pixel at maximum zoom, never passes with
+  `MAX_ZOOM_IN` = 1e5, so a 100-unit plan at x = 500 is moved too; the rewrite is exact. The
+  view works in sheet units; the readout, picking, measuring, the selection box, zoom to
+  selection and sample start boxes add the origin, and the one-entity highlight is moved by the
+  same origin in the worker. The SVG export keeps the
   local coordinates (absolute ones would break the file in every browser) and states the origin
-  in a comment, in `<desc>` and in `data-origin` on the root element.
+  in a comment, in `<desc>` and in `data-origin` on the root element; for a layout whose model
+  has an origin of its own, that one too, and in `data-origin` on the model group the viewports
+  show.
 - **3D.** Polygons, faces and meshes are surfaces. In a 3D model, closed, planar (within 0.1 %
   of their size), bulge-free polylines with three or more vertices are surfaces too: DGN shape
   elements, the walls and slabs of building models, arrive that way. A model with true surfaces

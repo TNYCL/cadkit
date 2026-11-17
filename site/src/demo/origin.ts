@@ -61,6 +61,13 @@ function viewBoxOf(value: string): Box | null {
  * and moving shrinks them at least fourfold; below that the error comes from the drawing's own
  * size, which no origin removes. The origin is a multiple of a power of ten no larger than the
  * extent (an integer), so the local numbers stay below twice the extent.
+ *
+ * With MAX_ZOOM_IN = 1e5 the first test never passes: a pixel at that zoom is 2.4e-9 of the
+ * extent, finer than float32 resolves even at the centre of a drawing around zero (half the
+ * extent away, 3e-8 of it). The fourfold test decides alone: a sheet whose farthest viewBox
+ * corner is more than four times as far from zero as it would be from the origin moves (a 5 m
+ * detail at x = 6,000,000 does, and so does a 100-unit plan at x = 500, which is harmless:
+ * the rewrite is exact); a sheet around zero or a wide map near it stays.
  */
 export function chooseOrigin(vb: Box): Origin {
 	const extent = Math.max(vb.w, vb.h);
@@ -75,20 +82,29 @@ export function chooseOrigin(vb: Box): Origin {
 	return o;
 }
 
-/** One number moved by an integer offset, keeping the decimals it was written with. */
-function shift(token: string, by: number): string {
-	if (!by) return token;
-	const dot = token.indexOf('.');
-	const decimals = dot < 0 ? 0 : token.length - dot - 1;
-	let s = (Number(token) - by).toFixed(decimals);
-	if (decimals) s = s.replace(/\.?0+$/, '');
-	return s === '-0' ? '0' : s;
-}
-
 class Unexpected extends Error {}
 const unexpected = (what: string): never => {
 	throw new Unexpected(what);
 };
+
+/** Decimals a moved number may keep: toFixed takes at most 100, and the engine writes few. */
+const MAX_DECIMALS = 20;
+
+/**
+ * One number moved by an integer offset, keeping the decimals it was written with. A number
+ * the plain notation cannot carry after the move (too many decimals, or 1e21 and more, which
+ * toFixed writes with an exponent) is markup the rewrite does not expect.
+ */
+function shift(token: string, by: number): string {
+	if (!by) return token;
+	const dot = token.indexOf('.');
+	const decimals = dot < 0 ? 0 : token.length - dot - 1;
+	if (decimals > MAX_DECIMALS) unexpected('number with ' + decimals + ' decimals');
+	let s = (Number(token) - by).toFixed(decimals);
+	if (!NUM.test(s)) unexpected('number ' + s);
+	if (decimals) s = s.replace(/\.?0+$/, '');
+	return s === '-0' ? '0' : s;
+}
 
 /** Attributes per element: `keep` carry no position; the others are rewritten by the scanner. */
 const KEEP: Record<string, ReadonlySet<string>> = {

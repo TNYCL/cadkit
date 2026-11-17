@@ -41,11 +41,16 @@ const docOf = (entities, blocks = []) => ({
 	warnings: [],
 });
 
-/** Picks at (x + 0.5, y) with the engine and maps the counter back through the walk. */
-function pickAt(json, x, y) {
+/**
+ * Picks at (x + 0.5, y) with the engine and maps the counter back through the walk. Both pick
+ * calls must report the same counter; `filters` are the bounded pick's exclusions.
+ */
+function pickAt(json, x, y, filters = {}) {
 	const d = api.CadDocument.fromJsonString(JSON.stringify(json));
 	try {
-		const hit = d.pickEntityBounded(0, x + 0.5, y, 0.05, { maxOutputBytes: 16384, maxWork: 2_000_000 }, true);
+		const hit = d.pickEntityBounded(0, x + 0.5, y, 0.05, { maxOutputBytes: 16384, maxWork: 2_000_000, ...filters }, true);
+		const plain = d.pickEntity(0, x + 0.5, y, 0.05, true, filters);
+		assert.equal(plain?.index, hit?.index, 'pickEntity and pickEntityBounded count alike');
 		if (!hit) return null;
 		const target = locatePick(json, 0, hit.index);
 		return { hit, target, found: target && entityAt(json, 0, target.part) };
@@ -145,6 +150,74 @@ test('walk: nesting stops at the engine depth', () => {
 	assert.equal(hit.found.entity.id, hit.hit.id);
 });
 
+test('walk: dimensions without a block, two-block cycles, nesting inside blocks', () => {
+	const dim = (y, block) => entity({ type: 'dimension', dimension_type: 'linear', points: [P(0, y), P(1, y), P(0, y + 1)], text_position: P(0, y + 2), measurement: 1, text: null, block, style: null });
+	const json = docOf(
+		[
+			dim(0, null),
+			dim(100, 'MISSING'),
+			insert('A', 0, 200),
+			group([line(0, 300), insert('G', 0, 0, { columns: 2, column_spacing: 10 })]),
+			line(0, 500),
+		],
+		[
+			// A inserts B, B inserts A again: B's reference to A is visited, not expanded.
+			block('A', [line(0, 0), insert('B', 0, 10)]),
+			block('B', [line(0, 0), insert('A', 0, 1000)]),
+			// A block with a group: the index chain goes through the block, then the group.
+			block('G', [group([line(0, 400), line(0, 410)])]),
+		]
+	);
+	// Visited: 2 dimensions (no block, missing block), A: 1 + B (1 + the inner A), 1 + 2 cells x 2, 1.
+	assert.equal(walkCount(json, 0), 2 + 3 + 5 + 1);
+	let r = pickAt(json, 0, 210);
+	assert.deepEqual(r.target, { part: [2, 1, 0], owner: [2], blocks: ['A', 'B'] });
+	assert.equal(r.found.entity.id, r.hit.id);
+	r = pickAt(json, 10, 410);
+	assert.deepEqual(r.target, { part: [3, 1, 0, 1], owner: [3, 1], blocks: ['G'] });
+	assert.equal(r.found.entity.id, r.hit.id);
+	assert.deepEqual(r.found.parents.map((p) => p.kind.type), ['group', 'insert', 'group']);
+	r = pickAt(json, 0, 500);
+	assert.deepEqual(r.target, { part: [4], owner: [4], blocks: [] });
+});
+
+test('walk: excluded layers and kinds still count, layers that are off in the file are walked', () => {
+	const json = docOf([line(0, 0, { layer: 'OFF' }), insert('B', 0, 100, { layer: 'X' }), line(0, 200, { layer: 'X' }), line(0, 300)], [block('B', [line(0, 0), line(0, 5, { layer: 'X' })])]);
+	json.layers = [{ name: 'OFF', id: nextId++, color: { type: 'aci', index: 7 }, linetype: null, lineweight: { type: 'default' }, visible: false, frozen: true, locked: false, plottable: true, description: null, props: {} }];
+	// The demo picks with hidden layers included, so the walk does not skip them either.
+	assert.deepEqual(pickAt(json, 0, 0).target.part, [0]);
+	// The engine numbers every entity it walks, also those its filters then pass over.
+	for (const filters of [{ excludedLayers: ['X'] }, { excludedKinds: ['insert', 'polyline'] }, { excludedLayers: ['OFF'], excludedKinds: ['circle'] }]) {
+		const r = pickAt(json, 0, 300, filters);
+		assert.deepEqual(r.target, { part: [3], owner: [3], blocks: [] }, JSON.stringify(filters));
+		assert.equal(r.found.entity.id, r.hit.id);
+	}
+	assert.equal(pickAt(json, 0, 105, { excludedLayers: ['X'] }), null);
+	assert.deepEqual(pickAt(json, 0, 105).target, { part: [1, 1], owner: [1], blocks: ['B'] });
+});
+
+test('walk: many different block nestings stay within the lookup budget', () => {
+	// Every block inserts two others, 16 levels deep: 2^16 different block sequences. The engine
+	// walks them in a fraction of its work budget; the lookup must neither keep a key per
+	// sequence that grows with the nesting (it used gigabytes here) nor run without bound.
+	const pad = 'x'.repeat(250);
+	const nm = (c, i) => c + i + pad;
+	const L = 16;
+	const blocks = [];
+	for (let i = 0; i < L; i++) for (const c of ['A', 'B']) blocks.push(block(nm(c, i), [insert(nm('A', i + 1), 0, 0), insert(nm('B', i + 1), 0, 0)]));
+	blocks.push(block(nm('A', L), [line(0, 0)]), block(nm('B', L), [line(0, 0)]));
+	const json = docOf([insert(nm('A', 0), 0, 0), line(0, 50)], blocks);
+	const before = process.memoryUsage().heapUsed;
+	const started = performance.now();
+	const r = pickAt(json, 0, 0);
+	const grown = process.memoryUsage().heapUsed - before;
+	// Either the part is found or the lookup gives up (null): never a wrong entity.
+	if (r.target) assert.equal(r.found.entity.id, r.hit.id);
+	assert.ok(grown < 256 * 1024 * 1024, `${Math.round(grown / 1048576)} MiB`);
+	assert.ok(performance.now() - started < 20_000);
+	assert.deepEqual(pickAt(json, 0, 50).target, { part: [1], owner: [1], blocks: [] });
+});
+
 test('walk: out-of-range counters and malformed input give null, not a throw', () => {
 	const json = docOf([line(0, 0)]);
 	assert.equal(locatePick(json, 0, 1), null);
@@ -161,13 +234,13 @@ test('walk: out-of-range counters and malformed input give null, not a throw', (
 // Every hit on a grid over real files maps to the entity the engine reported.
 
 const PICK_GRID = 24;
+const corpus = process.env.CADKIT_PUBLIC_CORPUS ?? join(site, '..', 'corpus', 'public');
 
 function* drawingFiles() {
 	for (const s of SAMPLES) {
 		const p = join(site, 'public', s.path);
 		if (existsSync(p)) yield [p, PICK_GRID];
 	}
-	const corpus = process.env.CADKIT_PUBLIC_CORPUS ?? join(site, '..', 'corpus', 'public');
 	if (!existsSync(corpus)) return;
 	const walk = function* (dir) {
 		for (const n of readdirSync(dir).sort()) {
@@ -179,18 +252,29 @@ function* drawingFiles() {
 	yield* walk(corpus);
 }
 
-/** Grid picks through the worker core: hits, how many mapped to the reported entity, the first misses. */
+/**
+ * Grid picks through the worker core: hits, how many mapped to the reported entity, the first
+ * misses. Every point is picked three ways: as the page does, with the unbounded pickEntity
+ * (which must count alike), and with text and every first layer excluded (excluded entities are
+ * still counted, so the mapping must hold as well).
+ */
 function gridPicks(path, grid = PICK_GRID) {
 	const core = createCore(api);
 	let opened;
+	const bytes = readFileSync(path);
 	try {
-		opened = core.handle({ type: 'open', name: path, buffer: bufferOf(readFileSync(path)) }).value;
+		opened = core.handle({ type: 'open', name: path, buffer: bufferOf(bytes) }).value;
 	} catch {
 		return null; // Not a file cadkit reads; the reader tests cover that.
 	}
 	if (!opened.extras) return null;
+	const plain = api.read(new Uint8Array(bytes), { maxInputBytes: 64 * 1024 * 1024 });
+	const excludedLayers = opened.layers.slice(0, 1).map((l) => l.name);
+	const excludedKinds = ['text', 'mtext'];
+	let unbounded = 0;
 	let hits = 0;
 	let mapped = 0;
+	let points = 0;
 	/** Hits the old reading (the counter as a model index) would have shown right. */
 	let asIndex = 0;
 	const misses = [];
@@ -204,37 +288,49 @@ function gridPicks(path, grid = PICK_GRID) {
 				// Back to drawing coordinates: the sheet is relative to its origin, Y flipped.
 				const px = x + (w * i) / grid + r.origin.x;
 				const py = -(y + (h * j) / grid + r.origin.y);
-				let picked;
-				try {
-					picked = core.handle({ type: 'pick', model, x: px, y: py, tolerance, excludedLayers: [], excludedKinds: [] }).value;
-				} catch {
-					continue; // Work budget: the page reports it; nothing to map.
+				for (const filtered of [false, true]) {
+					let picked;
+					try {
+						picked = core.handle({ type: 'pick', model, x: px, y: py, tolerance, excludedLayers: filtered ? excludedLayers : [], excludedKinds: filtered ? excludedKinds : [] }).value;
+					} catch {
+						continue; // Work budget: the page reports it; nothing to map.
+					}
+					if (!filtered && plain.pickEntity(model, px, py, tolerance, true, {})?.index === picked?.hit.index) unbounded++;
+					else if (!filtered && misses.length < 3) misses.push({ model, unbounded: true, index: picked?.hit.index });
+					if (!picked) continue;
+					hits++;
+					const t = picked.target;
+					const e = t ? core.handle({ type: 'entity', model, path: t.part, highlight: false, origin: r.origin }).value : null;
+					const same = e && (picked.hit.id === null ? e.id === null && e.kind.replace(/_/g, '') === picked.hit.kind : e.id === picked.hit.id);
+					if (same) mapped++;
+					else if (misses.length < 3) misses.push({ model, filtered, index: picked.hit.index, id: picked.hit.id, target: t });
+					if (!filtered && t && t.part.length === 1 && t.part[0] === picked.hit.index) asIndex++;
 				}
-				if (!picked) continue;
-				hits++;
-				const t = picked.target;
-				const e = t ? core.handle({ type: 'entity', model, path: t.part, highlight: false, origin: r.origin }).value : null;
-				const same = e && (picked.hit.id === null ? e.id === null && e.kind.replace(/_/g, '') === picked.hit.kind : e.id === picked.hit.id);
-				if (same) mapped++;
-				if (t && t.part.length === 1 && t.part[0] === picked.hit.index) asIndex++;
-				else if (misses.length < 3) misses.push({ model, index: picked.hit.index, id: picked.hit.id, target: t });
+				points++;
 			}
 	});
-	return { hits, mapped, asIndex, misses };
+	plain.free();
+	return { hits, mapped, asIndex, misses, points, unbounded };
 }
 
 test('pick grid: every hit on every bundled sample and public corpus file maps to its entity', (t) => {
 	let files = 0;
+	let corpusFiles = 0;
 	let total = 0;
 	for (const [path, grid] of drawingFiles()) {
 		const r = gridPicks(path, grid);
 		if (!r) continue;
 		files++;
+		if (path.startsWith(corpus)) corpusFiles++;
 		total += r.hits;
-		assert.equal(r.mapped, r.hits, `${path.slice(site.length - 5)}: ${JSON.stringify(r.misses)}`);
+		const name = path.startsWith(corpus) ? path.slice(corpus.length) : path.slice(site.length - 5);
+		assert.equal(r.mapped, r.hits, `${name}: ${JSON.stringify(r.misses)}`);
+		assert.equal(r.unbounded, r.points, `${name}: pickEntity counts like pickEntityBounded: ${JSON.stringify(r.misses)}`);
 	}
-	t.diagnostic(`${total} hits in ${files} files, all mapped`);
-	assert.ok(files >= 4, 'the bundled samples are there');
+	t.diagnostic(`${total} hits in ${files} files (${corpusFiles} from ${corpus}), all mapped`);
+	assert.ok(files >= SAMPLES.length, 'the bundled samples are there');
+	// A corpus named explicitly must contribute: a wrong path would otherwise pass silently.
+	if (process.env.CADKIT_PUBLIC_CORPUS) assert.ok(corpusFiles > 0, `no drawings read from ${corpus}`);
 	assert.ok(total > 1000, `${total} hits`);
 });
 
@@ -271,12 +367,17 @@ test('pick grid: private corpus', { skip: !existsSync(privateCorpus) }, (t) => {
 	// A spread sample keeps the run short: every 20th file.
 	let hits = 0;
 	let mapped = 0;
+	let points = 0;
+	let unbounded = 0;
 	for (let i = 0; i < files.length; i += 20) {
 		const r = gridPicks(files[i], PICK_GRID / 2);
 		if (!r) continue;
 		hits += r.hits;
 		mapped += r.mapped;
+		points += r.points;
+		unbounded += r.unbounded;
 	}
 	t.diagnostic(`${mapped} of ${hits} hits mapped`);
 	assert.equal(mapped, hits);
+	assert.equal(unbounded, points);
 });

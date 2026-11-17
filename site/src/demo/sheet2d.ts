@@ -322,8 +322,9 @@ export class Sheet2d {
 	/**
 	 * The sheet as shown (hidden layers and overlays removed) as a standalone SVG document. Its
 	 * coordinates are those of the page: relative to the local origin, which the file states in
-	 * a comment and in its <desc>, because absolute georeferenced numbers would break in every
-	 * viewer that uses float32 (all browsers).
+	 * a comment, in its <desc> and in data-origin on the root (and, for a layout whose model has
+	 * an origin of its own, on the model group the viewports show), because absolute
+	 * georeferenced numbers would break in every viewer that uses float32 (all browsers).
 	 */
 	exportSvg(home: Box): string | null {
 		if (!this.svg) return null;
@@ -345,14 +346,26 @@ export class Sheet2d {
 			el.removeAttribute('class');
 		}
 		copy.insertBefore(s('rect', { x: home.x, y: home.y, width: home.w, height: home.h, fill: SHEET_BG[this.sheet] }), copy.firstChild);
+		// "y - 4087670" rather than "y + -4087670": georeferenced Y gives a negative SVG origin.
+		const plus = (v: number) => (v < 0 ? ` - ${-v}` : ` + ${v}`);
+		const notes: string[] = [];
 		const { x, y } = this.origin;
-		let note = '';
 		if (x || y) {
-			note = `Coordinates are relative to a local origin: drawing X = x + ${x}, drawing Y = -(y + ${y}), in drawing units.`;
+			notes.push(`Coordinates are relative to a local origin: drawing X = x${plus(x)}, drawing Y = -(y${plus(y)}), in drawing units.`);
+			copy.setAttribute('data-origin', `${x} ${y}`);
+		}
+		// A layout's viewports show the model through its own origin (see load).
+		const so = this.sourceOrigin;
+		const source = this.layout ? copy.querySelector('#' + SOURCE_ID) : null;
+		if (source && (so.x || so.y)) {
+			notes.push(`The model seen through the viewports is drawn relative to its own origin: model X = x${plus(so.x)}, model Y = -(y${plus(so.y)}), in the viewport coordinates.`);
+			source.setAttribute('data-origin', `${so.x} ${so.y}`);
+		}
+		const note = notes.join(' ');
+		if (note) {
 			const desc = document.createElementNS(SVG_NS, 'desc');
 			desc.textContent = note;
 			copy.insertBefore(desc, copy.firstChild);
-			copy.setAttribute('data-origin', `${x} ${y}`);
 		}
 		return '<?xml version="1.0" encoding="UTF-8"?>\n' + (note ? `<!-- ${note} -->\n` : '') + new XMLSerializer().serializeToString(copy);
 	}

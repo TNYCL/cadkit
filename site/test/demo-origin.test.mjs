@@ -103,6 +103,76 @@ test('chooseOrigin: plans near zero stay; georeferenced sheets move to a round i
 	assert.deepEqual(chooseOrigin({ x: Number.NaN, y: 0, w: 1, h: 1 }), { x: 0, y: 0 });
 });
 
+test('chooseOrigin: what the two conditions decide in practice', () => {
+	// A 20 km map at small coordinates: moving cannot shrink its numbers enough to matter.
+	assert.deepEqual(chooseOrigin({ x: 1000, y: -21000, w: 20000, h: 20000 }), { x: 0, y: 0 });
+	assert.deepEqual(chooseOrigin({ x: 30000, y: -52000, w: 20000, h: 20000 }), { x: 0, y: 0 });
+	// A drawing centred on zero is as small as it gets.
+	assert.deepEqual(chooseOrigin({ x: -10000, y: -10000, w: 20000, h: 20000 }), { x: 0, y: 0 });
+	assert.deepEqual(chooseOrigin({ x: -2.5, y: -1, w: 5, h: 2 }), { x: 0, y: 0 });
+	// A 5 m detail at x = 6,000,000: an integer origin, local numbers below twice the extent.
+	const vb = { x: 6_000_000.25, y: -1_250_002.5, w: 5, h: 2 };
+	const o = chooseOrigin(vb);
+	assert.ok(Number.isInteger(o.x) && Number.isInteger(o.y));
+	assert.ok(Math.abs(vb.x - o.x) < 10 && Math.abs(vb.y - o.y) < 10, JSON.stringify(o));
+	// The precision test can never pass at MAX_ZOOM_IN: a pixel at that zoom is finer than
+	// float32 resolves even half an extent from zero, so the fourfold test decides alone.
+	const pixelOfExtent = 1 / (REF_STAGE_PX * MAX_ZOOM_IN);
+	assert.ok((0.5 * 2 ** -24) / pixelOfExtent > MAX_ERROR_PX);
+	let seed = 7;
+	const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+	for (let i = 0; i < 5000; i++) {
+		const e = 10 ** (rnd() * 10 - 3);
+		const box = { x: (rnd() - 0.5) * 10 ** (rnd() * 8), y: (rnd() - 0.5) * 10 ** (rnd() * 8), w: e, h: e * (0.01 + rnd()) };
+		const grid = Math.max(1, 10 ** Math.floor(Math.log10(Math.max(box.w, box.h))));
+		const g = { x: Math.floor(box.x / grid) * grid, y: Math.floor(box.y / grid) * grid };
+		const reach = (ox, oy) => Math.max(Math.abs(box.x - ox), Math.abs(box.x + box.w - ox), Math.abs(box.y - oy), Math.abs(box.y + box.h - oy));
+		const moves = reach(0, 0) > 4 * reach(g.x, g.y);
+		assert.deepEqual(chooseOrigin(box), moves ? g : { x: 0, y: 0 }, JSON.stringify(box));
+	}
+});
+
+test('numbers the plain notation cannot carry, and odd arcs, leave the SVG untouched', () => {
+	const head = '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="512340 -4087670 20 20">';
+	const path = (d) => head + '<g data-layer="A"><path d="' + d + '"/></g></svg>';
+	for (const bad of [
+		// toFixed takes at most 100 decimals: this threw a RangeError out of the worker's render.
+		path('M512341.' + '1'.repeat(120) + ' -4087661L512342 -4087660'),
+		// 1e21 and more come back from toFixed with an exponent.
+		path('M1' + '0'.repeat(22) + ' -4087661L512342 -4087660'),
+		path('M512341 -4087661L5.12342e5 -4087660'),
+		path('M+512341 -4087661L512342 -4087660'),
+		path('M.5 -4087661L512342 -4087660'),
+		path('M512341. -4087661L512342 -4087660'),
+		path('M512341,-4087661L512342 -4087660'),
+		path('M512341  -4087661L512342 -4087660'),
+		path('M512341 -4087661A1 1 0 2 0 512342 -4087660'),
+		path('M512341 -4087661A1 1 0 1 512342 -4087660'),
+		path('M512341 -4087661A1 1 0 01 512342 -4087660'),
+		head + '<g data-layer="A"><text x="512341" y="-4087661" transform="rotate(30)">a</text></g></svg>',
+		head + '<g data-layer="A"><text x="512341" y="-4087661" transform="rotate(3e1 512341 -4087661)">a</text></g></svg>',
+		head + '<g data-layer="A"><text x="512341 512342" y="-4087661">a</text></g></svg>',
+		head + '<defs><pattern id="p" x="1" patternUnits="userSpaceOnUse" width="1" height="1"></pattern></defs></svg>',
+		head + '<g data-layer="A"><tspan x="512341">a</tspan></g></svg>',
+	]) {
+		let r;
+		assert.doesNotThrow(() => (r = localizeSvg(bad)), bad.slice(0, 160));
+		assert.equal(r.svg, bad, bad.slice(0, 160));
+		assert.deepEqual(r.origin, { x: 0, y: 0 });
+		assert.ok(r.problem, bad.slice(0, 160));
+	}
+	// What the engine does write is moved exactly: arc radii and flags stay, end points move;
+	// negative zero and trailing zeros come out plain; tspan x/y move and dy stays.
+	const ok = localizeSvg(
+		head +
+			'<g data-layer="A"><path d="M512341 -4087661A1.5 0.75 30 1 0 512342.50 -4087660.000L-0 -0.0Z"/>' +
+			'<text x="512345.125" y="-4087665" transform="rotate(-30 512345.125 -4087665)">a<tspan x="512345.125" dy="1.2">b</tspan></text></g></svg>'
+	);
+	assert.equal(ok.problem, null);
+	assert.match(ok.svg, /d="M1 9A1\.5 0\.75 30 1 0 2\.5 10L-512340 4087670Z"/);
+	assert.match(ok.svg, /<text x="5\.125" y="5" transform="rotate\(-30 5\.125 5\)">a<tspan x="5\.125" dy="1\.2">b<\/tspan><\/text>/);
+});
+
 test('a georeferenced drawing renders with the same relative geometry as the unshifted one', () => {
 	const plain = opened(drawing(0, 0)).handle({ type: 'render', model: 0 }).value;
 	const geo = opened(drawing(DX, DY)).handle({ type: 'render', model: 0 }).value;

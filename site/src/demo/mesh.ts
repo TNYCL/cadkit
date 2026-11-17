@@ -393,7 +393,9 @@ export function surfaceInfo(doc: DocJson, model: number, opts: SurfaceOptions = 
 	if (faces.length) span = Math.max(x1 - x0, y1 - y0);
 	const shapes = faces.filter((f) => f.shape).length;
 	const spatial = faces.length > 0 && zmax - zmin > 1e-9 * Math.max(1, span);
-	const open3d = spatial && (shapes < faces.length || zmax - zmin >= SHAPES_OPEN_3D_RATIO * span);
+	// The height is a difference of two coordinates written in decimal: allow its last bits, so a
+	// model exactly 12 % tall (1.1 to 1.46 over 3 units: 1.46 - 1.1 is just below 0.36) opens in 3D.
+	const open3d = spatial && (shapes < faces.length || zmax - zmin >= SHAPES_OPEN_3D_RATIO * span * (1 - 1e-9));
 	return { surfaces: faces.length, shapes, spatial, open3d };
 }
 
