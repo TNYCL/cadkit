@@ -1,53 +1,11 @@
 //! Small, owned inspection summaries. The selected entity stays borrowed until
 //! its capped fields are copied; unrelated props never cross the WASM boundary.
 
-use super::{PickCandidate, PickOptions, js_error};
-use cadkit::{Document, EntityKind, Value};
-use js_sys::{Array, Reflect};
+use crate::access::{kind_tag, own_layer};
+use crate::pick::{PickCandidate, block_of, hex_color};
+use cadkit::{Document, Entity, EntityKind, Value};
 use serde::Serialize;
 use std::io::{self, Write};
-use wasm_bindgen::{JsCast, JsValue};
-
-pub(super) fn filters(options: &JsValue) -> Result<PickOptions, JsValue> {
-    fn names(options: &JsValue, key: &str) -> Result<Vec<String>, JsValue> {
-        let value = Reflect::get(options, &JsValue::from_str(key))
-            .map_err(|_| js_error("bad_argument", "invalid pick filters"))?;
-        if value.is_undefined() {
-            return Ok(Vec::new());
-        }
-        if !Array::is_array(&value) {
-            return Err(js_error("bad_argument", "pick filters must be arrays"));
-        }
-        // Borrow the verified array; Array.from would clone before checking its length.
-        let array: Array = value.unchecked_into();
-        if array.length() > 20_000 {
-            return Err(js_error("bad_argument", "too many pick filters"));
-        }
-        let mut result = Vec::new();
-        let mut bytes = 0;
-        for item in array.iter() {
-            // Check JS length before copying the string into Rust.
-            if !item.is_string() {
-                return Err(js_error("bad_argument", "pick filters must be strings"));
-            }
-            let string = js_sys::JsString::from(item);
-            if string.length() > 2048 {
-                return Err(js_error("bad_argument", "pick filter too long"));
-            }
-            let text = String::from(string);
-            bytes += text.len();
-            if bytes > 65_536 {
-                return Err(js_error("bad_argument", "pick filter budget exceeded"));
-            }
-            result.push(text);
-        }
-        Ok(result)
-    }
-    Ok(PickOptions {
-        excluded_layers: names(options, "excludedLayers")?,
-        excluded_kinds: names(options, "excludedKinds")?,
-    })
-}
 
 #[derive(Serialize)]
 struct Attribute {
@@ -243,7 +201,7 @@ impl Write for CappedJson {
     }
 }
 
-pub(super) fn summary(
+pub(crate) fn summary(
     doc: &Document,
     hit: &PickCandidate<'_>,
     max_output: usize,
@@ -254,39 +212,16 @@ pub(super) fn summary(
         truncated: false,
     };
     let layer = budget.text(hit.context.layer_name(entity), 200);
-    let text = match &entity.kind {
-        EntityKind::Text { value, .. } => Some(value.as_str()),
-        EntityKind::MText { plain, value, .. } => {
-            Some(if plain.is_empty() { value } else { plain }.as_str())
-        }
-        EntityKind::Dimension { text, .. } => text.as_deref(),
-        _ => None,
-    }
-    .map(|text| budget.text(text, 500));
-    let block = match &entity.kind {
-        EntityKind::Insert { block, .. } => Some(block.as_str()),
-        EntityKind::Dimension { block, .. } => block.as_deref(),
-        _ => None,
-    }
-    .map(|text| budget.text(text, 200));
-    let mut attributes = Vec::new();
-    for attribute in entity.attributes.iter().take(20) {
-        if budget.remaining == 0 {
-            budget.truncated = true;
-            break;
-        }
-        let tag = budget.text(&attribute.tag, 100);
-        let value = budget.preview(200, |p| p.value(&attribute.value, 0, false));
-        attributes.push(Attribute { tag, value });
-    }
-    budget.truncated |= entity.attributes.len() > 20;
+    let text = entity_text(entity).map(|text| budget.text(text, 500));
+    let block = block_of(entity).map(|text| budget.text(text, 200));
+    let attributes = capped_attributes(entity, &mut budget);
     let rgb = entity.resolved_color_in(doc, &hit.context);
     let summary = Summary {
         index: hit.index,
         id: entity.id,
         layer,
         kind: entity.kind.type_name(),
-        color: format!("#{:02x}{:02x}{:02x}", rgb.0, rgb.1, rgb.2),
+        color: hex_color(rgb),
         bbox: Bounds {
             min: [hit.bbox.min.x, hit.bbox.min.y, hit.bbox.min.z],
             max: [hit.bbox.max.x, hit.bbox.max.y, hit.bbox.max.z],
@@ -305,10 +240,112 @@ pub(super) fn summary(
     String::from_utf8(output.text).map_err(|_| ())
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HitSummary {
+    path: Vec<usize>,
+    model_path: Vec<usize>,
+    kind: &'static str,
+    layer: String,
+    id: Option<u64>,
+    model_kind: &'static str,
+    model_layer: String,
+    model_id: Option<u64>,
+    block: Option<String>,
+    attributes: Vec<Attribute>,
+    color: String,
+    bbox: Bounds,
+    distance: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<String>,
+    truncated: bool,
+}
+
+fn capped_attributes(entity: &Entity, budget: &mut Budget) -> Vec<Attribute> {
+    let mut attributes = Vec::new();
+    for attribute in entity.attributes.iter().take(20) {
+        if budget.remaining == 0 {
+            budget.truncated = true;
+            break;
+        }
+        let tag = budget.text(&attribute.tag, 100);
+        let value = budget.preview(200, |p| p.value(&attribute.value, 0, false));
+        attributes.push(Attribute { tag, value });
+    }
+    budget.truncated |= entity.attributes.len() > 20;
+    attributes
+}
+
+fn entity_text(entity: &Entity) -> Option<&str> {
+    match &entity.kind {
+        EntityKind::Text { value, .. } => Some(value.as_str()),
+        EntityKind::MText { plain, value, .. } => {
+            Some(if plain.is_empty() { value } else { plain }.as_str())
+        }
+        EntityKind::Dimension { text, .. } => text.as_deref(),
+        _ => None,
+    }
+}
+
+/// The `pick()` result: paths of the hit and of the model entity that owns it, both
+/// entities' kind / layer / id, and the owner's block and attributes, with the same caps as
+/// [`summary`] and the complete JSON within `max_output` bytes.
+pub(crate) fn hit_summary(
+    doc: &Document,
+    model: usize,
+    hit: &PickCandidate<'_>,
+    max_output: usize,
+) -> Result<String, ()> {
+    let entity = hit.entity;
+    let path = hit.context.path();
+    let model_path = path
+        .get(..hit.context.model_path_len().min(path.len()))
+        .unwrap_or(&path)
+        .to_vec();
+    let owner = doc.entity_at(model, &model_path).unwrap_or(entity);
+    let mut budget = Budget {
+        remaining: 8192.min(max_output),
+        truncated: false,
+    };
+    let layer = budget.text(hit.context.layer_name(entity), 200);
+    let model_layer = budget.text(own_layer(owner), 200);
+    let text = entity_text(entity).map(|t| budget.text(t, 500));
+    let block = block_of(owner)
+        .or_else(|| block_of(entity))
+        .map(|b| budget.text(b, 200));
+    let attributes = capped_attributes(owner, &mut budget);
+    let summary = HitSummary {
+        path,
+        model_path,
+        kind: kind_tag(&entity.kind),
+        layer,
+        id: entity.id,
+        model_kind: kind_tag(&owner.kind),
+        model_layer,
+        model_id: owner.id,
+        block,
+        attributes,
+        color: hex_color(entity.resolved_color_in(doc, &hit.context)),
+        bbox: Bounds {
+            min: [hit.bbox.min.x, hit.bbox.min.y, hit.bbox.min.z],
+            max: [hit.bbox.max.x, hit.bbox.max.y, hit.bbox.max.z],
+        },
+        distance: hit.distance,
+        text,
+        truncated: budget.truncated,
+    };
+    let mut output = CappedJson {
+        text: Vec::new(),
+        limit: max_output,
+    };
+    serde_json::to_writer(&mut output, &summary).map_err(|_| ())?;
+    String::from_utf8(output.text).map_err(|_| ())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pick_candidate_in_doc;
+    use crate::pick::{PickOptions, pick_candidate_in_doc};
     use cadkit::{Attribute as ModelAttribute, Entity, Point3};
 
     fn fixture() -> Document {
