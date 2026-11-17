@@ -27,9 +27,12 @@
   ! Content-Security-Policy
   Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval' __CK_SCRIPT_HASHES__; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests
 
+# Hashed build assets (CSS, JavaScript, fonts, the demo's WebAssembly) carry no contact
+# addresses, so they leave out no-transform and Cloudflare may compress them (the WebAssembly
+# shrinks from about 4.3 MB to about 1 MB). HTML keeps no-transform from the /* rule above.
 /_astro/*
   ! Cache-Control
-  Cache-Control: public, max-age=31536000, immutable, no-transform
+  Cache-Control: public, max-age=31536000, immutable
 
 /*.wasm
   Content-Type: application/wasm
