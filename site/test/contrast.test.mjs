@@ -37,7 +37,7 @@ const STATUS_SURFACES = ['bg', 'surface'];
 
 for (const [name, t] of Object.entries(themes)) {
 	test(`${name}: all tokens defined`, () => {
-		for (const k of [...SURFACES, ...TEXT, ...STATUS, 'border', 'grid-minor', 'grid-major', 'on-accent', 'redline'])
+		for (const k of [...SURFACES, ...TEXT, ...STATUS, 'border', 'border-strong', 'border-ui', 'grid-minor', 'grid-major', 'on-accent', 'redline'])
 			assert.ok(t[k], `--ck-${k} missing in ${name}`);
 	});
 
@@ -64,6 +64,18 @@ for (const [name, t] of Object.entries(themes)) {
 		test(`${name}: redline on ${bg} >= 3:1 (graphics)`, () => {
 			assert.ok(contrast(t.redline, t[bg]) >= 3, `redline ${contrast(t.redline, t[bg]).toFixed(2)}:1`);
 		});
+
+	// Outlines of controls (secondary buttons) identify the component: WCAG 1.4.11 non-text 3:1.
+	for (const bg of ['bg', 'surface'])
+		test(`${name}: border-ui on ${bg} >= 3:1 (control outline)`, () => {
+			assert.ok(contrast(t['border-ui'], t[bg]) >= 3, `border-ui ${contrast(t['border-ui'], t[bg]).toFixed(2)}:1`);
+		});
+
+	// Card and sheet frames: decoration, but visibly stronger than hairlines and the grid.
+	test(`${name}: border-strong reads stronger than border on bg`, () => {
+		assert.ok(contrast(t['border-strong'], t.bg) > contrast(t.border, t.bg));
+		assert.ok(contrast(t['border-strong'], t.bg) > contrast(t['grid-major'], t.bg));
+	});
 
 	// Focus ring (accent) must stand out from the page: WCAG 2.4.13 non-text 3:1.
 	test(`${name}: focus ring (accent) on bg >= 3:1`, () => {

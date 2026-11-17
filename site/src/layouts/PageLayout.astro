@@ -54,7 +54,7 @@ const {
 	app = false,
 } = Astro.props;
 
-Astro.locals.cadkitPage = { custom: true, breadcrumbs, ogImage, jsonLd, noAnalytics, noindex, ogType };
+Astro.locals.cadkitPage = { custom: true, breadcrumbs, ogImage, jsonLd, noAnalytics, noindex, ogType, app };
 ---
 
 <StarlightPage frontmatter={{ title, description, template: 'splash', pagefind }} hasSidebar={false}>

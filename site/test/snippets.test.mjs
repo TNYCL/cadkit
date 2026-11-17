@@ -3,6 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { mkdtempSync, copyFileSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,6 +20,14 @@ test('JavaScript snippet lists the layers and writes SVG', () => {
 		const out = execFileSync(process.execPath, ['list-layers.cjs'], { cwd: dir, encoding: 'utf8' });
 		const layers = out.trim().split('\n');
 		for (const name of ['WALLS', 'DOORS', 'WINDOWS', 'DIMENSIONS', 'TEXT', 'GRID']) assert.ok(layers.includes(name), `missing layer ${name}`);
+		// The landing page prints doc.layers() from scripts/hero.mjs as this snippet's output.
+		const { read } = createRequire(import.meta.url)('cadkit-wasm/node');
+		const doc = read(new Uint8Array(readFileSync(join(dir, 'cadkit-sample-plan.dxf'))));
+		try {
+			assert.deepEqual(layers, doc.layers().map((l) => l.name));
+		} finally {
+			doc.free();
+		}
 		const svg = readFileSync(join(dir, 'plan.svg'), 'utf8');
 		assert.match(svg, /^<svg[^>]*width="1200"/);
 		assert.match(svg, /data-layer="WALLS"/);

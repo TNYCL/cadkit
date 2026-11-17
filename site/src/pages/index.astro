@@ -1,37 +1,67 @@
 ---
 import PageLayout from '../layouts/PageLayout.astro';
-import HeroPlan from '../components/HeroPlan.astro';
+import HeroViewer from '../components/home/HeroViewer.astro';
+import FormatFlow from '../components/home/FormatFlow.astro';
+import ArchitectureMap from '../components/home/ArchitectureMap.astro';
 import InstallTabs from '../components/InstallTabs.astro';
 import CodeTabs from '../components/CodeTabs.astro';
-import FormatMatrix from '../components/FormatMatrix.astro';
-import ModuleGrid from '../components/ModuleGrid.astro';
-import DimensionDivider from '../components/DimensionDivider.astro';
 import { SAME_TASK } from '../data/snippets';
-import { LINKS, USED_BY, REPO } from '../config';
+import { LINKS, USED_BY, CADKIT_VERSION } from '../config';
+import { stats } from '../stats/load';
+import plan from '../generated/hero-plan.json';
+import planSvgUrl from '../generated/plan.svg?url&no-inline';
 import { organizationJsonLd, websiteJsonLd, softwareJsonLd } from '../lib/json-ld';
 
 const title = 'The open CAD engine, in pure Rust';
 const description =
-	'cadkit reads DWG, DGN, DXF and CityGML, writes DXF, DGN V8 and CityGML, and renders drawings from Rust, Python, JavaScript and C. MIT OR Apache-2.0, clean-room.';
+	'Open-source CAD engine in pure Rust: read DWG, DGN, DXF and CityGML; write DXF, seed-based DGN V8 and CityGML; use it from Rust, Python, JavaScript or C.';
+
+// What each "same task" snippet prints for the sample plan (the layer names, read by the same
+// engine at build time; the C snippet prints the count).
+const layerLines = plan.layerNames.join('\n');
+const runs = {
+	Rust: { command: 'cargo run', output: layerLines },
+	Python: { command: 'python list_layers.py', output: layerLines },
+	JavaScript: { command: 'node list-layers.cjs', output: layerLines },
+	C: { command: './list_layers', output: `${plan.layers} layers` },
+};
+const svgKb = Math.round(plan.snippetSvgBytes / 1024);
 
 const useCases = [
 	{
 		title: 'Drawing viewers and editors',
 		body: 'Read a drawing into one document model, render it as SVG or with the wgpu plan renderer, and keep your own UI and editing tools.',
+		guide: { label: 'Build a browser viewer', href: '/docs/guides/browser-viewer/' },
 	},
 	{
 		title: 'Converters and export pipelines',
 		body: 'Convert to DXF, seed-based DGN V8, CityGML 2.0, SVG or JSON from a library, the CLI or a script, with bounded stdin/stdout conversion in the CLI.',
+		guide: { label: 'Convert DXF to SVG', href: '/docs/guides/dxf-to-svg/' },
 	},
 	{
 		title: 'GIS and CityGML pipelines',
 		body: 'Read and write CityGML 2.0 with an explicit CRS, keep native IDs and references, and run an optional local structural TKGM preflight.',
+		guide: { label: 'CityGML 2.0 and TKGM', href: '/docs/guides/citygml-tkgm/' },
 	},
 	{
 		title: 'Inspection services',
 		body: 'Header-only inspection, configurable resource limits on every reader and warnings with stable codes for files you did not create.',
+		guide: { label: 'Inspect a drawing', href: '/docs/guides/inspect-drawing/' },
 	},
 ];
+
+const nf = new Intl.NumberFormat('en-US');
+const downloads =
+	stats.ok && !stats.model.stale
+		? {
+				date: stats.model.generatedAt.slice(0, 10),
+				crates: nf.format(stats.model.totals.crates),
+				pypi: nf.format(stats.model.totals.pypi),
+				npm: nf.format(stats.model.totals.npm),
+			}
+		: null;
+
+const arrow = '<svg class="ck-arrow" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 8h9M8.5 4.5 12 8l-3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>';
 ---
 
 <PageLayout
@@ -43,159 +73,221 @@ const useCases = [
 >
 	<section class="ck-hero ck-container" aria-labelledby="ck-hero-title">
 		<div class="ck-hero-copy">
-			<p class="ck-eyebrow">Open source · MIT OR Apache-2.0</p>
-			<h1 id="ck-hero-title">The open CAD engine, in pure&nbsp;Rust.</h1>
+			<a class="ck-pill" href="/changelog/">
+				<span class="ck-pill-tag">v{CADKIT_VERSION}</span>
+				<span>Release notes</span>
+				<Fragment set:html={arrow} />
+			</a>
+			<h1 id="ck-hero-title">Read DWG, DGN and DXF <span class="ck-h1-soft">without a vendor&nbsp;SDK.</span></h1>
 			<p class="ck-hero-sub">
-				Read DWG, DGN, DXF and CityGML. Write DXF, DGN V8 and CityGML. From Rust, Python, JavaScript and C.
+				cadkit is an open-source CAD engine in pure Rust. It reads DWG, DGN, DXF and CityGML 2.0 into one document
+				model and writes DXF, seed-based DGN V8, CityGML 2.0, SVG and JSON, from Rust, Python, JavaScript and C.
 			</p>
+			<div class="ck-hero-cta">
+				<a class="ck-btn ck-btn--primary ck-btn--lg" href="/docs/" data-ck-start>Get started <Fragment set:html={arrow} /></a>
+				<a class="ck-btn ck-btn--lg" href="/demo/">Open your own file</a>
+			</div>
+			<p class="ck-hero-hint">The viewer runs in your browser tab. Your file is never uploaded.</p>
 			<div class="ck-hero-install">
 				<InstallTabs />
 			</div>
-			<div class="ck-hero-cta">
-				<a class="ck-btn ck-btn--primary" href="/docs/">Get started</a>
-				<a class="ck-btn" href="/demo/">Try the demo</a>
-			</div>
 		</div>
 		<div class="ck-hero-figure">
-			<HeroPlan />
+			<HeroViewer />
 		</div>
 	</section>
 
-	<DimensionDivider label="01 · Formats" />
 	<section class="ck-section ck-container" aria-labelledby="formats">
-		<h2 id="formats">Formats</h2>
-		<p class="ck-lead">
-			Every reader produces the same format-neutral document. Readers degrade instead of failing:
-			records they cannot model become <code>Unknown</code> entities and warnings on the document.
-		</p>
-		<FormatMatrix />
+		<header class="ck-section-head">
+			<p class="ck-label"><b>01</b> Formats</p>
+			<h2 id="formats">Four format families. One model.</h2>
+			<p class="ck-lead">
+				Every reader produces the same format-neutral document, so a viewer, a converter or a check is written once.
+			</p>
+		</header>
+		<FormatFlow />
 		<p class="ck-footnote">
-			Every interface also writes the document as JSON and SVG. There is no DWG writer yet. Local test
-			evidence and the remaining external acceptance work are recorded in{' '}
-			<a href={LINKS.interchangeStatus}>INTERCHANGE_STATUS.md</a>.
+			There is no DWG writer yet, and DGN V7 is read-only. Readers degrade instead of failing: records they cannot
+			model become <code>Unknown</code> entities and warnings on the document.{' '}
+			<a href="/formats/">Format matrix and evidence</a>{' · '}
+			<a href="/docs/reference/interchange-status/">Interchange status</a>
 		</p>
 	</section>
 
-	<DimensionDivider label="02 · Interfaces" />
-	<section class="ck-section ck-container" aria-labelledby="same-task">
-		<div class="ck-split">
-			<div>
-				<h2 id="same-task">The same task in four languages</h2>
-				<p class="ck-lead">
-					Open the sample plan, list its layers, export SVG. File I/O and document operations ship
-					for Rust, Python, JavaScript (WebAssembly, browser and Node) and C, with a C++17 wrapper
-					over the C ABI.
-				</p>
-				<ul class="ck-grips ck-notes">
-					<li>The site's snippet checks run the Python and JavaScript snippets on the <a href="/samples/cadkit-sample-plan.dxf">sample plan</a>, type-check the Rust one with <code>cargo check</code> and compile the C one against <code>cadkit.h</code>.</li>
-					<li>The C API returns layer names inside the document JSON; the C example prints the count.</li>
-					<li>Rust API reference: <a href={LINKS.docsRs}>docs.rs/cadkit</a>.</li>
-				</ul>
-			</div>
-			<CodeTabs snippets={SAME_TASK} />
-		</div>
-	</section>
-
-	<DimensionDivider label="03 · Modules" />
-	<section class="ck-section ck-container" aria-labelledby="modules">
-		<h2 id="modules">Modules you can adopt independently</h2>
-		<p class="ck-lead">
-			The facade and format crates do not depend on the scene or GPU crates. Pick geometry and rendering
-			separately; the host application supplies its UI, editing tools and domain rules.
-		</p>
-		<ModuleGrid />
-	</section>
-
-	<DimensionDivider label="04 · Provenance" />
-	<section class="ck-section ck-container" aria-labelledby="provenance">
-		<div class="ck-split ck-split--even">
-			<div>
-				<h2 id="provenance">Clean-room, with a ledger of sources</h2>
-				<p class="ck-lead">
-					cadkit is built only from allowed references. Every source of format knowledge is recorded in{' '}
-					<a href={LINKS.provenanceSource}>PROVENANCE.md</a>.
-				</p>
-			</div>
-			<div class="ck-columns">
-				<div>
-					<h3>Allowed references</h3>
-					<ul class="ck-grips">
-						<li>The public Open Design Specification for DWG</li>
-						<li>MIT-licensed projects: ACadSharp, ezdgn and the DGN driver of GDAL</li>
-						<li>Public sample files and our own analysis of them</li>
-					</ul>
-					<p class="ck-small">
-						Code or headers from copyleft-licensed CAD projects and from vendor SDKs are never read or
-						ported.
+	<section class="ck-band" aria-labelledby="same-task">
+		<div class="ck-section ck-container ck-split">
+			<div class="ck-split-text">
+				<header class="ck-section-head">
+					<p class="ck-label"><b>02</b> Interfaces</p>
+					<h2 id="same-task">Open, inspect, export. In&nbsp;your&nbsp;language.</h2>
+					<p class="ck-lead">
+						The same task in Rust, Python, JavaScript and C: open the sample plan, list its layers, write SVG.
 					</p>
-				</div>
-				<div>
-					<h3>Untrusted input</h3>
-					<ul class="ck-grips">
-						<li>No panics on any input</li>
-						<li>Every size and count checked against configurable limits before allocation</li>
-						<li>Recoverable problems become warnings on the document</li>
-						<li>Every reader has a fuzz target that runs in CI</li>
-					</ul>
-				</div>
+				</header>
+				<figure class="ck-file">
+					<a class="ck-file-sheet" href={planSvgUrl}>
+						<img src={planSvgUrl} alt="plan.svg: the sample floor plan as the snippets write it, on a white background" width="1200" height="1032" loading="lazy" decoding="async" />
+					</a>
+					<figcaption><code>plan.svg</code> · {svgKb} KB · what each snippet writes</figcaption>
+				</figure>
+				<p class="ck-small">
+					The site's checks run the Python and JavaScript snippets, type-check the Rust one and compile the C one
+					against <code>cadkit.h</code>. C++17 wraps the C ABI. Rust API reference:{' '}
+					<a href={LINKS.docsRs}>docs.rs/cadkit</a>.
+				</p>
+			</div>
+			<div class="ck-split-code">
+				<CodeTabs snippets={SAME_TASK} runs={runs} wrap />
 			</div>
 		</div>
 	</section>
 
-	<DimensionDivider label="05 · Use cases" />
+	<section class="ck-section ck-container" aria-labelledby="trust">
+		<header class="ck-section-head">
+			<p class="ck-label"><b>03</b> Trust</p>
+			<h2 id="trust">Built for files you did not make.</h2>
+			<p class="ck-lead">
+				Readers treat every file as untrusted, and every piece of format knowledge comes from a source anyone can check.
+			</p>
+		</header>
+		<div class="ck-trust">
+			<article class="ck-card">
+				<h3>Safe on untrusted input</h3>
+				<ul class="ck-checks">
+					<li>No panics on any input</li>
+					<li>Every size and count checked against configurable limits before allocation</li>
+					<li>Recoverable problems become warnings with stable codes</li>
+					<li>Every reader has a fuzz target that runs in CI</li>
+				</ul>
+				<a class="ck-card-link" href="/docs/guides/untrusted-files/">Handling untrusted files <Fragment set:html={arrow} /></a>
+			</article>
+			<article class="ck-card">
+				<h3>Clean-room, with a ledger of sources</h3>
+				<div class="ck-ledger">
+					<div>
+						<p class="ck-ledger-head">Built from</p>
+						<ul class="ck-checks">
+							<li>The public Open Design Specification for DWG</li>
+							<li>MIT-licensed ACadSharp, ezdgn and the GDAL DGN driver</li>
+							<li>Public sample files and our own analysis of them</li>
+						</ul>
+					</div>
+					<div>
+						<p class="ck-ledger-head">Never read</p>
+						<ul class="ck-checks ck-checks--no">
+							<li>Code or headers of copyleft-licensed CAD projects</li>
+							<li>Vendor SDKs and their headers</li>
+						</ul>
+					</div>
+				</div>
+				<a class="ck-card-link" href="/provenance/">Read the provenance ledger <Fragment set:html={arrow} /></a>
+			</article>
+		</div>
+	</section>
+
+	<section class="ck-section ck-container" aria-labelledby="modules">
+		<header class="ck-section-head">
+			<p class="ck-label"><b>04</b> Architecture</p>
+			<h2 id="modules">Take only the crates you need.</h2>
+			<p class="ck-lead">
+				The readers and writers do not depend on the scene or GPU crates. Your application keeps its UI, editing tools
+				and domain rules.
+			</p>
+		</header>
+		<ArchitectureMap />
+		<div class="ck-adopters" aria-labelledby="used-by">
+			<h3 id="used-by" class="sr-only">Used by</h3>
+			{
+				USED_BY.map((u) => (
+					<p class="ck-adopter">
+						<span class="ck-adopter-tag">In use</span>
+						<span>
+							<a href={u.url}>{u.name}</a>, {u.description}, uses{' '}
+							{u.modules.map((m, i) => (
+								<>
+									{i > 0 && (i === u.modules.length - 1 ? ' and ' : ', ')}
+									<code>{m}</code>
+								</>
+							))}
+							.
+						</span>
+					</p>
+				))
+			}
+			<p class="ck-adopter ck-adopter--open">
+				<span>Building on cadkit? Say so in <a href={LINKS.discussions}>GitHub Discussions</a>.</span>
+			</p>
+		</div>
+		{
+			downloads && (
+				<p class="ck-footnote">
+					Downloads to {downloads.date}: {downloads.crates} from crates.io, {downloads.pypi} from PyPI (without
+					mirrors) and {downloads.npm} from npm.{' '}
+					<a href="/stats/">Statistics</a>
+				</p>
+			)
+		}
+	</section>
+
 	<section class="ck-section ck-container" aria-labelledby="built-for">
-		<h2 id="built-for">Built for</h2>
+		<header class="ck-section-head">
+			<p class="ck-label"><b>05</b> Use cases</p>
+			<h2 id="built-for">Start from what you are building.</h2>
+		</header>
 		<ul class="ck-cases">
 			{
 				useCases.map((u) => (
 					<li>
 						<h3>{u.title}</h3>
 						<p>{u.body}</p>
+						<a href={u.guide.href}>
+							{u.guide.label} <Fragment set:html={arrow} />
+						</a>
 					</li>
 				))
 			}
 		</ul>
 	</section>
 
-	<DimensionDivider label="06 · Adopters" />
-	<section class="ck-section ck-container" aria-labelledby="used-by">
-		<h2 id="used-by">Used by</h2>
-		<ul class="ck-used-by">
-			{
-				USED_BY.map((u) => (
-					<li>
-						<a href={u.url}>{u.name}</a>, {u.description}, uses{' '}
-						{u.modules.map((m, i) => (
-							<>
-								{i > 0 && (i === u.modules.length - 1 ? ' and ' : ', ')}
-								<code>{m}</code>
-							</>
-						))}
-						.
-					</li>
-				))
-			}
-		</ul>
-		<p class="ck-small">
-			cadkit is vendor-neutral. Using it in your project? Say so in{' '}
-			<a href={LINKS.discussions}>GitHub Discussions</a>.
-		</p>
-	</section>
-
-	<section class="ck-final ck-container" aria-labelledby="start">
-		<div class="ck-final-inner">
-			<h2 id="start">Start with the docs</h2>
-			<p class="ck-lead">Install one package, open a drawing, export it. The rest of the API builds on that.</p>
+	<section class="ck-final" aria-labelledby="start">
+		<div class="ck-container ck-final-inner">
+			<h2 id="start">Install one package. Open a drawing. Export&nbsp;it.</h2>
+			<div class="ck-final-install">
+				<InstallTabs />
+			</div>
 			<div class="ck-hero-cta">
-				<a class="ck-btn ck-btn--primary" href="/docs/">Read the docs</a>
-				<a class="ck-btn" href="/demo/">Try the demo</a>
-				<a class="ck-btn" href={REPO}>View the source</a>
+				<a class="ck-btn ck-btn--primary ck-btn--lg" href="/docs/" data-ck-start>Get started <Fragment set:html={arrow} /></a>
+				<a class="ck-btn ck-btn--lg" href="/demo/">Open the demo</a>
 			</div>
 		</div>
 	</section>
 </PageLayout>
 
+<script>
+	// "Get started" follows the language chosen in the install tabs (Starlight stores the synced
+	// tab label under this key), so it opens that language's quick start.
+	const KEY = 'starlight-synced-tabs__lang';
+	const SLUG: Record<string, string> = { Rust: 'rust', Python: 'python', JavaScript: 'javascript', C: 'c', CLI: 'cli' };
+	const update = () => {
+		let label: string | null = null;
+		try {
+			label = localStorage.getItem(KEY);
+		} catch {
+			/* Storage unavailable: keep /docs/. */
+		}
+		const slug = label ? SLUG[label] : undefined;
+		if (!slug) return;
+		for (const a of document.querySelectorAll<HTMLAnchorElement>('[data-ck-start]')) a.href = `/docs/getting-started/${slug}/`;
+	};
+	update();
+	for (const type of ['click', 'keyup'])
+		document.addEventListener(type, (e) => {
+			if ((e.target as Element | null)?.closest?.('starlight-tabs [role="tab"]')) setTimeout(update, 0);
+		});
+</script>
+
 <style>
+	/* ---- Hero -------------------------------------------------------------------------------- */
 	.ck-hero {
 		display: grid;
 		/* minmax(0, ...): a long install command scrolls inside its code block instead of widening the page. */
@@ -203,140 +295,415 @@ const useCases = [
 		gap: var(--ck-space-12);
 		padding-top: var(--ck-space-12);
 		padding-bottom: var(--ck-space-16);
-		align-items: center;
 	}
 	@media (min-width: 64rem) {
 		.ck-hero {
-			grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+			grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+			gap: var(--ck-space-16);
+			align-items: start;
 			padding-top: var(--ck-space-16);
-			padding-bottom: var(--ck-space-24);
+			padding-bottom: var(--ck-space-8);
 		}
 	}
+	.ck-pill {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--ck-space-2);
+		min-height: 2rem;
+		padding: 0 var(--ck-space-3) 0 0.25rem;
+		border: 1px solid var(--ck-border-strong);
+		border-radius: 999px;
+		background: var(--ck-surface);
+		color: var(--ck-text);
+		font-size: var(--sl-text-xs);
+		font-weight: 500;
+		text-decoration: none;
+	}
+	.ck-pill:hover {
+		border-color: var(--ck-border-ui);
+	}
+	.ck-pill-tag {
+		padding: 0.125rem 0.5rem;
+		border-radius: 999px;
+		background: var(--ck-raised);
+		font-family: var(--__sl-font-mono);
+		font-size: var(--sl-text-2xs);
+		color: var(--ck-text);
+	}
+	.ck-pill :global(.ck-arrow) {
+		width: 0.875rem;
+		height: 0.875rem;
+		color: var(--ck-muted);
+	}
 	.ck-hero h1 {
-		margin: var(--ck-space-4) 0 0;
-		font-size: clamp(2.5rem, 1.5rem + 4.2vw, 4.25rem);
-		line-height: 1.02;
-		letter-spacing: -0.02em;
+		margin: var(--ck-space-6) 0 0;
+		font-size: clamp(2.375rem, 1.5rem + 2.7vw, 3.75rem);
+		line-height: 1.04;
+		letter-spacing: -0.025em;
+	}
+	.ck-h1-soft {
+		color: var(--ck-muted);
 	}
 	.ck-hero-sub {
 		margin: var(--ck-space-6) 0 0;
-		max-width: 34rem;
-		font-size: clamp(1.125rem, 1rem + 0.4vw, 1.3125rem);
-		line-height: 1.5;
+		max-width: 36rem;
+		font-size: clamp(1.0625rem, 1rem + 0.3vw, 1.25rem);
+		line-height: 1.55;
 		color: var(--ck-muted);
-	}
-	.ck-hero-install {
-		margin-top: var(--ck-space-8);
-		max-width: 34rem;
 	}
 	.ck-hero-cta {
 		display: flex;
 		flex-wrap: wrap;
 		gap: var(--ck-space-3);
-		margin-top: var(--ck-space-6);
+		margin-top: var(--ck-space-8);
+	}
+	.ck-hero-hint {
+		margin: var(--ck-space-3) 0 0;
+		font-size: var(--sl-text-sm);
+		color: var(--ck-muted);
+	}
+	.ck-hero-install {
+		margin-top: var(--ck-space-10, 2.5rem);
+		max-width: 36rem;
+	}
+	@media (max-width: 40rem) {
+		.ck-hero-cta .ck-btn {
+			flex: 1 1 100%;
+		}
 	}
 
+	/* ---- Sections ---------------------------------------------------------------------------- */
 	.ck-section {
-		padding-top: var(--ck-space-8);
-		padding-bottom: var(--ck-space-16);
+		padding-block: 3.5rem;
+	}
+	@media (min-width: 50rem) {
+		.ck-section {
+			padding-block: 5.5rem;
+		}
+	}
+	.ck-section-head {
+		margin-bottom: var(--ck-space-8);
+	}
+	@media (min-width: 50rem) {
+		.ck-section-head {
+			margin-bottom: var(--ck-space-12);
+		}
 	}
 	.ck-section h2,
 	.ck-final h2 {
-		margin: 0;
-		font-size: clamp(1.75rem, 1.4rem + 1.4vw, 2.5rem);
-		line-height: 1.12;
+		margin: var(--ck-space-4) 0 0;
+		max-width: 22ch;
+		font-size: clamp(2rem, 1.45rem + 2vw, 3rem);
+		line-height: 1.08;
+		letter-spacing: -0.02em;
 	}
-	.ck-section h2 + .ck-lead {
-		margin: var(--ck-space-4) 0 var(--ck-space-8);
+	.ck-section-head .ck-lead {
+		margin: var(--ck-space-4) 0 0;
+		max-width: 38rem;
 	}
 	.ck-section h3 {
-		font-size: var(--sl-text-lg);
+		font-size: 1.375rem;
+		line-height: 1.25;
 	}
 	.ck-footnote,
 	.ck-small {
-		margin-top: var(--ck-space-4);
+		margin-top: var(--ck-space-6);
 		max-width: 48rem;
 		font-size: var(--sl-text-sm);
 		color: var(--ck-muted);
 	}
+	.ck-footnote a,
+	.ck-small a {
+		white-space: nowrap;
+	}
 
+	/* A full-width band with its own surface: breaks the rhythm once, around the code. */
+	.ck-band {
+		border-block: 1px solid var(--ck-border);
+		background: var(--ck-surface);
+	}
+	.ck-band :global(.expressive-code .frame) {
+		--ck-ec-shadow: none;
+	}
+
+	/* ---- Interfaces -------------------------------------------------------------------------- */
 	.ck-split {
 		display: grid;
 		grid-template-columns: minmax(0, 1fr);
-		gap: var(--ck-space-8);
+		gap: var(--ck-space-12);
 	}
 	@media (min-width: 64rem) {
 		.ck-split {
-			grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
-			gap: var(--ck-space-12);
+			grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+			gap: var(--ck-space-16);
+			align-items: start;
 		}
-		.ck-split--even {
-			grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+		.ck-split-text {
+			position: sticky;
+			top: calc(var(--sl-nav-height) + var(--ck-space-8));
 		}
 	}
-	.ck-notes {
-		font-size: var(--sl-text-sm);
+	.ck-split .ck-section-head {
+		margin-bottom: var(--ck-space-8);
+	}
+	.ck-file {
+		margin: 0;
+	}
+	@media (max-width: 63.99rem) {
+		.ck-file {
+			display: flex;
+			align-items: center;
+			gap: var(--ck-space-4);
+		}
+		.ck-file-sheet {
+			flex: none;
+			width: 8rem;
+			padding: var(--ck-space-1);
+		}
+		.ck-file figcaption {
+			margin: 0;
+		}
+	}
+	.ck-file-sheet {
+		display: block;
+		max-width: 22rem;
+		padding: var(--ck-space-2);
+		border: 1px solid var(--ck-border-strong);
+		background: #fff;
+	}
+	.ck-file-sheet img {
+		display: block;
+		width: 100%;
+		height: auto;
+	}
+	.ck-file figcaption {
+		margin-top: var(--ck-space-2);
+		font-family: var(--__sl-font-mono);
+		font-size: var(--sl-text-xs);
 		color: var(--ck-muted);
 	}
+	.ck-file figcaption code {
+		padding: 0;
+		background: none;
+		font-size: inherit;
+		color: var(--ck-text);
+	}
 
-	.ck-columns {
+	/* ---- Trust ------------------------------------------------------------------------------- */
+	.ck-trust {
 		display: grid;
-		gap: var(--ck-space-8);
+		grid-template-columns: minmax(0, 1fr);
+		gap: var(--ck-space-6);
+	}
+	@media (min-width: 56rem) {
+		.ck-trust {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+		}
+		.ck-card {
+			padding: var(--ck-space-8);
+		}
+	}
+	.ck-card {
+		display: flex;
+		flex-direction: column;
+		gap: var(--ck-space-6);
+		padding: var(--ck-space-6);
+		border: 1px solid var(--ck-border-strong);
+		background: var(--ck-surface);
+	}
+	.ck-card h3 {
+		margin: 0;
+	}
+	.ck-card-link {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--ck-space-1);
+		margin-top: auto;
+		font-weight: 600;
+		font-size: var(--sl-text-sm);
+		text-decoration: none;
+	}
+	.ck-card-link:hover {
+		text-decoration: underline;
+	}
+	.ck-card-link :global(.ck-arrow),
+	.ck-cases a :global(.ck-arrow) {
+		width: 1rem;
+		height: 1rem;
+	}
+	.ck-ledger {
+		display: grid;
+		gap: var(--ck-space-6);
 	}
 	@media (min-width: 40rem) {
-		.ck-columns {
+		.ck-ledger {
 			grid-template-columns: repeat(2, minmax(0, 1fr));
 		}
 	}
-	.ck-columns h3 {
+	.ck-ledger-head {
 		margin: 0 0 var(--ck-space-3);
+		font-family: var(--__sl-font-mono);
+		font-size: var(--sl-text-2xs);
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--ck-muted);
 	}
-	.ck-columns .ck-grips {
+	.ck-checks {
+		display: grid;
+		gap: var(--ck-space-3);
+		margin: 0;
+		padding: 0;
+		list-style: none;
 		font-size: var(--sl-text-sm);
 	}
+	.ck-checks li {
+		position: relative;
+		padding-inline-start: 1.625rem;
+	}
+	/* A tick (or a cross) drawn in CSS, in the status colours. */
+	.ck-checks li::before {
+		content: '';
+		position: absolute;
+		inset-inline-start: 0.125rem;
+		top: 0.3em;
+		width: 0.875rem;
+		height: 0.5rem;
+		border-left: 2px solid var(--ck-ok);
+		border-bottom: 2px solid var(--ck-ok);
+		transform: rotate(-45deg);
+	}
+	.ck-checks--no li::before {
+		top: 0.2em;
+		width: 0.875rem;
+		height: 0.875rem;
+		border: 0;
+		transform: none;
+		background:
+			linear-gradient(45deg, transparent calc(50% - 1px), var(--ck-redline) calc(50% - 1px), var(--ck-redline) calc(50% + 1px), transparent calc(50% + 1px)),
+			linear-gradient(-45deg, transparent calc(50% - 1px), var(--ck-redline) calc(50% - 1px), var(--ck-redline) calc(50% + 1px), transparent calc(50% + 1px));
+	}
 
+	/* ---- Architecture and adopters ----------------------------------------------------------- */
+	.ck-adopters {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		gap: var(--ck-space-3);
+		margin-top: var(--ck-space-12);
+	}
+	@media (min-width: 56rem) {
+		.ck-adopters {
+			grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+		}
+	}
+	.ck-adopter {
+		display: flex;
+		align-items: center;
+		gap: var(--ck-space-4);
+		margin: 0;
+		padding: var(--ck-space-4) var(--ck-space-6);
+		border: 1px solid var(--ck-border-strong);
+		background: var(--ck-surface);
+	}
+	.ck-adopter--open {
+		border-style: dashed;
+		background: none;
+		color: var(--ck-muted);
+	}
+	@media (max-width: 40rem) {
+		.ck-adopter {
+			flex-direction: column;
+			align-items: flex-start;
+			gap: var(--ck-space-2);
+			padding: var(--ck-space-4);
+		}
+	}
+	.ck-adopter-tag {
+		flex: none;
+		padding: 0.125rem 0.5rem;
+		border: 1px solid var(--ck-ok);
+		border-radius: var(--ck-radius);
+		font-family: var(--__sl-font-mono);
+		font-size: var(--sl-text-2xs);
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--ck-ok);
+	}
+
+	/* ---- Use cases --------------------------------------------------------------------------- */
 	.ck-cases {
 		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr));
+		grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr));
 		gap: var(--ck-space-6);
-		list-style: none;
-		margin: var(--ck-space-8) 0 0;
+		margin: 0;
 		padding: 0;
+		list-style: none;
 	}
 	.ck-cases li {
-		padding-top: var(--ck-space-4);
-		border-top: 1px solid var(--ck-text);
+		display: flex;
+		flex-direction: column;
+		gap: var(--ck-space-3);
+		padding-top: var(--ck-space-6);
+		border-top: 1px solid var(--ck-border-strong);
 	}
 	.ck-cases h3 {
 		margin: 0;
+		font-size: var(--sl-text-lg);
 	}
 	.ck-cases p {
-		margin: var(--ck-space-2) 0 0;
+		margin: 0;
 		font-size: var(--sl-text-sm);
 		color: var(--ck-muted);
 	}
-
-	.ck-used-by {
-		list-style: none;
-		margin: var(--ck-space-6) 0 0;
-		padding: var(--ck-space-4) var(--ck-space-6);
-		border: 1px solid var(--ck-border);
-		background: var(--ck-surface);
-		font-size: var(--sl-text-lg);
+	.ck-cases a {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--ck-space-1);
+		margin-top: auto;
+		padding-top: var(--ck-space-2);
+		font-size: var(--sl-text-sm);
+		font-weight: 600;
+		text-decoration: none;
+	}
+	.ck-cases a:hover {
+		text-decoration: underline;
 	}
 
+	/* ---- Closing band ------------------------------------------------------------------------ */
 	.ck-final {
-		padding-top: var(--ck-space-8);
-		padding-bottom: var(--ck-space-8);
+		position: relative;
+		margin-top: var(--ck-space-8);
+		border-top: 1px solid var(--ck-border);
+		overflow: hidden;
+	}
+	.ck-final::before {
+		content: '';
+		position: absolute;
+		inset: 0;
+		z-index: -1;
+		background-image:
+			linear-gradient(to right, var(--ck-grid-major) 1px, transparent 1px),
+			linear-gradient(to bottom, var(--ck-grid-major) 1px, transparent 1px);
+		background-size: 40px 40px;
+		background-position: center top;
+		-webkit-mask-image: radial-gradient(ellipse at 50% 0%, #000 0%, transparent 75%);
+		mask-image: radial-gradient(ellipse at 50% 0%, #000 0%, transparent 75%);
 	}
 	.ck-final-inner {
-		padding: var(--ck-space-12) var(--ck-space-6);
-		border: 1px solid var(--ck-border);
-		background: var(--ck-surface);
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		padding-block: var(--ck-space-24) var(--ck-space-16);
 		text-align: center;
 	}
-	.ck-final-inner .ck-lead {
-		margin: var(--ck-space-4) auto 0;
+	.ck-final h2 {
+		max-width: 26ch;
+		margin: 0;
+	}
+	.ck-final-install {
+		width: 100%;
+		max-width: 34rem;
+		margin-top: var(--ck-space-8);
+		text-align: start;
 	}
 	.ck-final .ck-hero-cta {
 		justify-content: center;

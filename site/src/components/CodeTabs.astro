@@ -2,24 +2,45 @@
 // The same task in each language. Built on Starlight's synced tabs: the chosen language is
 // stored in localStorage (key "starlight-synced-tabs__lang") and restored before paint on
 // every page, docs included (use <Tabs syncKey="lang"> with the same labels there).
+// Optional `runs`: the command and what it prints, shown under each snippet as a terminal.
 import { Tabs, TabItem, Code } from '@astrojs/starlight/components';
 import type { Snippet } from '../lib/types';
 
+interface Run {
+	command: string;
+	output: string;
+}
 interface Props {
 	snippets: Snippet[];
 	syncKey?: string;
+	runs?: Partial<Record<Snippet['label'], Run>>;
+	/** Wrap long lines instead of scrolling (indentation is kept). */
+	wrap?: boolean;
 }
-const { snippets, syncKey = 'lang' } = Astro.props;
+const { snippets, syncKey = 'lang', runs = {}, wrap = false } = Astro.props;
 ---
 
 <div class="ck-code-tabs">
 	<Tabs syncKey={syncKey}>
 		{
-			snippets.map((s) => (
-				<TabItem label={s.label}>
-					<Code code={s.code.trimEnd()} lang={s.lang} title={s.title} />
-				</TabItem>
-			))
+			snippets.map((s) => {
+				const run = runs[s.label];
+				return (
+					<TabItem label={s.label}>
+						<Code code={s.code.trimEnd()} lang={s.lang} title={s.title} wrap={wrap} />
+						{run && (
+							<div class="ck-run">
+								<p class="ck-run-cmd">
+									<span aria-hidden="true">$ </span>
+									<span class="sr-only">Command: </span>
+									{run.command}
+								</p>
+								<pre class="ck-run-out">{run.output}</pre>
+							</div>
+						)}
+					</TabItem>
+				);
+			})
 		}
 	</Tabs>
 </div>
@@ -35,5 +56,34 @@ const { snippets, syncKey = 'lang' } = Astro.props;
 	}
 	.ck-code-tabs :global([role='tabpanel']) {
 		margin-top: var(--ck-space-3);
+	}
+	.ck-run {
+		margin-top: 0;
+		border: 1px solid var(--ck-border-strong);
+		border-top: 0;
+		background: var(--ck-bg);
+		font-family: var(--__sl-font-mono);
+		font-size: var(--sl-text-xs);
+	}
+	.ck-run-cmd {
+		margin: 0;
+		padding: var(--ck-space-2) var(--ck-space-4);
+		border-bottom: 1px dashed var(--ck-border-strong);
+		color: var(--ck-muted);
+	}
+	.ck-run-out {
+		margin: 0;
+		padding: var(--ck-space-3) var(--ck-space-4);
+		border: 0;
+		background: none;
+		color: var(--ck-text);
+		font-size: inherit;
+		line-height: 1.6;
+		overflow-x: auto;
+	}
+	@media (max-width: 30rem) {
+		.ck-code-tabs :global(.expressive-code pre) {
+			font-size: 0.8125rem;
+		}
 	}
 </style>

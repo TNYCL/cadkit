@@ -32,7 +32,7 @@ const title = Astro.locals.starlightRoute.entry.data.title;
 				<dd><Logo size={22} /><span translate="no">{SITE_NAME}</span></dd>
 			</div>
 			<div class="ck-tb-cell ck-tb-title"><dt>Title</dt><dd>{title}</dd></div>
-			<div class="ck-tb-cell"><dt>Rev</dt><dd>{CADKIT_VERSION}</dd></div>
+			<div class="ck-tb-cell"><dt>Rev</dt><dd><a href="/changelog/">{CADKIT_VERSION}<span class="sr-only"> release notes</span></a></dd></div>
 			<div class="ck-tb-cell"><dt>License</dt><dd>{LICENSE}</dd></div>
 			<div class="ck-tb-cell"><dt>Sheet</dt><dd><span data-ck-sheet>&mdash;</span></dd></div>
 			<div class="ck-tb-cell"><dt>Date</dt><dd><time datetime={BUILD_DATE}>{BUILD_DATE}</time></dd></div>
@@ -89,9 +89,11 @@ const title = Astro.locals.starlightRoute.entry.data.title;
 		padding: 0;
 	}
 	.ck-footer-nav li + li {
-		margin-top: var(--ck-space-2);
+		margin-top: var(--ck-space-1);
 	}
 	.ck-footer-nav a {
+		display: inline-block;
+		padding-block: 0.3125rem;
 		color: var(--ck-text);
 		text-decoration: none;
 	}
@@ -136,6 +138,13 @@ const title = Astro.locals.starlightRoute.entry.data.title;
 		letter-spacing: 0.08em;
 		text-transform: uppercase;
 		color: var(--ck-muted);
+	}
+	.ck-titleblock dd a {
+		color: inherit;
+		text-decoration-color: var(--ck-border-ui);
+	}
+	.ck-titleblock dd a:hover {
+		color: var(--ck-accent);
 	}
 	.ck-titleblock dd {
 		margin: 0;

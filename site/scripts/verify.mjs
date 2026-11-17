@@ -480,6 +480,9 @@ else {
 	if (headers.includes('__CK_')) err('_headers', 'unreplaced placeholder');
 	if (!/^\s+Link: <\/llms\.txt>; rel="describedby"; type="text\/plain"$/m.test(headers)) err('_headers', 'missing llms.txt discovery header');
 	if (!/^\s+Cache-Control: .*\bno-transform\b/m.test(headers)) err('_headers', 'missing no-transform: public contact addresses must stay readable');
+	const assets = headers.split(/\n(?=\/)/).find((b) => b.startsWith('/_astro/*'));
+	if (!assets || !/^\s+Cache-Control: .*\bimmutable\b/m.test(assets)) err('_headers', '/_astro/* must be cached as immutable');
+	else if (/\bno-transform\b/.test(assets)) err('_headers', '/_astro/* must allow edge compression (no no-transform)');
 	for (const line of headers.split('\n')) if (line.length > 2000) err('_headers', `line longer than 2000 characters (${line.length})`);
 	const csp = [...headers.matchAll(/^\s*Content-Security-Policy: (.+)$/gm)].map((m) => m[1]);
 	if (csp.length < 2) err('_headers', 'expected a site CSP and a /demo/ CSP');

@@ -9,11 +9,14 @@ import Logo from '../Logo.astro';
 import { NAV, REPO } from '../../config';
 
 const { hasSidebar } = Astro.locals.starlightRoute;
+// Pages without the docs sidebar line the header up with the page container, except
+// application pages (the demo), whose content spans the window.
+const contained = !hasSidebar && Astro.locals.cadkitPage?.app !== true;
 const path = Astro.url.pathname;
 const current = (href: string) => (path === href || path.startsWith(href) ? 'page' : undefined);
 ---
 
-<div class="ck-header">
+<div class:list={['ck-header', !hasSidebar && 'ck-header--plain', contained && 'ck-header--contained']}>
 	<a class="ck-brand" href="/">
 		<Logo class="ck-brand-mark" size={28} />
 		<span class="ck-brand-word" translate="no">cadkit</span>
@@ -56,6 +59,7 @@ const current = (href: string) => (path === href || path.startsWith(href) ? 'pag
 					<span class="sr-only">Menu</span>
 				</summary>
 				<div class="ck-menu-panel">
+					<a class="ck-btn ck-btn--primary ck-menu-cta" href="/docs/">Get started</a>
 					<nav aria-label="Primary (menu)">
 						<ul>
 							{NAV.map((l) => (
@@ -98,6 +102,11 @@ const current = (href: string) => (path === href || path.startsWith(href) ? 'pag
 		align-items: center;
 		gap: var(--ck-space-4);
 		height: 100%;
+	}
+	/* Without the docs sidebar the header shares the page container's columns. */
+	.ck-header--contained {
+		max-width: calc(var(--ck-page-width) - 2 * var(--ck-space-8));
+		margin-inline: auto;
 	}
 
 	.ck-brand {
@@ -216,7 +225,11 @@ const current = (href: string) => (path === href || path.startsWith(href) ? 'pag
 		border-bottom: 1px solid var(--ck-border);
 		box-shadow: var(--sl-shadow-lg);
 	}
-	.ck-menu-panel a {
+	.ck-menu-panel .ck-menu-cta {
+		display: flex;
+		font-size: var(--sl-text-base);
+	}
+	.ck-menu-panel nav a {
 		display: block;
 		padding-block: var(--ck-space-2);
 		color: var(--ck-text);
@@ -237,6 +250,22 @@ const current = (href: string) => (path === href || path.startsWith(href) ? 'pag
 		}
 		.ck-search {
 			margin-inline-start: auto;
+		}
+	}
+	/* Pages without the docs sidebar have room for the full navigation from tablet width
+	   (768px) up; docs pages keep Starlight's menu button below 50rem. */
+	@media (min-width: 48rem) {
+		.ck-header--plain .ck-nav,
+		.ck-header--plain .ck-actions {
+			display: flex;
+		}
+		.ck-header--plain .ck-menu {
+			display: none;
+		}
+	}
+	@media (max-width: 63.99rem) {
+		.ck-nav a {
+			padding-inline: var(--ck-space-2);
 		}
 	}
 </style>

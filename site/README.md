@@ -40,15 +40,15 @@ src/config.ts           single source of site facts: URLs, version, e-mail roles
 src/sidebar.ts          docs sidebar (extend here)
 src/content.config.ts   Starlight docs collection
 src/content/docs/       docs content (docs/index.md = /docs/ overview)
-src/styles/tokens.css   colour tokens (light "paper", dark "blueprint"), spacing, motion
+src/styles/tokens.css   colour tokens (light "paper", dark "night"), spacing, motion
 src/styles/global.css   mapping onto Starlight variables, base type, grid, buttons
 src/layouts/PageLayout.astro   layout for every hand-written page
-src/components/         shared components (below) and starlight/ overrides
-src/data/               formats matrix, module map, landing snippets
+src/components/         shared components (below), home/ (landing page sections) and starlight/ overrides
+src/data/               formats matrix, landing snippets
 src/lib/                brand mark geometry, OG path, JSON-LD, page meta types, Markdown export, changelog feed
 src/pages/              index, 404, robots.txt, llms.txt, llms-full.txt, [...doc].md, site.webmanifest,
                         changelog/feed.xml, .well-known/security.txt
-scripts/                build pipeline (hero, OG cards, CSP, verify, brand, sample plan)
+scripts/                build pipeline (hero drawings, OG cards, CSP, verify, brand, sample plan)
 scripts/check-snippets/ the four landing snippets and their checks
 public/                 favicons, brand/, samples/, _headers template, _redirects, IndexNow key file, install.sh and install.ps1
 test/                   node --test suites
@@ -64,15 +64,21 @@ git-ignored.
 |---|---|
 | `PageLayout` | Props `{title, description, breadcrumbs?, ogImage?, jsonLd?, noAnalytics?, noindex?, ogType?, header?, eyebrow?, lead?, pagefind?, app?}` (`app`: one-line header for the demo). Renders through `StarlightPage`, so header, search, theme toggle and the title-block footer match the docs. With `header` (default) it renders the page `<h1>` from `title`; with `header={false}` the page must render exactly one `<h1>`. |
 | `Prose` | Long text styled exactly like the docs (Starlight markdown styles). |
-| `CodeTabs` | `snippets: {label: 'Rust'\|'Python'\|'JavaScript'\|'C', lang, code, title?}[]`. Starlight synced tabs with sync key `lang`: the choice persists site-wide (also in MDX docs using `<Tabs syncKey="lang">` with the same labels). Copy button from Expressive Code. |
-| `InstallTabs` | `cargo add cadkit` / `pip install pycadkit` / `npm install cadkit-wasm` / C archive from GitHub Releases / the CLI install command; same sync key (the CLI tab has no counterpart in `CodeTabs`). |
+| `CodeTabs` | `snippets: {label: 'Rust'\|'Python'\|'JavaScript'\|'C', lang, code, title?}[]`, optional `runs` (per label: the command and what it prints, shown as a terminal under the snippet) and `wrap`. Starlight synced tabs with sync key `lang`: the choice persists site-wide (also in MDX docs using `<Tabs syncKey="lang">` with the same labels). Copy button from Expressive Code. |
+| `InstallTabs` | `cargo add cadkit` / `pip install pycadkit` / `npm install cadkit-wasm` / C archive from GitHub Releases / the CLI install command, each with one line of links; every tab has the same height, so switching never moves the page. Same sync key (the CLI tab has no counterpart in `CodeTabs`). |
 | `FormatMatrix`, `StatusChip` | Read/write status from `src/data/formats.ts`; chips are icon + text. Use chips on `bg` or `surface` only (light "ok" on `raised` is below AA). |
 | `DimensionDivider` | `label`: section divider drawn as a dimension line (decorative). |
 | `Callout` | `variant: 'note' \| 'caution'`, optional `title`. |
-| `Breadcrumbs`, `ModuleGrid`, `HeroPlan`, `Logo`, `ThemeToggle` | as named. |
+| `Breadcrumbs`, `Logo`, `ThemeToggle` | as named. The theme switch cross-fades through the View Transitions API where available (not under reduced motion). |
+| `home/HeroViewer` | Landing page hero: a viewer frame with two tabs (WAI-ARIA tabs), the floor plan inline and the CityGML district fetched from `/_astro/` when its tab opens; status bar with the real document facts, a link into `/demo/?sample=`, and drawing coordinates under the pointer on the plan. |
+| `home/FormatFlow` | Readers, the one document model and writers as a diagram, from `src/data/formats.ts` (`brief` fields). |
+| `home/ArchitectureMap` | Crate tiers and the geometry/rendering chain; the dependencies it draws are listed in its header comment (checked against `crates/*/Cargo.toml`). |
 
-Utility classes: `ck-container` (page width and gutters), `ck-eyebrow`, `ck-lead`, `ck-grips`
-(grip-square bullets), `ck-btn` / `ck-btn--primary`.
+Utility classes: `ck-container` (page width and gutters), `ck-eyebrow`, `ck-lead`, `ck-label`
+(section label: rule, number, name), `ck-grips` (grip-square bullets), `ck-btn` /
+`ck-btn--primary` / `ck-btn--lg` (the accent fills the primary action only; secondary buttons
+use the neutral `--ck-border-ui` outline). Tokens `--ck-border-strong` (card and sheet frames)
+and `--ck-border-ui` (control outlines, 3:1) are checked by `test/contrast.test.mjs`.
 
 ## Adding pages and build steps
 
@@ -100,7 +106,7 @@ JetBrains Mono, both OFL, are self-hosted from `@fontsource-variable` through As
 (latin subset, preloaded, metric-matched fallbacks against layout shift). The theme toggle
 stores the choice under Starlight's key `starlight-theme`.
 
-The logo set in `public/brand/` (mark, lockup and mono SVGs, the navy tile, 512 px avatar,
+The logo set in `public/brand/` (mark, lockup and mono SVGs, the dark tile, 512 px avatar,
 256 px README icon, 32 px favicon) plus `public/favicon.svg`, `favicon.ico` and
 `apple-touch-icon.png` are generated by `scripts/brand.mjs` from `src/lib/brand-mark.mjs`;
 the wordmark is Archivo outlined to paths with fontkit. Outputs are committed;
@@ -113,7 +119,14 @@ deterministically by `scripts/samples/plan.mjs` (an R12 DXF built in memory, rea
 cadkit-wasm, written as R2018 with metric units by cadkit's DXF writer). At build time
 `scripts/hero.mjs` reads it with `cadkit-wasm/node`, exports SVG with `doc.toSvg`, removes
 per-entity colours (the theme colours each layer), adds `pathLength` for the line-draw and
-records the real entity and layer counts. Nothing on the hero is measured in the browser.
+records the real entity and layer counts. It also writes `src/generated/plan.svg`, exactly what
+the landing snippets write (`widthPx: 1200`, default options), shown next to their output, and
+`src/generated/hero-district.svg`: the polygons cadkit reads from
+`cadkit-sample-district.gml`, projected as an axonometric by `scripts/lib/axonometric.mjs`
+(back faces hidden, painted far to near, local origin so georeferenced coordinates keep their
+precision). cadkit-wasm draws a 3D model as a plan view, so the projection is the site's; the
+hero caption says so. Nothing on the hero is measured in the browser. The home page Open Graph
+card (`scripts/og.mjs`) shows the same plan.
 
 ## Snippets
 
@@ -373,8 +386,10 @@ is deliberately separate from offline CI: CI must be able to validate an unpubli
 The script does not submit URLs, purge caches or change Cloudflare settings. User-agent probes
 from one machine do not prove access from provider IP ranges or inclusion in a search index.
 
-The origin sends `Cache-Control: ... no-transform` so Cloudflare preserves public role
-addresses and does not inject its email-obfuscation script. See
+The origin sends `Cache-Control: ... no-transform` on pages so Cloudflare preserves public role
+addresses and does not inject its email-obfuscation script. Hashed build assets under
+`/_astro/` (CSS, JavaScript, fonts, the demo's WebAssembly) contain no addresses and leave
+`no-transform` out, so the edge may compress them; `verify` checks both rules. See
 [Cloudflare email obfuscation](https://developers.cloudflare.com/waf/tools/scrape-shield/email-address-obfuscation/).
 Browser Integrity Check answers `403` with error 1010 to some library default user agents, such
 as Python `urllib`. The zone Configuration Rule *Allow public content readers* turns it off for

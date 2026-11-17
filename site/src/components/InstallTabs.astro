@@ -1,30 +1,36 @@
 ---
-// Install commands per language; shares the "lang" sync key with <CodeTabs>.
+// Install commands per language; shares the "lang" sync key with <CodeTabs>. Every tab has the
+// same shape (one command line, one line of links), so switching tabs never moves the page.
 import { Tabs, TabItem, Code } from '@astrojs/starlight/components';
 import { LINKS, SITE } from '../config';
 
 // The CLI is installed by a script served from this site (public/install.sh, public/install.ps1).
 const cliInstall = `curl -fsSL ${SITE}/install.sh | sh`;
-const cliInstallWindows = `irm ${SITE}/install.ps1 | iex`;
 ---
 
 <div class="ck-install">
 	<Tabs syncKey="lang">
-		<TabItem label="Rust"><Code code="cargo add cadkit" lang="sh" frame="code" /></TabItem>
-		<TabItem label="Python"><Code code="pip install pycadkit" lang="sh" frame="code" /></TabItem>
-		<TabItem label="JavaScript"><Code code="npm install cadkit-wasm" lang="sh" frame="code" /></TabItem>
+		<TabItem label="Rust">
+			<Code code="cargo add cadkit" lang="sh" frame="code" />
+			<p class="ck-install-meta"><a href={LINKS.crates}>crates.io</a><a href={LINKS.docsRs}>API on docs.rs</a></p>
+		</TabItem>
+		<TabItem label="Python">
+			<Code code="pip install pycadkit" lang="sh" frame="code" />
+			<p class="ck-install-meta"><a href={LINKS.pypi}>PyPI</a><a href="/docs/reference/python/">Python reference</a></p>
+		</TabItem>
+		<TabItem label="JavaScript">
+			<Code code="npm install cadkit-wasm" lang="sh" frame="code" />
+			<p class="ck-install-meta"><a href={LINKS.npm}>npm</a><a href="/docs/reference/javascript/">Browser and Node</a></p>
+		</TabItem>
 		<TabItem label="C">
 			<p class="ck-install-c">
-				<span>Download <code>cadkit-capi-&lt;target&gt;</code> (headers, shared and static library)</span>
-				<a href={LINKS.releases}>GitHub Releases</a>
+				<span>Download <code>cadkit-capi-&lt;target&gt;</code>: headers, shared and static library</span>
 			</p>
+			<p class="ck-install-meta"><a href={LINKS.releases}>GitHub Releases</a><a href="/docs/reference/c-api/">C API reference</a></p>
 		</TabItem>
 		<TabItem label="CLI">
 			<Code code={cliInstall} lang="sh" frame="code" />
-			<p class="ck-install-more">
-				<span>Windows: <code>{cliInstallWindows}</code></span>
-				<a href="/docs/getting-started/cli/#install">Other ways to install</a>
-			</p>
+			<p class="ck-install-meta"><a href="/docs/getting-started/cli/#install">Windows and other ways to install</a></p>
 		</TabItem>
 	</Tabs>
 </div>
@@ -40,7 +46,7 @@ const cliInstallWindows = `irm ${SITE}/install.ps1 | iex`;
 	/* Five tabs at Starlight's default padding are wider than a phone screen. */
 	@media (max-width: 30rem) {
 		.ck-install :global(starlight-tabs .tab > [role='tab']) {
-			padding-inline: var(--ck-space-2);
+			padding-inline: var(--ck-space-3);
 		}
 	}
 	.ck-install :global([role='tabpanel']) {
@@ -48,10 +54,7 @@ const cliInstallWindows = `irm ${SITE}/install.ps1 | iex`;
 	}
 	.ck-install-c {
 		display: flex;
-		flex-wrap: wrap;
 		align-items: center;
-		justify-content: space-between;
-		gap: var(--ck-space-2) var(--ck-space-4);
 		min-height: 3.125rem;
 		margin: 0;
 		padding: var(--ck-space-2) var(--ck-space-4);
@@ -59,17 +62,17 @@ const cliInstallWindows = `irm ${SITE}/install.ps1 | iex`;
 		border-radius: var(--ck-radius);
 		background: var(--ck-raised);
 		font-size: var(--sl-text-sm);
+		line-height: 1.4;
 	}
 	.ck-install-c code {
 		font-size: 0.875em;
 	}
-	.ck-install-more {
+	.ck-install-meta {
 		display: flex;
 		flex-wrap: wrap;
-		justify-content: space-between;
 		gap: var(--ck-space-1) var(--ck-space-4);
 		margin: var(--ck-space-2) 0 0;
 		font-size: var(--sl-text-xs);
-		color: var(--ck-muted);
+		line-height: 1.5;
 	}
 </style>

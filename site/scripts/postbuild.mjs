@@ -16,6 +16,15 @@ import { ogImagePath } from '../src/lib/og-path.mjs';
 import { renderOgCard } from './og.mjs';
 import { htmlPageMarkdown, markdownPathFor } from '../src/lib/site-markdown.mjs';
 
+/** The landing page plan rendered by scripts/hero.mjs, for the home page's card (absent: none). */
+function heroDrawing() {
+	try {
+		return JSON.parse(readFileSync(new URL('../src/generated/hero-plan.json', import.meta.url), 'utf8')).svg;
+	} catch {
+		return undefined;
+	}
+}
+
 const BEACON_SCRIPT_ORIGIN = 'https://static.cloudflareinsights.com';
 const BEACON_CONNECT_ORIGIN = 'https://cloudflareinsights.com';
 
@@ -120,7 +129,8 @@ export default function cadkitPostbuild() {
 					}
 					const out = join(dist, ogImagePath(path));
 					mkdirSync(dirname(out), { recursive: true });
-					writeFileSync(out, renderOgCard({ title, description, path, version: CADKIT_VERSION, date: BUILD_DATE }));
+					const drawing = path === '/' ? heroDrawing() : undefined;
+					writeFileSync(out, renderOgCard({ title, description, path, version: CADKIT_VERSION, date: BUILD_DATE, drawing }));
 					cards++;
 				}
 

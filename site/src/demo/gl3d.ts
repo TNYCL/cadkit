@@ -67,7 +67,7 @@ const rgb01 = (hex: string): [number, number, number] => {
 /** Colours of the 3D view per sheet: outlines, grid, selection tint. */
 const INK = {
 	light: { edge: '#1c2430', grid: '#c9cdd4', pick: '#f76707' },
-	dark: { edge: '#e8edf5', grid: '#3a4250', pick: '#ffa94d' },
+	dark: { edge: '#e6e9ee', grid: '#3a4250', pick: '#ffa94d' },
 } as const;
 
 export class Scene3d {

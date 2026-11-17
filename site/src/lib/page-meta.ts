@@ -21,4 +21,6 @@ export interface CadkitPageMeta {
 	noindex?: boolean | undefined;
 	/** og:type, default "article" ("website" for the landing page). */
 	ogType?: 'website' | 'article' | undefined;
+	/** Application page (the demo): full-width content, so the header spans the window too. */
+	app?: boolean | undefined;
 }

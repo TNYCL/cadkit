@@ -1,0 +1,517 @@
+---
+// Landing page hero figure: a viewer frame around two drawings that cadkit-wasm read at build
+// time (scripts/hero.mjs). The floor plan (DXF) is inline; the district (CityGML 2.0, drawn
+// as an axonometric from the polygons cadkit read) is fetched from the same origin when its
+// tab is chosen. Without JavaScript the plan shows alone and the tabs stay hidden.
+import plan from '../../generated/hero-plan.json';
+import districtUrl from '../../generated/hero-district.svg?url&no-inline';
+
+const d = plan.district;
+const kb = (n: number) => `${Math.max(1, Math.round(n / 1024))} KB`;
+const count = (n: number, one: string, many = one + 's') => `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`;
+const fmt = (f: string) => ({ dxf: 'DXF', dwg: 'DWG', dgn_v7: 'DGN V7', dgn_v8: 'DGN V8', city_gml: 'CityGML' })[f] ?? f.toUpperCase();
+
+const views = [
+	{
+		id: 'plan',
+		tab: 'Floor plan',
+		kind: 'DXF',
+		file: plan.file,
+		href: plan.href,
+		size: kb(plan.bytes),
+		facts: [`${fmt(plan.format)} ${plan.version}`, count(plan.entities, 'entity', 'entities'), count(plan.layers, 'layer'), count(plan.warnings, 'warning')],
+		demo: '/demo/?sample=plan-dxf',
+	},
+	{
+		id: 'district',
+		tab: 'District',
+		kind: 'CityGML',
+		file: d.file,
+		href: d.href,
+		size: kb(d.bytes),
+		facts: [`${fmt(d.format)} ${d.version}`, count(d.buildings, 'building'), count(d.polygons, 'polygon'), count(d.warnings, 'warning')],
+		demo: '/demo/?sample=citygml-district',
+	},
+] as const;
+---
+
+<figure class="ck-viewer" data-ck-viewer>
+	<div class="ck-viewer-bar">
+		<div class="ck-viewer-tabs" role="tablist" aria-label="Sample drawing" hidden data-ck-viewer-tabs>
+			{
+				views.map((v, i) => (
+					<button
+						type="button"
+						role="tab"
+						id={`ck-view-tab-${v.id}`}
+						aria-controls={`ck-view-${v.id}`}
+						aria-selected={i === 0 ? 'true' : 'false'}
+						tabindex={i === 0 ? 0 : -1}
+						data-view={v.id}
+					>
+						{v.tab}
+						<span class="ck-viewer-kind">{v.kind}</span>
+					</button>
+				))
+			}
+		</div>
+		<span class="ck-viewer-readout" aria-hidden="true" data-ck-readout></span>
+	</div>
+
+	{
+		views.map((v, i) => (
+			<div
+				class="ck-viewer-panel"
+				id={`ck-view-${v.id}`}
+				role="tabpanel"
+				aria-labelledby={`ck-view-tab-${v.id}`}
+				hidden={i !== 0}
+				data-view-panel={v.id}
+			>
+				<div class="ck-viewer-sheet">
+					<span class="ck-corner ck-corner--tl" aria-hidden="true" />
+					<span class="ck-corner ck-corner--br" aria-hidden="true" />
+					{v.id === 'plan' ? (
+						<div class="ck-viewer-drawing" data-ck-plan set:html={plan.svg} />
+					) : (
+						<div class="ck-viewer-drawing" data-ck-src={districtUrl} aria-busy="true" />
+					)}
+				</div>
+				<div class="ck-viewer-status">
+					<a class="ck-viewer-file" href={v.href} download>
+						{v.file}
+						<span class="sr-only"> (download, {v.size})</span>
+					</a>
+					<ul class="ck-viewer-facts">
+						{v.facts.map((f) => (
+							<li>{f}</li>
+						))}
+					</ul>
+					<a class="ck-viewer-open" href={v.demo}>
+						Open in the viewer<span class="sr-only">: {v.file}</span>
+						<svg class="ck-arrow" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 8h9M8.5 4.5 12 8l-3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.5" /></svg>
+					</a>
+				</div>
+			</div>
+		))
+	}
+	<figcaption class="ck-viewer-note">
+		Read and drawn at build time by <code>{plan.renderer}</code>. The district view projects the polygons cadkit read
+		from the CityGML file.
+	</figcaption>
+</figure>
+
+<script>
+	// Tabs (WAI-ARIA tabs pattern, automatic activation), lazy district drawing and the
+	// coordinate readout over the plan.
+	for (const root of document.querySelectorAll<HTMLElement>('[data-ck-viewer]')) {
+		const tablist = root.querySelector<HTMLElement>('[data-ck-viewer-tabs]');
+		const tabs = [...root.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+		const readout = root.querySelector<HTMLElement>('[data-ck-readout]');
+		if (!tablist || tabs.length === 0) continue;
+		tablist.hidden = false;
+
+		const load = async (panel: HTMLElement) => {
+			const host = panel.querySelector<HTMLElement>('[data-ck-src]');
+			const src = host?.dataset.ckSrc;
+			if (!host || !src || host.dataset.ckLoaded) return;
+			host.dataset.ckLoaded = 'loading';
+			try {
+				const res = await fetch(src);
+				if (!res.ok) throw new Error(String(res.status));
+				const doc = new DOMParser().parseFromString(await res.text(), 'image/svg+xml');
+				const svg = doc.documentElement;
+				if (svg.nodeName !== 'svg') throw new Error('not an SVG');
+				host.replaceChildren(document.importNode(svg, true));
+				host.dataset.ckLoaded = 'yes';
+			} catch {
+				host.dataset.ckLoaded = '';
+				host.textContent = 'The drawing could not be loaded.';
+			} finally {
+				host.removeAttribute('aria-busy');
+			}
+		};
+
+		const select = (tab: HTMLButtonElement, focus: boolean) => {
+			for (const t of tabs) {
+				const on = t === tab;
+				t.setAttribute('aria-selected', String(on));
+				t.tabIndex = on ? 0 : -1;
+				const panel = root.querySelector<HTMLElement>(`#${t.getAttribute('aria-controls')}`);
+				if (panel) {
+					panel.hidden = !on;
+					if (on) void load(panel);
+				}
+			}
+			if (readout) readout.textContent = '';
+			if (focus) tab.focus();
+		};
+
+		tablist.addEventListener('click', (e) => {
+			const tab = (e.target as Element).closest<HTMLButtonElement>('[role="tab"]');
+			if (tab) select(tab, false);
+		});
+		tablist.addEventListener('keydown', (e) => {
+			const i = tabs.indexOf(document.activeElement as HTMLButtonElement);
+			if (i < 0) return;
+			const next =
+				e.key === 'ArrowRight' ? tabs[(i + 1) % tabs.length]
+				: e.key === 'ArrowLeft' ? tabs[(i - 1 + tabs.length) % tabs.length]
+				: e.key === 'Home' ? tabs[0]
+				: e.key === 'End' ? tabs[tabs.length - 1]
+				: null;
+			if (!next) return;
+			e.preventDefault();
+			select(next, true);
+		});
+		// Warm the district while the visitor reads, without competing with the first paint.
+		const idle = window.requestIdleCallback ?? ((fn: () => void) => setTimeout(fn, 1500));
+		idle(() => {
+			const panel = root.querySelector<HTMLElement>('[data-view-panel="district"]');
+			const src = panel?.querySelector<HTMLElement>('[data-ck-src]')?.dataset.ckSrc;
+			if (src) fetch(src).catch(() => {});
+		});
+
+		// Drawing coordinates under the pointer (plan only): metres, y up as in the file.
+		const plan = root.querySelector<SVGSVGElement>('[data-ck-plan] svg');
+		if (plan && readout && matchMedia('(hover: hover)').matches) {
+			plan.addEventListener('pointermove', (e) => {
+				const m = plan.getScreenCTM();
+				if (!m) return;
+				const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(m.inverse());
+				readout.textContent = `X ${p.x.toFixed(2)}  Y ${(-p.y).toFixed(2)} m`;
+			});
+			plan.addEventListener('pointerleave', () => (readout.textContent = ''));
+		}
+	}
+</script>
+
+<style>
+	.ck-viewer {
+		position: relative;
+		margin: 0;
+	}
+	.ck-viewer-bar {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--ck-space-3);
+		min-height: 2.75rem;
+		padding: 0 var(--ck-space-1) 0 0;
+		border: 1px solid var(--ck-border-strong);
+		border-bottom: 0;
+		background: var(--ck-raised);
+	}
+	.ck-viewer-tabs {
+		display: flex;
+		align-self: stretch;
+	}
+	.ck-viewer-tabs[hidden] {
+		display: none;
+	}
+	.ck-viewer-tabs [role='tab'] {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--ck-space-2);
+		min-height: 2.75rem;
+		padding: 0 var(--ck-space-4);
+		border: 0;
+		border-right: 1px solid var(--ck-border-strong);
+		background: none;
+		color: var(--ck-muted);
+		font: inherit;
+		font-size: var(--sl-text-sm);
+		font-weight: 500;
+		cursor: pointer;
+	}
+	.ck-viewer-tabs [role='tab']:hover {
+		color: var(--ck-text);
+	}
+	.ck-viewer-tabs [role='tab'][aria-selected='true'] {
+		color: var(--ck-text);
+		background: var(--ck-surface);
+		box-shadow: inset 0 2px 0 var(--ck-accent);
+		margin-bottom: -1px;
+	}
+	.ck-viewer-kind {
+		font-family: var(--__sl-font-mono);
+		font-size: var(--sl-text-2xs);
+		letter-spacing: 0.06em;
+		color: var(--ck-muted);
+	}
+	.ck-viewer-readout {
+		padding-inline: var(--ck-space-3);
+		font-family: var(--__sl-font-mono);
+		font-size: var(--sl-text-xs);
+		font-variant-numeric: tabular-nums;
+		color: var(--ck-muted);
+		white-space: pre;
+	}
+
+	.ck-viewer-panel[hidden] {
+		display: none;
+	}
+	.ck-viewer-sheet {
+		position: relative;
+		aspect-ratio: 4 / 3;
+		padding: var(--ck-space-6);
+		border: 1px solid var(--ck-border-strong);
+		background: var(--ck-surface);
+	}
+	.ck-corner {
+		position: absolute;
+		z-index: 1;
+		width: 7px;
+		height: 7px;
+		background: var(--ck-accent);
+	}
+	.ck-corner--tl {
+		top: -4px;
+		left: -4px;
+	}
+	.ck-corner--br {
+		right: -4px;
+		bottom: -4px;
+	}
+	.ck-viewer-drawing {
+		display: grid;
+		place-items: center;
+		width: 100%;
+		height: 100%;
+		color: var(--ck-muted);
+		font-size: var(--sl-text-sm);
+	}
+	.ck-viewer-drawing :global(svg) {
+		display: block;
+		width: 100%;
+		height: 100%;
+		overflow: visible;
+	}
+
+	.ck-viewer-status {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
+		align-items: center;
+		gap: var(--ck-space-1) var(--ck-space-4);
+		padding: var(--ck-space-3) var(--ck-space-4);
+		border: 1px solid var(--ck-border-strong);
+		border-top: 0;
+		background: var(--ck-raised);
+		font-family: var(--__sl-font-mono);
+		font-size: var(--sl-text-xs);
+		color: var(--ck-muted);
+	}
+	.ck-viewer-file {
+		color: var(--ck-text);
+		text-decoration: none;
+	}
+	.ck-viewer-file:hover {
+		text-decoration: underline;
+	}
+	.ck-viewer-facts {
+		grid-column: 1 / -1;
+		grid-row: 2;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0 var(--ck-space-4);
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+	.ck-viewer-file {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.ck-viewer-open {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--ck-space-1);
+		font-family: var(--__sl-font);
+		font-size: var(--sl-text-sm);
+		font-weight: 600;
+		text-decoration: none;
+		white-space: nowrap;
+	}
+	.ck-viewer-open:hover {
+		text-decoration: underline;
+	}
+	.ck-viewer-open svg {
+		width: 1rem;
+		height: 1rem;
+	}
+	@media (prefers-reduced-motion: no-preference) {
+		.ck-viewer-open .ck-arrow {
+			transition: transform var(--ck-duration) var(--ck-ease);
+		}
+		.ck-viewer-open:hover .ck-arrow {
+			transform: translateX(3px);
+		}
+	}
+	.ck-viewer-note {
+		margin-top: var(--ck-space-3);
+		font-size: var(--sl-text-xs);
+		color: var(--ck-muted);
+	}
+	.ck-viewer-note code {
+		font-size: inherit;
+		color: var(--ck-text);
+		background: none;
+		padding: 0;
+	}
+
+	/* ---- Floor plan, coloured per layer by the theme -------------------------------------- */
+
+	/* Stroke widths in drawing units (metres): about 1 CSS px at the rendered sizes. */
+	.ck-viewer-drawing :global([data-layer]) {
+		stroke: var(--ck-muted);
+		stroke-width: 0.03;
+	}
+	.ck-viewer-drawing :global([data-layer='WALLS']) {
+		stroke: var(--ck-text);
+		stroke-width: 0.04;
+	}
+	.ck-viewer-drawing :global([data-layer='WALLS'] path) {
+		fill: color-mix(in srgb, var(--ck-text) 14%, transparent);
+	}
+	.ck-viewer-drawing :global([data-layer='DOORS']),
+	.ck-viewer-drawing :global([data-layer='WINDOWS']) {
+		stroke: var(--ck-accent);
+	}
+	.ck-viewer-drawing :global([data-layer='DIMENSIONS']) {
+		stroke: var(--ck-redline);
+	}
+	.ck-viewer-drawing :global([data-layer='GRID']) {
+		stroke: var(--ck-border-strong);
+	}
+	.ck-viewer-drawing :global(text) {
+		stroke: none;
+		fill: var(--ck-muted);
+		font-family: var(--__sl-font-mono);
+	}
+	.ck-viewer-drawing :global([data-layer='TEXT'] text) {
+		fill: var(--ck-text);
+	}
+	.ck-viewer-drawing :global([data-layer='DIMENSIONS'] text) {
+		fill: var(--ck-redline);
+	}
+	/* Room names and areas one step larger than in the file, so they read at hero size. */
+	.ck-viewer-drawing :global(text[font-size='0.24']) {
+		font-size: 0.3px;
+	}
+	.ck-viewer-drawing :global(text[font-size='0.17']) {
+		font-size: 0.2px;
+	}
+	@media (max-width: 40rem) {
+		.ck-viewer-drawing :global([data-layer]) {
+			stroke-width: 0.045;
+		}
+		.ck-viewer-drawing :global([data-layer='WALLS']) {
+			stroke-width: 0.06;
+		}
+		/* On a phone only the room names stay: areas, dimension values and the sheet title
+		   would be under 6 px. */
+		.ck-viewer-drawing :global(text[font-size='0.17']),
+		.ck-viewer-drawing :global(text[font-size='0.16']),
+		.ck-viewer-drawing :global(text[font-size='0.2']) {
+			display: none;
+		}
+	}
+
+	/* ---- District axonometric ------------------------------------------------------------- */
+
+	.ck-viewer-drawing :global(.ck-iso-site) {
+		fill: none;
+		stroke: var(--ck-border-strong);
+		stroke-width: 0.25;
+		stroke-dasharray: 1.2 1.2;
+	}
+	.ck-viewer-drawing :global(.ck-iso-roof),
+	.ck-viewer-drawing :global(.ck-iso-wall-a),
+	.ck-viewer-drawing :global(.ck-iso-wall-b) {
+		stroke: var(--ck-text);
+		stroke-width: 0.2;
+		stroke-linejoin: round;
+	}
+	.ck-viewer-drawing :global(.ck-iso-roof) {
+		fill: color-mix(in srgb, var(--ck-accent) 22%, var(--ck-surface));
+	}
+	.ck-viewer-drawing :global(.ck-iso-wall-a) {
+		fill: var(--ck-surface);
+	}
+	.ck-viewer-drawing :global(.ck-iso-wall-b) {
+		fill: color-mix(in srgb, var(--ck-text) 9%, var(--ck-surface));
+	}
+
+	/*
+	 * Line-draw reveal, once per drawing; reduced motion shows the finished drawing. Every shape
+	 * has pathLength="1". The dash is 2 long (not 1) because browsers approximate arc lengths:
+	 * offset 2 hides the path, 1 draws its nominal length and 0 guarantees a solid stroke.
+	 */
+	@media (prefers-reduced-motion: no-preference) {
+		.ck-viewer-drawing :global([pathLength]) {
+			stroke-dasharray: 2;
+			stroke-dashoffset: 2;
+			animation: ck-draw 1.2s var(--ck-ease) forwards;
+		}
+		.ck-viewer-drawing :global([data-layer='WALLS'] path),
+		.ck-viewer-drawing :global(.ck-iso [pathLength]) {
+			fill-opacity: 0;
+			animation:
+				ck-draw 1.2s var(--ck-ease) forwards,
+				ck-fill 0.5s var(--ck-ease) 0.9s forwards;
+		}
+		.ck-viewer-drawing :global([data-layer='GRID'] [pathLength]) {
+			animation-duration: 0.9s;
+		}
+		.ck-viewer-drawing :global([data-layer='WINDOWS'] [pathLength]),
+		.ck-viewer-drawing :global([data-layer='DOORS'] [pathLength]) {
+			animation-delay: 0.35s;
+		}
+		.ck-viewer-drawing :global([data-layer='DIMENSIONS'] [pathLength]) {
+			animation-delay: 0.6s;
+		}
+		.ck-viewer-drawing :global(text) {
+			opacity: 0;
+			animation: ck-fade 0.4s var(--ck-ease) 1s forwards;
+		}
+	}
+	@keyframes ck-draw {
+		90% {
+			stroke-dashoffset: 1;
+		}
+		to {
+			stroke-dashoffset: 0;
+		}
+	}
+	@keyframes ck-fill {
+		to {
+			fill-opacity: 1;
+		}
+	}
+	@keyframes ck-fade {
+		to {
+			opacity: 1;
+		}
+	}
+
+	@media (min-width: 64rem) {
+		.ck-viewer-sheet {
+			aspect-ratio: 6 / 5;
+		}
+	}
+	@media (max-width: 40rem) {
+		.ck-viewer-sheet {
+			padding: var(--ck-space-3);
+		}
+		.ck-viewer-status {
+			grid-template-columns: minmax(0, 1fr);
+		}
+		.ck-viewer-facts {
+			grid-row: auto;
+		}
+		.ck-viewer-tabs [role='tab'] {
+			padding: 0 var(--ck-space-3);
+		}
+	}
+</style>

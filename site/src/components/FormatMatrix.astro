@@ -25,7 +25,7 @@ const { caption = 'Format support in cadkit' } = Astro.props;
 			{
 				FORMATS.map((f) => (
 					<tr>
-						<th scope="row">{f.name}</th>
+						<th scope="row"><a href={f.page}>{f.name}</a></th>
 						{[f.read, f.write].map((c) => (
 							<td>
 								<StatusChip status={c.status} label={c.label} />
@@ -85,6 +85,13 @@ const { caption = 'Format support in cadkit' } = Astro.props;
 		font-weight: 600;
 		white-space: nowrap;
 		color: var(--ck-text);
+	}
+	tbody th a {
+		color: inherit;
+		text-decoration-color: var(--ck-border-ui);
+	}
+	tbody th a:hover {
+		color: var(--ck-accent);
 	}
 	.ck-detail {
 		display: block;

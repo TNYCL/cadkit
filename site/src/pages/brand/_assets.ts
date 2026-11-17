@@ -15,7 +15,7 @@ export interface BrandAsset {
 	name: string;
 	use: string;
 	/** Background the preview sits on. */
-	ground: 'paper' | 'blueprint';
+	ground: 'paper' | 'night';
 	preview: BrandFile;
 	files: BrandFile[];
 }
@@ -38,7 +38,7 @@ export const BRAND_ASSETS: BrandAsset[] = [
 		id: 'mark-dark',
 		name: 'Mark, dark',
 		use: 'Two-tone, for dark backgrounds.',
-		ground: 'blueprint',
+		ground: 'night',
 		preview: svg('/brand/cadkit-mark-dark.svg'),
 		files: [svg('/brand/cadkit-mark-dark.svg')],
 	},
@@ -62,7 +62,7 @@ export const BRAND_ASSETS: BrandAsset[] = [
 		id: 'lockup-dark',
 		name: 'Lockup, dark',
 		use: 'Mark and wordmark, for dark backgrounds.',
-		ground: 'blueprint',
+		ground: 'night',
 		preview: svg('/brand/cadkit-lockup-dark.svg', LOCKUP_WIDTH),
 		files: [svg('/brand/cadkit-lockup-dark.svg', LOCKUP_WIDTH)],
 	},
@@ -77,7 +77,7 @@ export const BRAND_ASSETS: BrandAsset[] = [
 	{
 		id: 'tile',
 		name: 'Tile',
-		use: 'Navy square for avatars, app icons and social profiles.',
+		use: 'Dark square for avatars, app icons and social profiles.',
 		ground: 'paper',
 		preview: png('/brand/cadkit-icon-256.png', 256),
 		files: [

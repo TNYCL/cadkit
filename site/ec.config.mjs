@@ -3,7 +3,7 @@
 import { defineEcConfig } from '@astrojs/starlight/expressive-code';
 
 /** Code block surfaces = the raised token colour, so Expressive Code keeps syntax colours AA. */
-const CODE_BG = { dark: '#16233d', light: '#f2f2ec' };
+const CODE_BG = { dark: '#151921', light: '#f2f2ec' };
 
 export default defineEcConfig({
 	themes: ['github-dark-default', 'github-light-default'],
