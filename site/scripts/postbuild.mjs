@@ -14,6 +14,7 @@ import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ogImagePath } from '../src/lib/og-path.mjs';
 import { renderOgCard } from './og.mjs';
+import { htmlPageMarkdown, markdownPathFor } from '../src/lib/site-markdown.mjs';
 
 const BEACON_SCRIPT_ORIGIN = 'https://static.cloudflareinsights.com';
 const BEACON_CONNECT_ORIGIN = 'https://cloudflareinsights.com';
@@ -78,7 +79,7 @@ export default function cadkitPostbuild() {
 		hooks: {
 			'astro:build:done': async ({ dir, logger }) => {
 				const dist = fileURLToPath(dir);
-				const { CADKIT_VERSION, BUILD_DATE } = await import('../src/config.ts');
+				const { SITE, CADKIT_VERSION, BUILD_DATE } = await import('../src/config.ts');
 				const htmlFiles = listFiles(dist).filter((f) => f.endsWith('.html'));
 				const pages = htmlFiles
 					.map((file) => ({ file, path: urlPathOf(dist, file) }))
@@ -90,6 +91,7 @@ export default function cadkitPostbuild() {
 
 				const hashes = new Set();
 				let cards = 0;
+				const extraMarkdown = [];
 				for (const file of htmlFiles) {
 					let html = readFileSync(file, 'utf8');
 					const sheet = sheetOf.get(file) ?? '404';
@@ -106,11 +108,34 @@ export default function cadkitPostbuild() {
 						logger.warn(`no og:title in ${path}; skipped OG card`);
 						continue;
 					}
+					// Collection pages already have lossless Markdown generated from their source.
+					// Hand-written pages use the built content, including all code tabs and tables.
+					const mdPath = markdownPathFor(path);
+					if (!html.includes('data-ck-doc')) {
+						const markdown = htmlPageMarkdown(html, { title, description, url: SITE + path });
+						const target = join(dist, mdPath);
+						mkdirSync(dirname(target), { recursive: true });
+						writeFileSync(target, markdown);
+						extraMarkdown.push({ path, mdPath, title, description, markdown });
+					}
 					const out = join(dist, ogImagePath(path));
 					mkdirSync(dirname(out), { recursive: true });
 					writeFileSync(out, renderOgCard({ title, description, path, version: CADKIT_VERSION, date: BUILD_DATE }));
 					cards++;
 				}
+
+				const llmsPath = join(dist, 'llms.txt');
+				let llms = readFileSync(llmsPath, 'utf8');
+				const missing = [];
+				for (const page of extraMarkdown.sort((a, b) => a.path.localeCompare(b.path))) {
+					const htmlLink = `](${SITE}${page.path})`;
+					if (llms.includes(htmlLink)) llms = llms.replaceAll(htmlLink, `](${SITE}${page.mdPath})`);
+					else missing.push(`- [${page.title}](${SITE}${page.mdPath}): ${page.description}`);
+				}
+				if (missing.length) llms += '\n## Optional\n\n' + missing.join('\n') + '\n';
+				writeFileSync(llmsPath, llms);
+				const fullPath = join(dist, 'llms-full.txt');
+				writeFileSync(fullPath, readFileSync(fullPath, 'utf8') + extraMarkdown.map((p) => '\n---\n\n' + p.markdown).join(''));
 
 				const analytics = Boolean(process.env.PUBLIC_CF_WEB_ANALYTICS_TOKEN?.trim());
 				const headersPath = join(dist, '_headers');

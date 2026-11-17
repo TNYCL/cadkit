@@ -24,6 +24,8 @@ import { fileURLToPath } from 'node:url';
 import { listFiles, urlPathOf, inlineScripts, scriptHash } from './postbuild.mjs';
 import { parseSitemap } from './lib/sitemap.mjs';
 import { SITE, EMAIL, CADKIT_VERSION } from '../src/config.ts';
+import { markdownPathFor } from '../src/lib/site-markdown.mjs';
+import { parse, preformattedText, walkSync } from '../src/lib/html-tree.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const dist = join(root, 'dist');
@@ -185,6 +187,9 @@ for (const file of htmlFiles) {
 	else if (!title.endsWith('· cadkit')) err(where, `title should end with "· cadkit": ${title}`);
 	if (!/<meta\b[^>]*name="description"[^>]*content="[^"]{20,}"/.test(html)) err(where, 'missing or short meta description');
 	if (!/<meta\b[^>]*name="viewport"/.test(html)) err(where, 'missing viewport meta');
+	const skipTarget = /<a\b[^>]*class="[^"]*sl-skip-link[^"]*"[^>]*href="#([^"]+)"/.exec(html)?.[1];
+	if (!skipTarget || !idsOf(file).has(skipTarget)) err(where, 'skip link must point at an existing content target');
+	if (!/<link\b[^>]*rel="describedby"[^>]*href="\/llms\.txt"/.test(html)) err(where, 'missing llms.txt discovery link');
 	const description = /<meta\b[^>]*name="description"[^>]*content="([^"]*)"/.exec(html)?.[1] ?? '';
 	/** @type {{path: string, title: string, description: string, noindex: boolean, ldTypes: string[], dateModified?: string, markdown?: string}} */
 	const pageInfo = { path, title: title ?? '', description, noindex, ldTypes: [] };
@@ -258,8 +263,8 @@ for (const file of htmlFiles) {
 		}
 		if (url.hash && target.endsWith('.html')) {
 			const id = decodeURIComponent(url.hash.slice(1));
-			// "#_top" and "#top" scroll to the top of any document (HTML spec).
-			if (id && id !== '_top' && id !== 'top' && !idsOf(target).has(id)) err(where, `missing anchor ${raw}`);
+			// Only "top" is the reserved top-of-document fragment. Starlight's "_top" needs an id.
+			if (id && id.toLowerCase() !== 'top' && !idsOf(target).has(id)) err(where, `missing anchor ${raw}`);
 		}
 		if (/\/[^/.]+$/.test(url.pathname) && target.endsWith('index.html')) err(where, `link without trailing slash: ${raw}`);
 	}
@@ -386,7 +391,7 @@ for (const p of pages.filter((p) => !p.noindex)) {
 	if (p.path === '/') {
 		for (const type of ['Organization', 'WebSite', 'SoftwareSourceCode']) if (!p.ldTypes.includes(type)) err(p.path, `missing ${type} JSON-LD`);
 	} else if (!p.ldTypes.includes('BreadcrumbList')) err(p.path, 'missing BreadcrumbList JSON-LD');
-	if (p.markdown && !p.ldTypes.includes('TechArticle')) err(p.path, 'docs page without TechArticle JSON-LD');
+	if (SYNCED_PREFIXES.some((prefix) => p.path.startsWith(prefix)) && !p.ldTypes.includes('TechArticle')) err(p.path, 'docs page without TechArticle JSON-LD');
 }
 
 // Markdown copies of the docs pages, llms.txt and llms-full.txt.
@@ -395,24 +400,37 @@ for (const p of pages.filter((p) => !p.noindex)) {
 	if (!full?.startsWith('# cadkit documentation')) err('llms-full.txt', 'missing or malformed');
 	const docs = pages.filter((p) => p.markdown);
 	if (docs.length === 0) err('llms.txt', 'no page links a Markdown copy');
-	for (const p of pages.filter((p) => !p.noindex && SYNCED_PREFIXES.some((s) => p.path.startsWith(s)) && !p.markdown))
-		err(p.path, 'docs page without a Markdown alternate link');
+	for (const p of pages.filter((p) => !p.noindex && !p.markdown))
+		err(p.path, 'page without a Markdown alternate link');
 	for (const p of docs) {
 		const md = read(p.markdown);
-		if (p.markdown !== p.path.replace(/\/$/, '') + '.md') err(p.path, `unexpected Markdown path ${p.markdown}`);
+		if (p.markdown !== markdownPathFor(p.path)) err(p.path, `unexpected Markdown path ${p.markdown}`);
 		if (!md) {
 			err(p.path, `Markdown copy ${p.markdown} is missing`);
 			continue;
 		}
 		if (!md.startsWith('# ') || !md.includes(`Canonical page: ${SITE}${p.path}\n`)) err(p.markdown, 'Markdown copy lacks its title or canonical page');
 		if (md.length < 400) err(p.markdown, 'Markdown copy is nearly empty');
+		// Real rendered samples catch truncation that small synthetic converter tests cannot.
+		const html = readFileSync(resolveTarget(p.path), 'utf8');
+		walkSync(parse(html), (node) => {
+			if (node.name !== 'pre') return;
+			// The syntax highlighter trims end-of-line spaces; indentation and blank lines matter.
+			const trimLineEnds = (text) => text.replace(/[ \t]+$/gm, '').trimEnd();
+			const source = trimLineEnds(preformattedText(node));
+			if (source && !trimLineEnds(md).includes(source)) err(p.markdown, 'a rendered code sample is missing or changed');
+		});
 		// MDX that the export did not convert would be published as text.
 		const leftover = /^import .+ from ['"]|<\/?(?:CodeTabs|Code|Callout|Tabs|TabItem)\b/m.exec(md.replace(/^(`{3,}|~{3,})[\s\S]*?^\1\s*$/gm, ''));
 		if (leftover) err(p.markdown, `unconverted MDX: ${leftover[0]}`);
 		if (llms && !llms.includes(`(${SITE}${p.markdown})`)) err('llms.txt', `docs page not listed: ${p.markdown}`);
-		if (full && !full.includes(`Canonical page: ${SITE}${p.path}\n`)) err('llms-full.txt', `docs page missing: ${p.path}`);
+		if (full && !full.includes(md)) err('llms-full.txt', `page content missing or differs: ${p.path}`);
 	}
-	notices.push(`llms: ${docs.length} docs pages as Markdown, llms-full.txt ${Math.round((full?.length ?? 0) / 1024)} KiB`);
+	if (!llms?.includes(`Current release: ${CADKIT_VERSION}.`)) err('llms.txt', 'current release differs from the installed engine');
+	if (!full?.includes(`cadkit ${CADKIT_VERSION},`)) err('llms-full.txt', 'version differs from the installed engine');
+	const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+	if (manifest.dependencies['cadkit-wasm'] !== CADKIT_VERSION) err('package.json', 'installed cadkit-wasm differs from the pinned version');
+	notices.push(`llms: ${docs.length} pages as Markdown, llms-full.txt ${Math.round((full?.length ?? 0) / 1024)} KiB`);
 }
 
 // Web manifest.
@@ -460,6 +478,8 @@ const headers = read('_headers');
 if (!headers) err('_headers', 'missing');
 else {
 	if (headers.includes('__CK_')) err('_headers', 'unreplaced placeholder');
+	if (!/^\s+Link: <\/llms\.txt>; rel="describedby"; type="text\/plain"$/m.test(headers)) err('_headers', 'missing llms.txt discovery header');
+	if (!/^\s+Cache-Control: .*\bno-transform\b/m.test(headers)) err('_headers', 'missing no-transform: public contact addresses must stay readable');
 	for (const line of headers.split('\n')) if (line.length > 2000) err('_headers', `line longer than 2000 characters (${line.length})`);
 	const csp = [...headers.matchAll(/^\s*Content-Security-Policy: (.+)$/gm)].map((m) => m[1]);
 	if (csp.length < 2) err('_headers', 'expected a site CSP and a /demo/ CSP');
@@ -486,6 +506,24 @@ else {
 	}
 	for (const h of ['Strict-Transport-Security', 'X-Content-Type-Options', 'Referrer-Policy: strict-origin-when-cross-origin', 'Permissions-Policy'])
 		if (!headers.includes(h)) err('_headers', `missing ${h}`);
+	// Workers static assets send no charset on HTML and text and no CORS header (Pages did).
+	for (const [pattern, header] of [
+		['/', 'Content-Type: text/html; charset=utf-8'],
+		['/*/', 'Content-Type: text/html; charset=utf-8'],
+		['/*.txt', 'Content-Type: text/plain; charset=utf-8'],
+		['/*', 'Access-Control-Allow-Origin: *'],
+	]) {
+		const rule = rules.find((b) => b.split('\n')[0].trim() === pattern);
+		if (!rule?.split('\n').some((line) => line.trim() === header)) err('_headers', `${pattern} must send ${header}`);
+	}
+	// Cloudflare joins the values of two rules that set one header on the same URL.
+	const glob = (p) => new RegExp('^' + p.split('*').map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$');
+	const typeRules = rules.filter((b) => /^\s+Content-Type:/m.test(b)).map((b) => b.split('\n')[0].trim());
+	for (const file of files) {
+		const path = urlPathOf(dist, file);
+		const hits = typeRules.filter((p) => glob(p).test(path));
+		if (hits.length > 1) err(path, `several Content-Type rules match: ${hits.join(', ')}`);
+	}
 }
 
 for (const file of htmlFiles.filter((f) => urlPathOf(dist, f).startsWith('/demo/'))) {

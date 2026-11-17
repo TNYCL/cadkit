@@ -13,6 +13,7 @@
 		"dev": "astro dev",
 		"prebuild": "node scripts/prebuild.mjs",
 		"build": "astro build",
+		"postbuild": "node scripts/verify.mjs",
 		"preview": "astro preview",
 		"precheck": "node scripts/prebuild.mjs",
 		"check": "astro check",
@@ -20,7 +21,8 @@
 		"verify": "node scripts/verify.mjs",
 		"brand": "node scripts/brand.mjs",
 		"indexnow": "node scripts/indexnow.mjs",
-		"sample:plan": "node scripts/samples/plan.mjs"
+		"sample:plan": "node scripts/samples/plan.mjs",
+		"verify:live": "node scripts/verify-live.mjs"
 	},
 	"dependencies": {
 		"@astrojs/sitemap": "3.7.5",
@@ -28,12 +30,14 @@
 		"@fontsource-variable/archivo": "5.3.0",
 		"@fontsource-variable/jetbrains-mono": "5.3.0",
 		"astro": "7.4.12",
-		"cadkit-wasm": "0.5.3"
+		"cadkit-wasm": "0.5.4"
 	},
 	"devDependencies": {
 		"@astrojs/check": "0.9.12",
 		"@resvg/resvg-js": "2.6.2",
 		"fontkit": "3.0.0",
-		"typescript": "6.0.3"
+		"typescript": "6.0.3",
+		"parse5": "8.0.0",
+		"wrangler": "4.163.0"
 	}
 }

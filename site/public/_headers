@@ -1,9 +1,14 @@
-# Cloudflare Pages response headers. This file is a template: scripts/postbuild.mjs writes
+# Response headers for Cloudflare Workers static assets. This file is a template: scripts/postbuild.mjs writes
 # dist/_headers with the __CK_*__ placeholders filled in (inline script hashes collected from
 # the built HTML, and the Cloudflare Web Analytics origins only when the beacon is enabled).
 # See site/README.md, "Content Security Policy".
 
+# Every file here is public and read without credentials. Pages sent Access-Control-Allow-Origin: *
+# on every response; agents and browser tools read llms.txt, the Markdown copies, the schema and
+# the samples from other origins, so the Worker keeps sending it.
 /*
+  Access-Control-Allow-Origin: *
+  Link: </llms.txt>; rel="describedby"; type="text/plain"
   Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval' __CK_SCRIPT_HASHES__ __CK_ANALYTICS_SCRIPT__; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' __CK_ANALYTICS_CONNECT__; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests
   Strict-Transport-Security: max-age=31536000
   X-Content-Type-Options: nosniff
@@ -11,6 +16,7 @@
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: accelerometer=(), autoplay=(), camera=(), display-capture=(), encrypted-media=(), geolocation=(), gyroscope=(), hid=(), magnetometer=(), microphone=(), midi=(), payment=(), publickey-credentials-get=(), serial=(), usb=(), xr-spatial-tracking=(), browsing-topics=()
   Cross-Origin-Opener-Policy: same-origin
+  Cache-Control: public, max-age=0, must-revalidate, no-transform
 
 # Demo: WebAssembly in a Web Worker, local files only, no analytics. The worker is a same-origin
 # script under /_astro/ (worker-src 'self', no blob: workers); the page fetches samples from this
@@ -22,13 +28,42 @@
   Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval' __CK_SCRIPT_HASHES__; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests
 
 /_astro/*
-  Cache-Control: public, max-age=31536000, immutable
+  ! Cache-Control
+  Cache-Control: public, max-age=31536000, immutable, no-transform
 
 /*.wasm
   Content-Type: application/wasm
 
-/.well-known/security.txt
+# Workers static assets send HTML, CSS and plain text without a charset (clients that ignore
+# <meta charset> then guess; Python requests assumes Latin-1 for text/*) and no Content-Type for
+# file types they do not know. Pages sent both, so they are explicit here. One Content-Type rule
+# per URL: Cloudflare joins the values of two matching rules with a comma (verify checks this).
+/
+  Content-Type: text/html; charset=utf-8
+
+/*/
+  Content-Type: text/html; charset=utf-8
+
+/*.css
+  Content-Type: text/css; charset=utf-8
+
+/*.txt
   Content-Type: text/plain; charset=utf-8
+
+/*.dgn
+  Content-Type: application/octet-stream
+
+/pagefind/*.pagefind
+  Content-Type: application/octet-stream
+
+/pagefind/*.pf_meta
+  Content-Type: application/octet-stream
+
+/pagefind/index/*
+  Content-Type: application/octet-stream
+
+/pagefind/fragment/*
+  Content-Type: application/octet-stream
 
 /site.webmanifest
   Content-Type: application/manifest+json; charset=utf-8
