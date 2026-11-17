@@ -28,7 +28,8 @@ pub struct ExportOptions {
     pub planarity_tolerance: f64,
     /// Ceiling for that distance in coordinate units (default `0.01`, the default
     /// [`crate::ValidationOptions::planarity_tolerance`]), so accepted surfaces pass
-    /// default validation. Larger values need the same validation tolerance on read.
+    /// default validation. Larger values need the same validation tolerance on read;
+    /// [`crate::write_document`] and [`crate::write_buildings`] validate with it.
     #[serde(default = "default_max_planarity_deviation")]
     pub max_planarity_deviation: f64,
 }

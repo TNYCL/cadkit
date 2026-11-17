@@ -10,6 +10,10 @@ use cadkit_core::{
 };
 use cadkit_gml::{native::*, *};
 
+#[path = "support/xsd.rs"]
+mod xsd;
+use xsd::validate_xsd_if_cached;
+
 const SRS: &str = "EPSG:5254";
 
 fn p(x: f64, y: f64, z: f64) -> Point3 {
@@ -98,7 +102,9 @@ fn roundtrip(
     options: &BuildingOptions,
 ) -> (Vec<u8>, BuildingReport, CityGmlDocument) {
     let (bytes, report) = write_buildings(doc, 0, options).unwrap();
+    validate_xsd_if_cached(&bytes);
     let native = read_native(&bytes, &ReadOptions::default()).unwrap();
+    assert_schema_order(&native);
     validate(&native, &ValidationOptions::default()).unwrap();
     assert!(
         geometry_issues(&native, &ValidationOptions::default())
@@ -137,6 +143,37 @@ fn surfaces(doc: &CityGmlDocument) -> Vec<(String, f64)> {
     let mut out = vec![];
     visit(&doc.root, None, &mut out);
     out
+}
+
+/// Properties a generated `bldg:Building` may hold, in CityGML 2.0 schema order: the
+/// feature's `gml:boundedBy`, then from `AbstractBuildingType` in building.xsd
+/// `lod2MultiSurface`, `boundedBy`, `lod3MultiSurface`, `lod4MultiSurface`.
+fn assert_schema_order(doc: &CityGmlDocument) {
+    const ORDER: [(&str, &str); 5] = [
+        (GML, "boundedBy"),
+        (BUILDING, "lod2MultiSurface"),
+        (BUILDING, "boundedBy"),
+        (BUILDING, "lod3MultiSurface"),
+        (BUILDING, "lod4MultiSurface"),
+    ];
+    let buildings = doc
+        .root
+        .elements()
+        .flat_map(|m| m.elements())
+        .filter(|e| e.name.is(BUILDING, "Building"));
+    for building in buildings {
+        let ranks: Vec<usize> = building
+            .elements()
+            .map(|e| {
+                ORDER
+                    .iter()
+                    .position(|&(ns, local)| e.name.is(ns, local))
+                    .unwrap_or_else(|| panic!("unexpected property {}", e.name.qualified))
+            })
+            .collect();
+        assert!(ranks.windows(2).all(|w| w[0] <= w[1]), "{ranks:?}");
+        assert_eq!(ranks.first(), Some(&0), "the envelope comes first");
+    }
 }
 
 fn count(surfaces: &[(String, f64)], kind: &str) -> usize {
@@ -767,4 +804,515 @@ fn budgets_bound_the_work() {
         buildings_from_document(&doc, 0, &o),
         Err(cadkit_core::Error::LimitExceeded { .. })
     ));
+}
+
+/// A box with a holed roof drawn as a cell on layer A, and an A-frame (two faces that
+/// stay unclassified) as a cell on layer B, 20 m away.
+fn mixed_site() -> Document {
+    let mut faces = box_faces(p(0., 0., 0.), p(10., 10., 3.));
+    let roof = faces.remove(1);
+    let mut house = polylines(faces);
+    let mut exterior = roof.clone();
+    exterior.push(roof[0]);
+    let mut hole = vec![
+        p(4., 4., 3.),
+        p(6., 4., 3.),
+        p(6., 6., 3.),
+        p(4., 6., 3.),
+        p(4., 4., 3.),
+    ];
+    if cadkit_core::polygon::normal(&hole).unwrap().z
+        * cadkit_core::polygon::normal(&exterior).unwrap().z
+        < 0.0
+    {
+        hole.reverse();
+    }
+    house.push(Entity::new(EntityKind::Polygon {
+        exterior,
+        interiors: vec![hole],
+    }));
+    let frame = polylines(vec![
+        vec![
+            p(20., 0., 0.),
+            p(28., 0., 0.),
+            p(28., 6., 0.),
+            p(20., 6., 0.),
+        ],
+        vec![
+            p(20., 0., 0.),
+            p(28., 0., 0.),
+            p(28., 3., 5.),
+            p(20., 3., 5.),
+        ],
+        vec![
+            p(20., 6., 0.),
+            p(20., 3., 5.),
+            p(28., 3., 5.),
+            p(28., 6., 0.),
+        ],
+        vec![p(20., 0., 0.), p(20., 3., 5.), p(20., 6., 0.)],
+        vec![p(28., 0., 0.), p(28., 6., 0.), p(28., 3., 5.)],
+    ]);
+    let on = |entities: Vec<Entity>, layer: &str| -> Vec<Entity> {
+        entities.into_iter().map(|e| e.on_layer(layer)).collect()
+    };
+    document(vec![group(on(house, "A")), group(on(frame, "B"))])
+}
+
+#[test]
+fn every_lod_and_grouping_writes_schema_ordered_buildings() {
+    let groupings = [
+        (BuildingGrouping::Single, 1),
+        (BuildingGrouping::Layer, 2),
+        (BuildingGrouping::TopLevel, 2),
+        (BuildingGrouping::Connected, 2),
+    ];
+    let doc = mixed_site();
+    for lod in [2, 3, 4] {
+        for (grouping, buildings) in groupings {
+            let o = BuildingOptions::new(
+                ExportOptions::new(SRS, lod).with_closed_polylines_as_surfaces(true),
+            )
+            .with_grouping(grouping);
+            // roundtrip() runs the official XSD check and the schema order assertion.
+            let (bytes, report, native) = roundtrip(&doc, &o);
+            let context = format!("LoD {lod}, {grouping:?}");
+            assert_eq!(report.buildings.len(), buildings, "{context}");
+            assert_eq!(
+                (
+                    report.wall_surfaces,
+                    report.roof_surfaces,
+                    report.ground_surfaces,
+                    report.unclassified_faces,
+                ),
+                (6, 1, 2, 2),
+                "{context}"
+            );
+            let text = String::from_utf8(bytes).unwrap();
+            for other in [2, 3, 4].into_iter().filter(|&l| l != lod) {
+                assert!(!text.contains(&format!("lod{other}")), "{context}");
+            }
+            // Every polygon, surface and building has a distinct id.
+            let ids = validate(&native, &ValidationOptions::default()).unwrap();
+            assert_eq!(ids.polygons, 11, "{context}");
+            assert_eq!(ids.interiors, 1, "{context}");
+        }
+    }
+}
+
+#[test]
+fn classification_at_the_edges() {
+    let classes = |doc: &Document, o: &BuildingOptions| {
+        let (_, r, _) = roundtrip(doc, o);
+        (
+            r.wall_surfaces,
+            r.roof_surfaces,
+            r.ground_surfaces,
+            r.unclassified_faces,
+        )
+    };
+    // No ground face: the base is the bottom of the walls, the flat roof stays a roof.
+    let mut open = box_faces(p(0., 0., 0.), p(4., 3., 2.5));
+    open.remove(0);
+    assert_eq!(
+        classes(&document(polylines(open)), &options()),
+        (4, 1, 0, 0)
+    );
+    // An intermediate slab is a horizontal face above the base: a roof by geometry.
+    let mut storeys = box_faces(p(0., 0., 0.), p(4., 3., 6.));
+    storeys.push(vec![
+        p(0., 0., 3.),
+        p(4., 0., 3.),
+        p(4., 3., 3.),
+        p(0., 3., 3.),
+    ]);
+    assert_eq!(
+        classes(&document(polylines(storeys)), &options()),
+        (4, 2, 1, 0)
+    );
+    // A face that is its own building has its lowest point at the base: a lone flat
+    // roof drawn at the top level becomes a ground surface under TopLevel grouping.
+    let roof = vec![vec![
+        p(0., 0., 3.),
+        p(4., 0., 3.),
+        p(4., 3., 3.),
+        p(0., 3., 3.),
+    ]];
+    let top = options().with_grouping(BuildingGrouping::TopLevel);
+    assert_eq!(classes(&document(polylines(roof)), &top), (0, 0, 1, 0));
+    // A sloped face whose lowest point lies in the base band stays unclassified, one
+    // just above the band is a roof; a horizontal face inside the band is ground.
+    for (z, expected) in [(0.009, (0, 0, 2, 1)), (0.011, (0, 1, 2, 0))] {
+        let faces = vec![
+            vec![p(0., 0., 0.), p(4., 0., 0.), p(4., 3., 0.), p(0., 3., 0.)],
+            vec![
+                p(0., 0., 0.005),
+                p(4., 0., 0.005),
+                p(4., 3., 0.005),
+                p(0., 3., 0.005),
+            ],
+            vec![
+                p(0., 0., z),
+                p(4., 0., z),
+                p(4., 3., z + 2.),
+                p(0., 3., z + 2.),
+            ],
+        ];
+        assert_eq!(
+            classes(&document(polylines(faces)), &options()),
+            expected,
+            "z = {z}"
+        );
+    }
+}
+
+#[test]
+fn faces_exactly_at_a_threshold_belong_to_it() {
+    // Tilt 45 degrees at the base: |n.z| is 1/sqrt(2) up to rounding, as is
+    // cos(45 degrees), so only the threshold decides between wall, ground and none.
+    let slope = vec![
+        vec![p(0., 0., 0.), p(4., 0., 0.), p(4., 3., 0.), p(0., 3., 0.)],
+        vec![
+            p(0., 0., 0.),
+            p(10., 0., 0.),
+            p(10., 10., 10.),
+            p(0., 10., 10.),
+        ],
+    ];
+    let doc = document(polylines(slope));
+    let wall = options()
+        .with_horizontal_max_tilt_degrees(10.)
+        .with_wall_min_tilt_degrees(45.);
+    assert_eq!(roundtrip(&doc, &wall).1.wall_surfaces, 1);
+    let flat = options()
+        .with_horizontal_max_tilt_degrees(45.)
+        .with_wall_min_tilt_degrees(80.);
+    assert_eq!(roundtrip(&doc, &flat).1.ground_surfaces, 2);
+    // Walls of a rotated block placed at map coordinates are vertical only up to
+    // rounding; they stay walls with the threshold at 90 degrees.
+    let mut doc = document(vec![Entity::new(EntityKind::Insert {
+        block: "BOX".into(),
+        position: p(500_000.123, 4_400_000.456, 50.),
+        scale: cadkit_core::Vec3::new(1., 1., 1.),
+        rotation: 0.7,
+        normal: cadkit_core::Vec3::new(0., 0., 1.),
+        columns: 1,
+        rows: 1,
+        column_spacing: 0.,
+        row_spacing: 0.,
+    })]);
+    let mut walls = box_faces(p(0.3, 0.7, 0.), p(4.1, 3.7, 50.));
+    // Split every wall edge so the rings have collinear extra vertices.
+    for f in walls.iter_mut().skip(2) {
+        let (a, b) = (f[0], f[1]);
+        let t = 0.37;
+        f.insert(
+            1,
+            p(
+                a.x + (b.x - a.x) * t,
+                a.y + (b.y - a.y) * t,
+                a.z + (b.z - a.z) * t,
+            ),
+        );
+    }
+    doc.blocks
+        .push(Block::new("BOX").with_entities(polylines(walls)));
+    let strict = options().with_wall_min_tilt_degrees(90.);
+    let (_, report, _) = roundtrip(&doc, &strict);
+    assert_eq!(report.skipped_faces, 0);
+    assert_eq!(report.wall_surfaces, 4);
+}
+
+#[test]
+fn map_coordinates_and_units_do_not_change_the_classes() {
+    for (origin, size) in [
+        (p(500_000.123, 4_400_000.456, 50.), p(12.3, 8.7, 50.)),
+        (p(-73_456.25, 9_876_543.5, 1_234.5), p(4., 3., 2.5)),
+        // Millimetres: a 12 m x 8 m x 3 m box.
+        (p(0., 0., 0.), p(12_000., 8_000., 3_000.)),
+    ] {
+        let mut faces = box_faces(origin, size);
+        faces.extend(gable_faces().into_iter().map(|f| {
+            f.into_iter()
+                .map(|q| p(q.x + origin.x + 2. * size.x, q.y + origin.y, q.z + origin.z))
+                .collect()
+        }));
+        for grouping in [BuildingGrouping::Single, BuildingGrouping::Connected] {
+            let (_, r, native) = roundtrip(
+                &document(polylines(faces.clone())),
+                &options().with_grouping(grouping),
+            );
+            assert_eq!(
+                (
+                    r.wall_surfaces,
+                    r.roof_surfaces,
+                    r.ground_surfaces,
+                    r.unclassified_faces,
+                    r.skipped_faces
+                ),
+                (8, 3, 2, 0, 0),
+                "{origin:?} {grouping:?}"
+            );
+            for (kind, nz) in surfaces(&native) {
+                match kind.as_str() {
+                    "GroundSurface" => assert!(nz < -0.99),
+                    "RoofSurface" => assert!(nz > 0.5),
+                    _ => assert!(nz.abs() < 1e-9),
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn connected_grouping_welds_across_grid_cell_borders() {
+    // Weld cells are weld_tolerance wide; vertices 2e-7 apart on both sides of a cell
+    // border (also below zero, where floor rounds away from zero) are one vertex.
+    for border in [1.0, -1.0, 0.0, 4_400_000.0] {
+        let left = vec![
+            p(border - 1e-7, 0., 0.),
+            p(border - 2., 0., 0.),
+            p(border - 2., 0., 3.),
+        ];
+        let right = vec![
+            p(border + 1e-7, 0., 0.),
+            p(border + 2., 0., 3.),
+            p(border + 2., 0., 0.),
+        ];
+        let o = options().with_grouping(BuildingGrouping::Connected);
+        let r = roundtrip(&document(polylines(vec![left.clone(), right.clone()])), &o).1;
+        assert_eq!(r.buildings.len(), 1, "border {border}");
+        // Two tolerances apart they are separate buildings.
+        let far: Vec<Point3> = right.iter().map(|q| p(q.x + 0.002, q.y, q.z)).collect();
+        let r = roundtrip(&document(polylines(vec![left, far])), &o).1;
+        assert_eq!(r.buildings.len(), 2, "border {border}");
+    }
+}
+
+#[test]
+fn issues_are_truncated_at_the_object_limit_but_still_counted() {
+    // Each mesh has 40 collinear faces; the document stays within 50 objects.
+    let mesh = || {
+        Entity::new(EntityKind::Mesh {
+            vertices: vec![p(0., 0., 0.), p(1., 1., 1.), p(2., 2., 2.)],
+            faces: vec![vec![0, 1, 2]; 40],
+        })
+    };
+    let mut limits = Limits::default();
+    limits.max_objects = 50;
+    let o = BuildingOptions::new(
+        ExportOptions::new(SRS, 2)
+            .with_closed_polylines_as_surfaces(true)
+            .with_limits(limits),
+    );
+    let doc = document(vec![group(vec![mesh()]), mesh()]);
+    let (_, report) = buildings_from_document(&doc, 0, &o).unwrap();
+    assert_eq!(report.skipped_faces, 80);
+    assert_eq!(report.skipped_by_code["gml.face_degenerate"], 80);
+    assert_eq!(report.issues.len(), 50);
+    assert!(report.issues_truncated);
+    assert_eq!(report.issues[0].path, [0, 0]);
+    assert_eq!(report.issues[49].path, [1]);
+    assert_eq!(report.issues[49].mesh_face, Some(9));
+    for issue in &report.issues {
+        assert!(matches!(
+            doc.entity_at(0, &issue.path).unwrap().kind,
+            EntityKind::Mesh { .. }
+        ));
+    }
+}
+
+#[test]
+fn the_node_estimate_bounds_the_written_tree() {
+    // Holes add nodes: whenever the builder accepts a limit, writing accepts it too.
+    let mut faces = box_faces(p(0., 0., 0.), p(10., 10., 3.));
+    let roof = faces.remove(1);
+    let mut entities = polylines(faces);
+    let mut exterior = roof.clone();
+    exterior.push(roof[0]);
+    let up = cadkit_core::polygon::normal(&exterior).unwrap().z > 0.0;
+    let interiors = (0..3)
+        .map(|i| {
+            let x = 1. + 3. * f64::from(i);
+            let mut hole = vec![
+                p(x, 4., 3.),
+                p(x + 2., 4., 3.),
+                p(x + 2., 6., 3.),
+                p(x, 6., 3.),
+                p(x, 4., 3.),
+            ];
+            if up {
+                hole.reverse();
+            }
+            hole
+        })
+        .collect();
+    entities.push(Entity::new(EntityKind::Polygon {
+        exterior,
+        interiors,
+    }));
+    let doc = document(entities);
+    let mut accepted = None;
+    for max_objects in 1..2_000 {
+        let mut limits = Limits::default();
+        limits.max_objects = max_objects;
+        let o = BuildingOptions::new(
+            ExportOptions::new(SRS, 2)
+                .with_closed_polylines_as_surfaces(true)
+                .with_limits(limits),
+        );
+        if buildings_from_document(&doc, 0, &o).is_ok() {
+            accepted = Some(max_objects);
+            write_buildings(&doc, 0, &o).unwrap();
+            break;
+        }
+    }
+    assert!(accepted.is_some());
+}
+
+#[test]
+fn generic_export_writes_what_its_own_planarity_ceiling_accepted() {
+    // A corner 6 cm up puts a 40 m x 30 m face 3 cm off its plane: accepted with a
+    // 5 cm ceiling, rejected by the default 1 cm.
+    let doc = document(polylines(vec![vec![
+        p(0., 0., 0.),
+        p(40., 0., 0.),
+        p(40., 30., 0.06),
+        p(0., 30., 0.),
+    ]]));
+    let loose = ExportOptions::new(SRS, 2)
+        .with_closed_polylines_as_surfaces(true)
+        .with_max_planarity_deviation(0.05);
+    let (native, report) =
+        from_document_with_report(&doc, &loose, UnsupportedGeometry::Reject).unwrap();
+    assert!(report.issues.is_empty());
+    let mut tolerant = ValidationOptions::default();
+    tolerant.planarity_tolerance = 0.05;
+    assert_eq!(validate(&native, &tolerant).unwrap().polygons, 1);
+    // Default validation, which the writers used to apply, refuses the whole document.
+    assert!(validate(&native, &ValidationOptions::default()).is_err());
+    let bytes = write_document(&doc, &loose).unwrap();
+    validate_xsd_if_cached(&bytes);
+    write_document_with_report(&doc, &loose, UnsupportedGeometry::Reject).unwrap();
+    // The default ceiling keeps it a line string, and the default write validates it.
+    let strict = ExportOptions::new(SRS, 2).with_closed_polylines_as_surfaces(true);
+    let (_, report) =
+        from_document_with_report(&doc, &strict, UnsupportedGeometry::Reject).unwrap();
+    assert_eq!(report.issues[0].code, "gml.face_not_planar");
+    write_document(&doc, &strict).unwrap();
+}
+
+#[test]
+fn preflight_located_adds_ids_and_nothing_else() {
+    let (_, _, native) = roundtrip(
+        &mixed_site(),
+        &options().with_grouping(BuildingGrouping::Layer),
+    );
+    let plain =
+        tkgm::preflight(&native, tkgm::Profile::CityModelTender, &Limits::default()).unwrap();
+    let located =
+        tkgm::preflight_located(&native, tkgm::Profile::CityModelTender, &Limits::default())
+            .unwrap();
+    let plain_json = serde_json::to_value(&plain).unwrap();
+    assert!(!plain.issues.is_empty());
+    for issue in plain_json["issues"].as_array().unwrap() {
+        let issue = issue.as_object().unwrap();
+        assert!(!issue.contains_key("id") && !issue.contains_key("building_id"));
+    }
+    let mut stripped = serde_json::to_value(&located).unwrap();
+    let mut buildings = std::collections::BTreeSet::new();
+    for issue in stripped["issues"].as_array_mut().unwrap() {
+        let issue = issue.as_object_mut().unwrap();
+        if let Some(b) = issue.remove("building_id") {
+            buildings.insert(b.as_str().unwrap().to_owned());
+        }
+        issue.remove("id");
+    }
+    assert_eq!(stripped, plain_json);
+    assert_eq!(
+        buildings.into_iter().collect::<Vec<_>>(),
+        ["cadkit_bldg_1", "cadkit_bldg_2"]
+    );
+    // A located finding names the element it counts.
+    let nodes: Vec<&Element> = {
+        fn walk<'a>(e: &'a Element, out: &mut Vec<&'a Element>) {
+            out.push(e);
+            for c in e.elements() {
+                walk(c, out);
+            }
+        }
+        let mut out = vec![];
+        walk(&native.root, &mut out);
+        out
+    };
+    for issue in &located.issues {
+        if let Some(id) = &issue.id {
+            assert!(nodes.iter().any(|e| e.attribute(GML, "id") == Some(id)));
+        }
+    }
+}
+
+#[test]
+fn reader_bounds_documents_made_of_character_references() {
+    let doc = |body: &str| {
+        format!(
+            "<core:CityModel xmlns:core=\"http://www.opengis.net/citygml/2.0\" \
+             xmlns:gen=\"http://www.opengis.net/citygml/generics/2.0\">{body}</core:CityModel>"
+        )
+    };
+    // Two million references in one text node: one string, bounded by max_string_bytes.
+    let one = doc(&"&#65;".repeat(2_000_000));
+    let mut limits = Limits::default();
+    limits.max_string_bytes = 1_000_000;
+    assert!(matches!(
+        read_native(one.as_bytes(), &ReadOptions::default().with_limits(limits)),
+        Err(cadkit_core::Error::LimitExceeded { .. })
+    ));
+    // The decoded total is bounded too, before the text node grows.
+    let mut limits = Limits::default();
+    limits.max_decompressed_bytes = 1_000_000;
+    assert!(matches!(
+        read_native(one.as_bytes(), &ReadOptions::default().with_limits(limits)),
+        Err(cadkit_core::Error::LimitExceeded { .. })
+    ));
+    // References in separate elements are separate nodes.
+    let many = doc(&"<gen:x>&#65;</gen:x>".repeat(200_000));
+    let mut limits = Limits::default();
+    limits.max_objects = 100_000;
+    assert!(matches!(
+        read_native(many.as_bytes(), &ReadOptions::default().with_limits(limits)),
+        Err(cadkit_core::Error::LimitExceeded { .. })
+    ));
+    // Alternating comments split the text into nodes, each counted.
+    let split = doc(&"&#65;<!---->".repeat(60_000));
+    assert!(matches!(
+        read_native(
+            split.as_bytes(),
+            &ReadOptions::default().with_limits(limits)
+        ),
+        Err(cadkit_core::Error::LimitExceeded { .. })
+    ));
+}
+
+#[test]
+fn exact_welding_stays_linear_at_web_mercator_coordinates() {
+    // 3,000 wall triangles in a row share their y and z values. With a zero weld
+    // tolerance the grid must still tell x = 15,000,000 + 10 i apart.
+    let row = |x0: f64| {
+        let faces = (0..3_000)
+            .map(|i| {
+                let x = x0 + 10. * f64::from(i);
+                vec![p(x, 0., 0.), p(x + 4., 0., 0.), p(x + 4., 0., 3.)]
+            })
+            .collect();
+        document(polylines(faces))
+    };
+    let o = options()
+        .with_grouping(BuildingGrouping::Connected)
+        .with_weld_tolerance(0.)
+        .with_max_work(1_000_000);
+    for x0 in [0., 15_000_000.] {
+        let (_, report) = buildings_from_document(&row(x0), 0, &o).unwrap();
+        assert_eq!(report.buildings.len(), 3_000, "x0 = {x0}");
+    }
 }

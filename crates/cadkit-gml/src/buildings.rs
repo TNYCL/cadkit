@@ -1,8 +1,8 @@
 //! CityGML 2.0 buildings with thematic boundary surfaces, built from the planar faces of
-//! one model of a neutral [\`Document\`].
+//! one model of a neutral [`Document`].
 //!
-//! Every face becomes one \`bldg:WallSurface\`, \`bldg:RoofSurface\` or
-//! \`bldg:GroundSurface\` by the tilt of its normal; see [\`BuildingOptions\`] for the rule.
+//! Every face becomes one `bldg:WallSurface`, `bldg:RoofSurface` or
+//! `bldg:GroundSurface` by the tilt of its normal; see [`BuildingOptions`] for the rule.
 //! Coordinates are written unchanged in the caller's CRS.
 
 use crate::native::*;
@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as _;
 
-/// How faces are grouped into \`bldg:Building\` objects.
+/// How faces are grouped into `bldg:Building` objects.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -22,29 +22,35 @@ pub enum BuildingGrouping {
     /// All faces of the model form one building.
     #[default]
     Single,
-    /// One building per effective layer (an entity on layer \`"0"\` inside a block takes
+    /// One building per effective layer (an entity on layer `"0"` inside a block takes
     /// the layer of the inserting entity).
     Layer,
     /// One building per top-level entity of the model: a cell or group, a block
     /// reference with everything it draws, or a single face drawn at the top level.
     TopLevel,
     /// One building per connected component: faces that share a vertex within
-    /// [\`BuildingOptions::weld_tolerance\`], found with a spatial hash grid.
+    /// [`BuildingOptions::weld_tolerance`], found with a spatial hash grid.
     Connected,
 }
 
-/// Options of [\`buildings_from_document\`] and [\`write_buildings\`].
+/// Options of [`buildings_from_document`] and [`write_buildings`].
 ///
 /// Classification uses the tilt of a face, the angle between its normal and the
 /// vertical axis (0° horizontal, 90° vertical), which does not depend on winding:
 ///
-/// - tilt ≥ [\`Self::wall_min_tilt_degrees\`]: \`WallSurface\`;
-/// - tilt ≤ [\`Self::horizontal_max_tilt_degrees\`]: \`GroundSurface\` when the face's lowest
-///   point lies within [\`Self::ground_tolerance\`] of the lowest point of its building,
-///   \`RoofSurface\` otherwise;
-/// - in between (sloped): \`RoofSurface\` when the face's lowest point lies above that
+/// - tilt ≥ [`Self::wall_min_tilt_degrees`]: `WallSurface`;
+/// - tilt ≤ [`Self::horizontal_max_tilt_degrees`]: `GroundSurface` when the face's lowest
+///   point lies within [`Self::ground_tolerance`] of the lowest point of its building,
+///   `RoofSurface` otherwise;
+/// - in between (sloped): `RoofSurface` when the face's lowest point lies above that
 ///   band; a sloped face reaching the base (a ramp, a battered wall, an A-frame roof)
-///   stays unclassified: it is written into the building's \`lodNMultiSurface\` and reported.
+///   stays unclassified: it is written into the building's `lodNMultiSurface` and reported.
+///
+/// Both thresholds are inclusive; a face drawn exactly at one (to within 1e-9 in the
+/// cosine of the tilt, the rounding of a normal at map coordinates) belongs to it. The
+/// base is the lowest point of each building, so a building of a single horizontal
+/// face (a roof drawn as its own top-level entity under [`BuildingGrouping::TopLevel`])
+/// is a `GroundSurface`.
 ///
 /// Ground faces are wound so their normal points down, roof faces up; walls keep their
 /// drawn winding. Interior floors, soffits and overhang undersides are horizontal faces
@@ -53,10 +59,10 @@ pub enum BuildingGrouping {
 #[non_exhaustive]
 pub struct BuildingOptions {
     /// CRS identifier, LoD (2, 3 or 4: CityGML 2.0 has boundary surfaces only from LoD 2),
-    /// limits, and the surface options [\`ExportOptions::closed_polylines_as_surfaces\`]
+    /// limits, and the surface options [`ExportOptions::closed_polylines_as_surfaces`]
     /// and planarity tolerances. No coordinate is reprojected.
     pub export: ExportOptions,
-    /// Grouping of faces into buildings (default [\`BuildingGrouping::Single\`]).
+    /// Grouping of faces into buildings (default [`BuildingGrouping::Single`]).
     #[serde(default)]
     pub grouping: BuildingGrouping,
     /// Smallest tilt, in degrees, of a wall (default 80).
@@ -70,12 +76,12 @@ pub struct BuildingOptions {
     #[serde(default = "default_ground_tolerance")]
     pub ground_tolerance: f64,
     /// Distance within which two vertices are shared for
-    /// [\`BuildingGrouping::Connected\`], in coordinate units (default 0.001); 0 means equal.
+    /// [`BuildingGrouping::Connected`], in coordinate units (default 0.001); 0 means equal.
     #[serde(default = "default_weld_tolerance")]
     pub weld_tolerance: f64,
     /// Work budget, applied separately to the model walk (as
-    /// [\`WalkOptions::max_work\`]), to face validation and to vertex welding, and as the
-    /// geometry budget of the validation run by [\`write_buildings\`]
+    /// [`WalkOptions::max_work`]), to face validation and to vertex welding, and as the
+    /// geometry budget of the validation run by [`write_buildings`]
     /// (default 100,000,000).
     #[serde(default = "default_max_work")]
     pub max_work: u64,
@@ -98,7 +104,7 @@ fn default_max_work() -> u64 {
 }
 
 impl BuildingOptions {
-    /// Building options with the defaults above around \`export\`.
+    /// Building options with the defaults above around `export`.
     #[must_use]
     pub fn new(export: ExportOptions) -> Self {
         Self {
@@ -112,42 +118,42 @@ impl BuildingOptions {
         }
     }
 
-    /// Sets [\`Self::grouping\`].
+    /// Sets [`Self::grouping`].
     #[must_use]
     pub fn with_grouping(mut self, grouping: BuildingGrouping) -> Self {
         self.grouping = grouping;
         self
     }
 
-    /// Sets [\`Self::wall_min_tilt_degrees\`].
+    /// Sets [`Self::wall_min_tilt_degrees`].
     #[must_use]
     pub fn with_wall_min_tilt_degrees(mut self, degrees: f64) -> Self {
         self.wall_min_tilt_degrees = degrees;
         self
     }
 
-    /// Sets [\`Self::horizontal_max_tilt_degrees\`].
+    /// Sets [`Self::horizontal_max_tilt_degrees`].
     #[must_use]
     pub fn with_horizontal_max_tilt_degrees(mut self, degrees: f64) -> Self {
         self.horizontal_max_tilt_degrees = degrees;
         self
     }
 
-    /// Sets [\`Self::ground_tolerance\`] (coordinate units).
+    /// Sets [`Self::ground_tolerance`] (coordinate units).
     #[must_use]
     pub fn with_ground_tolerance(mut self, tolerance: f64) -> Self {
         self.ground_tolerance = tolerance;
         self
     }
 
-    /// Sets [\`Self::weld_tolerance\`] (coordinate units).
+    /// Sets [`Self::weld_tolerance`] (coordinate units).
     #[must_use]
     pub fn with_weld_tolerance(mut self, tolerance: f64) -> Self {
         self.weld_tolerance = tolerance;
         self
     }
 
-    /// Sets [\`Self::max_work\`].
+    /// Sets [`Self::max_work`].
     #[must_use]
     pub fn with_max_work(mut self, max_work: u64) -> Self {
         self.max_work = max_work;
@@ -182,23 +188,23 @@ impl BuildingOptions {
     }
 }
 
-/// Per-building counts in [\`BuildingReport::buildings\`].
+/// Per-building counts in [`BuildingReport::buildings`].
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct BuildingSummary {
-    /// \`gml:id\` of the \`bldg:Building\`.
+    /// `gml:id` of the `bldg:Building`.
     pub id: String,
-    /// The layer of [\`BuildingGrouping::Layer\`].
+    /// The layer of [`BuildingGrouping::Layer`].
     pub layer: Option<String>,
-    /// The model entity index of [\`BuildingGrouping::TopLevel\`].
+    /// The model entity index of [`BuildingGrouping::TopLevel`].
     pub top_level: Option<usize>,
-    /// \`WallSurface\` objects.
+    /// `WallSurface` objects.
     pub wall_surfaces: u64,
-    /// \`RoofSurface\` objects.
+    /// `RoofSurface` objects.
     pub roof_surfaces: u64,
-    /// \`GroundSurface\` objects.
+    /// `GroundSurface` objects.
     pub ground_surfaces: u64,
-    /// Faces written into the building's \`lodNMultiSurface\` without a class.
+    /// Faces written into the building's `lodNMultiSurface` without a class.
     pub unclassified_faces: u64,
 }
 
@@ -206,33 +212,33 @@ pub struct BuildingSummary {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct BuildingIssue {
-    /// Stable code. Skipped: \`gml.face_degenerate\`, \`gml.face_not_planar\`,
-    /// \`gml.face_self_intersecting\`, \`gml.face_invalid\` (non-finite coordinates or a bad
-    /// hole), \`gml.face_curved\` (bulges), \`gml.face_wide\` (polyline widths),
-    /// \`gml.face_index_out_of_range\` (mesh face). Kept unclassified:
-    /// \`gml.face_sloped_at_base\`.
+    /// Stable code. Skipped: `gml.face_degenerate`, `gml.face_not_planar`,
+    /// `gml.face_self_intersecting`, `gml.face_invalid` (non-finite coordinates or a bad
+    /// hole), `gml.face_curved` (bulges), `gml.face_wide` (polyline widths),
+    /// `gml.face_index_out_of_range` (mesh face). Kept unclassified:
+    /// `gml.face_sloped_at_base`.
     pub code: String,
-    /// Source entity as [\`WalkContext::path\`]; resolve it with [\`Document::entity_at\`].
+    /// Source entity as [`WalkContext::path`]; resolve it with [`Document::entity_at`].
     /// Every cell of an insert array has the same path.
     pub path: Vec<usize>,
-    /// [\`WalkContext::model_path_len\`]: the leading part of \`path\` that addresses an entity
+    /// [`WalkContext::model_path_len`]: the leading part of `path` that addresses an entity
     /// of the model itself (the outermost block reference for geometry inside a block).
     pub model_path_len: usize,
-    /// Index of the face in a \`Mesh\` entity.
+    /// Index of the face in a `Mesh` entity.
     pub mesh_face: Option<usize>,
-    /// The entity's native id ([\`Entity::id\`]).
+    /// The entity's native id ([`Entity::id`]).
     pub entity_id: Option<u64>,
     /// Effective layer name.
     pub layer: String,
-    /// Neutral entity kind, as [\`EntityKind::type_name\`].
+    /// Neutral entity kind, as [`EntityKind::type_name`].
     pub entity_type: String,
-    /// \`gml:id\` of the building that holds the face, when it was written.
+    /// `gml:id` of the building that holds the face, when it was written.
     pub building_id: Option<String>,
-    /// \`gml:id\` of the written \`gml:Polygon\`.
+    /// `gml:id` of the written `gml:Polygon`.
     pub polygon_id: Option<String>,
 }
 
-/// What [\`buildings_from_document\`] produced and left out.
+/// What [`buildings_from_document`] produced and left out.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct BuildingReport {
@@ -240,11 +246,11 @@ pub struct BuildingReport {
     pub model: usize,
     /// Written buildings in output order.
     pub buildings: Vec<BuildingSummary>,
-    /// \`WallSurface\` objects in all buildings.
+    /// `WallSurface` objects in all buildings.
     pub wall_surfaces: u64,
-    /// \`RoofSurface\` objects in all buildings.
+    /// `RoofSurface` objects in all buildings.
     pub roof_surfaces: u64,
-    /// \`GroundSurface\` objects in all buildings.
+    /// `GroundSurface` objects in all buildings.
     pub ground_surfaces: u64,
     /// Faces written without a class.
     pub unclassified_faces: u64,
@@ -255,11 +261,13 @@ pub struct BuildingReport {
     /// Visited entities that are not face candidates (lines, open polylines, text, ...).
     pub ignored_entities: u64,
     /// Closed polylines not considered because
-    /// [\`ExportOptions::closed_polylines_as_surfaces\`] is off.
+    /// [`ExportOptions::closed_polylines_as_surfaces`] is off.
     pub closed_polylines_ignored: u64,
-    /// Skipped faces in traversal order, then unclassified faces in building order.
+    /// Skipped faces in traversal order, then per building in output order its
+    /// unclassified faces (and, rarely, a face whose rewound ring no longer passes the
+    /// planarity check, skipped as `gml.face_not_planar`).
     pub issues: Vec<BuildingIssue>,
-    /// More than min(\`max_objects\`, 100,000) issues: the rest are only counted.
+    /// More than min(`max_objects`, 100,000) issues: the rest are only counted.
     pub issues_truncated: bool,
 }
 
@@ -598,27 +606,35 @@ fn extend(bounds: &mut Option<(Point3, Point3)>, s: &Surface) {
     }
 }
 
+/// Rounding margin of the tilt thresholds, in cosine. The normal of a vertical face at
+/// map coordinates (1e6 to 1e7) is vertical only to about 1e-11; the margin is about
+/// 6e-8 degrees at a 90 degree threshold and 0.003 degrees at 0 degrees, below drawing
+/// precision.
+const TILT_COSINE_MARGIN: f64 = 1e-9;
+
 /// Elements written per face (boundedBy, surface, lodNMultiSurface, MultiSurface,
 /// surfaceMember, Polygon, exterior, LinearRing, posList and its text) and per building
-/// (member, Building, envelope with corners and texts, lodNMultiSurface, MultiSurface).
+/// (member, Building, envelope with corners and texts, lodNMultiSurface, MultiSurface),
+/// and per hole (interior, LinearRing, posList and its text).
 const NODES_PER_FACE: u64 = 10;
 const NODES_PER_BUILDING: u64 = 10;
+const NODES_PER_HOLE: u64 = 4;
 
-/// Builds CityGML 2.0 buildings from the surfaces of \`source.models[model]\`: \`Polygon\`
-/// (holes kept), \`Face\` and \`Mesh\` faces and, with
-/// [\`ExportOptions::closed_polylines_as_surfaces\`], closed straight polylines, including
-/// geometry drawn through block references and groups (as [\`Document::walk\`] visits it;
+/// Builds CityGML 2.0 buildings from the surfaces of `source.models[model]`: `Polygon`
+/// (holes kept), `Face` and `Mesh` faces and, with
+/// [`ExportOptions::closed_polylines_as_surfaces`], closed straight polylines, including
+/// geometry drawn through block references and groups (as [`Document::walk`] visits it;
 /// hidden layers and invisible entities are skipped). Faces that are degenerate, not
 /// planar within the export tolerances or self-intersecting are skipped and reported, so
-/// the result passes [\`crate::validate\`] with default geometry checks.
+/// the result passes [`crate::validate`] with default geometry checks.
 ///
-/// Each building gets a \`gml:boundedBy\` envelope, its faces as
-/// \`bldg:boundedBy/bldg:{Wall,Roof,Ground}Surface/bldg:lodNMultiSurface\` (one surface per
-/// face) and unclassified faces in its own \`bldg:lodNMultiSurface\`; the model gets a 3D
-/// envelope in [\`ExportOptions::srs_name\`]. Ids are \`cadkit_bldg_{n}\`, surfaces
-/// \`cadkit_bldg_{n}_s{k}\` and polygons \`cadkit_bldg_{n}_p{k}\`, numbered in traversal
+/// Each building gets a `gml:boundedBy` envelope, its faces as
+/// `bldg:boundedBy/bldg:{Wall,Roof,Ground}Surface/bldg:lodNMultiSurface` (one surface per
+/// face) and unclassified faces in its own `bldg:lodNMultiSurface`; the model gets a 3D
+/// envelope in [`ExportOptions::srs_name`]. Ids are `cadkit_bldg_{n}`, surfaces
+/// `cadkit_bldg_{n}_s{k}` and polygons `cadkit_bldg_{n}_p{k}`, numbered in traversal
 /// order, so equal input gives equal output. No TKGM attribute, name, storey or class is
-/// invented. A model without faces gives an empty \`CityModel\` and a report that says why.
+/// invented. A model without faces gives an empty `CityModel` and a report that says why.
 pub fn buildings_from_document(
     source: &Document,
     model: usize,
@@ -675,9 +691,13 @@ pub fn buildings_from_document(
             list.push(index);
         }
     }
+    let holes = c.faces.iter().fold(0u64, |n, f| {
+        n.saturating_add(f.surface.interiors.len() as u64)
+    });
     let nodes = (members.len() as u64)
         .saturating_mul(NODES_PER_BUILDING)
         .saturating_add((c.faces.len() as u64).saturating_mul(NODES_PER_FACE))
+        .saturating_add(holes.saturating_mul(NODES_PER_HOLE))
         .saturating_add(8);
     if nodes > limits.max_objects {
         return Err(Error::limit(
@@ -706,11 +726,13 @@ pub fn buildings_from_document(
             let Some(mut face) = faces.get_mut(i).and_then(Option::take) else {
                 continue;
             };
-            // |n.z| is the cosine of the tilt; compare cosines, not angles.
+            // |n.z| is the cosine of the tilt; compare cosines, not angles. The margin
+            // keeps a face drawn exactly at a threshold on the inclusive side, which
+            // rounding of the normal and of cos() would otherwise decide.
             let up = face.surface.normal.z.abs();
-            let class = if up <= cos_wall {
+            let class = if up <= cos_wall + TILT_COSINE_MARGIN {
                 Class::Wall
-            } else if up >= cos_flat {
+            } else if up >= cos_flat - TILT_COSINE_MARGIN {
                 if face.surface.z_min <= band {
                     Class::Ground
                 } else {
@@ -821,10 +843,10 @@ pub fn buildings_from_document(
     Ok((doc, c.report))
 }
 
-/// [\`buildings_from_document\`] serialized as UTF-8 XML after [\`crate::validate\`] with
+/// [`buildings_from_document`] serialized as UTF-8 XML after [`crate::validate`] with
 /// geometry checks, a planarity tolerance of at least
-/// [\`ExportOptions::max_planarity_deviation\`] and a geometry budget of at least
-/// [\`BuildingOptions::max_work\`].
+/// [`ExportOptions::max_planarity_deviation`] and a geometry budget of at least
+/// [`BuildingOptions::max_work`].
 pub fn write_buildings(
     source: &Document,
     model: usize,

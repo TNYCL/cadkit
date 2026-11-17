@@ -201,6 +201,13 @@ impl VertexWelder {
     }
 
     fn cell(&self, p: Point3) -> (i64, i64, i64) {
+        if self.tol == 0.0 {
+            // Exact matching needs no neighbourhood, and coordinate / 1e-12 leaves the
+            // i64 range above 9.2e6 (UTM northings, Web Mercator), where clamping would
+            // put a whole axis into one cell. Key on the bits; + 0.0 maps -0.0 to 0.0.
+            let key = |v: f64| (v + 0.0).to_bits() as i64;
+            return (key(p.x), key(p.y), key(p.z));
+        }
         let step = self.tol.max(1e-12);
         let q = |v: f64| {
             (v / step)

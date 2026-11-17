@@ -214,14 +214,29 @@ pub fn write(doc: &CityGmlDocument, options: &ValidationOptions) -> Result<Vec<u
 }
 
 /// Writes neutral [`Document`] geometry to CityGML 2.0 with an explicit CRS and LoD.
+/// With [`ExportOptions::closed_polylines_as_surfaces`], the written polygons are
+/// validated with a planarity tolerance of at least
+/// [`ExportOptions::max_planarity_deviation`], so a surface the export accepted is written.
 pub fn write_document(doc: &Document, options: &ExportOptions) -> Result<Vec<u8>> {
-    write(
-        &from_document(doc, options)?,
-        &ValidationOptions {
-            limits: options.limits,
-            ..Default::default()
-        },
-    )
+    write(&from_document(doc, options)?, &export_validation(options))
+}
+
+/// Validation of generic export output: default checks within `options.limits`, and the
+/// planarity ceiling the export applied to closed polylines when it is larger.
+fn export_validation(options: &ExportOptions) -> ValidationOptions {
+    let defaults = ValidationOptions::default();
+    let planarity_tolerance = if options.closed_polylines_as_surfaces {
+        defaults
+            .planarity_tolerance
+            .max(options.max_planarity_deviation)
+    } else {
+        defaults.planarity_tolerance
+    };
+    ValidationOptions {
+        limits: options.limits,
+        planarity_tolerance,
+        ..defaults
+    }
 }
 
 /// Writes a generic CAD projection with explicit handling of unsupported geometry.
@@ -233,12 +248,6 @@ pub fn write_document_with_report(
     unsupported: UnsupportedGeometry,
 ) -> Result<(Vec<u8>, ExportReport)> {
     let (native, report) = from_document_with_report(doc, options, unsupported)?;
-    let bytes = write(
-        &native,
-        &ValidationOptions {
-            limits: options.limits,
-            ..Default::default()
-        },
-    )?;
+    let bytes = write(&native, &export_validation(options))?;
     Ok((bytes, report))
 }

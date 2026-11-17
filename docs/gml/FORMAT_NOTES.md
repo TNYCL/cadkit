@@ -206,7 +206,10 @@ by `max_planarity_deviation = 0.01` coordinate units. The cap equals the default
 `ValidationOptions::planarity_tolerance`, and the plane test uses the same reference
 point and normal as validation, so every accepted face passes default validation
 after a write/read round trip (`f64` text is the shortest round-trip representation).
-A cap above 0.01 needs the same planarity tolerance when the file is validated.
+A cap above 0.01 needs the same planarity tolerance when the file is validated;
+`write_document`, `write_document_with_report` (with the option on) and `write_buildings`
+validate with `max(0.01, max_planarity_deviation)`, so a face the export accepted does
+not make the whole write fail.
 
 ### Buildings
 
@@ -229,7 +232,13 @@ so winding does not matter:
 | between | above that band | `RoofSurface` |
 | between | within the band | unclassified, `gml.face_sloped_at_base` |
 
-The base is per building, so grouping changes it. Ground faces are rewound so their
+Both thresholds are inclusive: the cosines are compared with a margin of 1e-9, because
+the normal of a face drawn exactly at a threshold, or of a vertical wall placed at map
+coordinates through a rotated block (vertical to about 1e-11), is decided by rounding
+otherwise. The margin is about 6e-8 degrees at 90 degrees and 0.003 degrees at 0.
+
+The base is per building, so grouping changes it. A building of one horizontal face
+(a roof drawn as its own top-level entity under `TopLevel`) is a ground surface. Ground faces are rewound so their
 normal points down and roof faces up; walls keep the drawn winding (outward needs a
 closed shell, which CAD models do not guarantee). Holes are wound against their
 exterior. Unclassified faces are written into the building's own
@@ -248,7 +257,12 @@ face) and `Connected` (faces sharing a vertex within `weld_tolerance`, 0.001 by
 default; a spatial hash grid with one representative per welded vertex and
 union-find, linear in the number of vertices and charged to the work budget).
 Vertices are welded to the first representative within the tolerance, so a chain of
-vertices each just under the tolerance apart may split.
+vertices each just under the tolerance apart may split. Grid cells are one tolerance
+wide and the 27 surrounding cells are searched, so vertices on both sides of a cell
+border weld. With a tolerance of 0 the grid keys on the exact coordinate bits: a
+coordinate divided by the minimum cell (1e-12) leaves the `i64` range above 9.2e6
+(UTM northings, Web Mercator), and clamping put a whole axis into one cell (3,000
+triangles in a row at x = 1.5e7 exceeded a 1,000,000 work budget).
 
 Output layout: a root 3D `gml:Envelope` (`srsName` from the options,
 `srsDimension="3"`), and per building an envelope, then in CityGML 2.0
@@ -258,8 +272,25 @@ with `bldg:lodNMultiSurface/gml:MultiSurface/gml:surfaceMember/gml:Polygon` and 
 `gml:posList` ring (`srsDimension="3"`; fewer XML nodes than one `gml:pos` per
 vertex). Ids are `cadkit_bldg_{n}`, `cadkit_bldg_{n}_s{k}` (surface) and
 `cadkit_bldg_{n}_p{k}` (polygon), numbered in walk order: equal input gives equal
-bytes. The XML node count (10 per face, 10 per building) is checked against
-`limits.max_objects` before the tree is built.
+bytes. The XML node count (10 per face, 10 per building, 4 per hole) is checked against
+`limits.max_objects` before the tree is built; it is an upper bound of what
+`validate` counts, so a document the builder returns is also written.
+
+Schema order was checked against the official `building.xsd` (CityGML 2.0
+`AbstractBuildingType`: ... `lod2MultiSurface`, `lod2MultiCurve`,
+`lod2TerrainIntersection`, `outerBuildingInstallation`, `interiorBuildingInstallation`,
+`boundedBy`, `lod3Solid`, `lod3MultiSurface`, ... `lod4MultiSurface`; boundary surfaces:
+`lod2MultiSurface`, `lod3MultiSurface`, `lod4MultiSurface`, `opening`). The tests in
+`tests/buildings.rs` pass every written building file through the same official XSD
+check as the other exports (`tests/support/xsd.rs`; required in CI by
+`CADKIT_REQUIRE_GML_XSD`), for LoD 2, 3 and 4 and every grouping mode, and assert the
+property order of every `bldg:Building` independently of the validator.
+
+Ring orientation: ground faces point down and roof faces up after the write; wall
+winding is left as drawn, and neither `validate` nor `geometry_issues` checks the
+orientation of a multi-surface member, so mixed wall windings pass. Polygons carry no
+`srsName`; they inherit the CRS of the root and building envelopes, as in the generic
+export. No `xlink:href` is written.
 
 `BuildingReport` gives per-building and total surface counts, unclassified and
 skipped faces, skipped faces per code, ignored non-surface entities, closed polylines
@@ -279,7 +310,11 @@ with resolving paths; faces inside two block references placed in model space wi
 paths `[insert, 6]`; an A-frame at LoD 2, 3 and 4. Every output is read with
 `read_native` and `read` and passes `validate` with default geometry checks.
 Measured in a debug build: 20,000 boxes (120,000 faces, `Connected`) write 58.8 MB in
-9.1 s and read and validate in 9.3 s.
+9.1 s and read and validate in 9.3 s. Split (debug, at map coordinates, 63 MB):
+collecting and checking the faces 0.8 s, welding and union-find 1.7 s, the geometry
+validation `write_buildings` runs on its own output 4.2 s, serialization 2.6 s;
+`read_native` 6.3 s. The validation pass is the largest single cost; it is kept because
+it guarantees that the output passes the crate's own checks.
 
 ### Reader node count
 

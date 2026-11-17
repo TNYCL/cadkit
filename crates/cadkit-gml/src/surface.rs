@@ -5,14 +5,14 @@
 use cadkit_core::{Error, Point3, Result, Vec3, Vertex};
 
 /// Ring-point to plane distances above this are "not planar" regardless of the relative
-/// tolerance; matches the default of [\`crate::ValidationOptions::planarity_tolerance\`].
+/// tolerance; matches the default of [`crate::ValidationOptions::planarity_tolerance`].
 pub(crate) const DEFAULT_MAX_PLANARITY_DEVIATION: f64 = 0.01;
 /// Default planarity tolerance as a fraction of a face's bounding-box diagonal.
 pub(crate) const DEFAULT_PLANARITY_TOLERANCE: f64 = 1e-3;
-/// Boundary-crossing tolerance; the default of [\`crate::ValidationOptions::tolerance\`].
+/// Boundary-crossing tolerance; the default of [`crate::ValidationOptions::tolerance`].
 const INTERSECTION_TOLERANCE: f64 = 1e-6;
 
-/// Why a face candidate cannot be written as a \`gml:Polygon\`.
+/// Why a face candidate cannot be written as a `gml:Polygon`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Reject {
     Curved,
@@ -39,7 +39,7 @@ impl Reject {
 }
 
 /// Planarity contract: a ring point may sit at most
-/// \`min(relative * bbox diagonal, absolute)\` coordinate units off the face plane.
+/// `min(relative * bbox diagonal, absolute)` coordinate units off the face plane.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Planarity {
     pub relative: f64,
@@ -89,7 +89,7 @@ impl Surface {
     }
 }
 
-/// The ring of a closed polyline, \`None\` when the polyline is open (neither flagged
+/// The ring of a closed polyline, `None` when the polyline is open (neither flagged
 /// closed nor ending on its first vertex). Bulges and widths are not surfaces.
 pub(crate) fn polyline_ring(
     vertices: &[Vertex],
@@ -142,8 +142,8 @@ fn within_plane(exterior: &[Point3], interiors: &[Vec<Point3>], n: Vec3, toleran
         .all(|p| ((p.x - o.x) * n.x + (p.y - o.y) * n.y + (p.z - o.z) * n.z).abs() <= tolerance)
 }
 
-/// Checks closure, degeneracy, planarity and crossings of one face. \`Ok(Err(_))\` is a
-/// rejected face; \`Err(_)\` only an exhausted \`work\` budget.
+/// Checks closure, degeneracy, planarity and crossings of one face. `Ok(Err(_))` is a
+/// rejected face; `Err(_)` only an exhausted `work` budget.
 pub(crate) fn prepare(
     exterior: Vec<Point3>,
     interiors: Vec<Vec<Point3>>,
