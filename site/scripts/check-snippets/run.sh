@@ -19,7 +19,7 @@
 #
 # Environment:
 #   WORK                 scratch directory (default: a new mktemp -d)
-#   PYCADKIT_VERSION     pycadkit version installed into WORK/venv (default 0.5.3)
+#   PYCADKIT_VERSION     pycadkit version installed into WORK/venv (default: site cadkit-wasm version)
 #   CADKIT_CRATE         Rust dependency spec for the scratch crate (default: path to
 #                        crates/cadkit of this checkout; e.g. '"=0.5.3"' for crates.io)
 #   CADKIT_REGISTRY_VERSION  docs-rust: use cadkit, cadkit-geom, cadkit-scene and cadkit-gpu
@@ -42,7 +42,7 @@ targets=("$@")
 
 venv="$work/venv"
 ensure_venv() {
-  local want="${PYCADKIT_VERSION:-0.5.3}"
+  local want="${PYCADKIT_VERSION:-$(node -p "JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8')).dependencies['cadkit-wasm']" "$site/package.json")}"
   [ -x "$venv/bin/python" ] || python3 -m venv "$venv"
   "$venv/bin/python" -c "import importlib.metadata as m, sys; sys.exit(m.version('pycadkit') != '$want')" 2>/dev/null \
     || "$venv/bin/pip" install --quiet "pycadkit==$want"

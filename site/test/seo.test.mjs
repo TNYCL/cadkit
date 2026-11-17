@@ -150,6 +150,14 @@ test('mdxToMarkdown refuses what it cannot convert', () => {
 	assert.throws(() => mdxToMarkdown('{someExpression}\n', ctx), /unsupported MDX syntax/);
 });
 
+test('MDX export preserves multiple blank lines inside a source example', () => {
+	const source = 'first = 1\n\n\nsecond = 2\n';
+	const md = mdxToMarkdown("import sample from './sample.py?raw';\n\n<Code code={sample} lang=\"python\" />", {
+		readImport: () => source, vars: {},
+	});
+	assert.ok(md.includes(source));
+});
+
 test('absoluteLinks and markdownDocument', () => {
 	const md = 'See [x](/docs/x/#a), [y](https://other.example/y) and `[z](/z/)`.\n\n```\n[c](/c/)\n```\n';
 	assert.equal(

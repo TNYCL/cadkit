@@ -1,7 +1,7 @@
 # cadkit.org
 
 Source of [cadkit.org](https://cadkit.org): the landing page, the documentation (Starlight) and
-the project pages. Static output, hosted on Cloudflare Pages. Licensed MIT OR Apache-2.0 like the
+the project pages. Static output, hosted on Cloudflare. Licensed MIT OR Apache-2.0 like the
 rest of the repository.
 
 ## Run
@@ -14,6 +14,7 @@ cd site
 python3 ../scripts/buildlock.py npm ci
 python3 ../scripts/buildlock.py npm run build     # prebuild renders the hero, then astro build
 npm run verify                                     # post-build checks over dist/
+npm run verify:live                                # read-only checks against the deployed site
 npm test                                           # node --test (contrast, JS snippet, asset freshness)
 python3 ../scripts/buildlock.py npm run check     # astro check (TypeScript strict)
 npm run dev                                        # http://localhost:4321
@@ -21,10 +22,11 @@ npm run dev                                        # http://localhost:4321
 
 | Script | What it does |
 |---|---|
-| `dev`, `build`, `preview` | Astro; `predev`/`prebuild`/`precheck` run `scripts/prebuild.mjs` first (every step in `scripts/prebuild.d/` in name order, then `scripts/hero.mjs`) |
+| `dev`, `build`, `preview` | Astro; `predev`/`prebuild`/`precheck` run `scripts/prebuild.mjs` first (every step in `scripts/prebuild.d/` in name order, then `scripts/hero.mjs`); `postbuild` validates the finished output |
 | `check` | `astro check` |
 | `test` | `node --test "test/**/*.test.mjs"` |
 | `verify` | `scripts/verify.mjs` over `dist/` (run after `build`) |
+| `verify:live` | read-only HTTP audit after deployment, including crawler access and release freshness |
 | `brand` | regenerate the logo set (`scripts/brand.mjs`) |
 | `sample:plan` | regenerate the synthetic sample DXF (`scripts/samples/plan.mjs`) |
 
@@ -118,11 +120,11 @@ JavaScript one against the sample. The others:
 
 ```sh
 CARGO_TARGET_DIR=../target scripts/check-snippets/run.sh            # python, rust, c
-CADKIT_CRATE='"=0.5.3"' scripts/check-snippets/run.sh rust           # against crates.io
+CADKIT_CRATE='"=0.5.4"' scripts/check-snippets/run.sh rust           # against crates.io
 ```
 
-Python installs `pycadkit==0.5.3` into a venv and runs the snippet; Rust `cargo check`s a
-scratch crate (through the build lock); C is `gcc -fsyntax-only` against
+Python installs the same version as the site's `cadkit-wasm` pin into a venv and runs the
+snippet; Rust `cargo check`s a scratch crate (through the build lock); C is `gcc -fsyntax-only` against
 `crates/cadkit-capi/include/cadkit.h`.
 
 ## SEO, analytics, headers
@@ -143,14 +145,21 @@ scratch crate (through the build lock); C is `gcc -fsyntax-only` against
 - `robots.txt` allows everything and names the search and AI crawlers explicitly.
   `/.well-known/security.txt` (RFC 9116, `Expires` = build date + 180 days, so every deploy
   renews it). Both are static endpoints in `src/pages/`.
-- For language models (<https://llmstxt.org>): `/llms.txt` lists every page in sidebar order,
-  `/llms-full.txt` is the whole documentation in one file, and every docs page is also served
-  as Markdown at its path with `.md` instead of the trailing slash
-  (`/docs/getting-started/rust.md`, linked with `rel="alternate"`). MDX pages are converted by
-  `src/lib/md-export.mjs`, which knows `<Code>`, `<CodeTabs>` and `<Callout>` and fails the
-  build on any other component: add a conversion there when a docs page needs a new one.
+- For language models (<https://llmstxt.org>): `/llms.txt` lists every page, with documentation
+  in sidebar order and secondary pages in `Optional`. `/llms-full.txt` contains all page text.
+  Every indexable page has a Markdown copy (`/docs/getting-started/rust.md`, `/formats/dwg.md`,
+  `/index.md` for the home page). HTML advertises it with `rel="alternate"`; HTML and HTTP
+  headers advertise `/llms.txt` with `rel="describedby"`. Docs use `src/lib/md-export.mjs`,
+  which converts `<Code>`, `<CodeTabs>` and `<Callout>` and rejects unknown components.
+  Hand-written pages are exported from their rendered `<main>` during postbuild by
+  `src/lib/site-markdown.mjs`, using the HTML-standard parser `parse5`. All code tabs and
+  tables are retained; navigation, controls, scripts and decorative SVGs are omitted.
+  No separately maintained copy can drift from the page. The dev server only serves the
+  source-based docs exports; run a production build to inspect the complete exports.
 - `/changelog/feed.xml` is an Atom feed of the releases in `CHANGELOG.md`;
   `/site.webmanifest` carries the name, colours and icons.
+- HTML is the canonical, indexable content. `noindex` on a Markdown copy does not block
+  fetching it directly, and llms.txt does not guarantee search or AI indexing.
 - `X-Robots-Tag: noindex` (`public/_headers`) on the Markdown copies, `llms-full.txt`, sample
   drawings, licence texts, the Pagefind index and the IndexNow key: they repeat a page or are
   not pages. Pages, sitemaps, `robots.txt` and `llms.txt` never get that header (verify checks).
@@ -163,9 +172,10 @@ scratch crate (through the build lock); C is `gcc -fsyntax-only` against
   and `/licenses/jetbrains-mono.txt` and linked from `/brand/`.
 - `verify` also enforces unique titles and descriptions (70–170 characters), sitemap
   completeness and dates, the robots policy, a Markdown copy and an `llms.txt` entry for every
-  docs page, valid JSON-LD (no rating/review/FAQ types, `dateModified` equal to the sitemap's
+  indexable page, valid JSON-LD (no rating/review/FAQ types, `dateModified` equal to the sitemap's
   `lastmod`), no third-party resources other than the analytics beacon, and no build-machine
-  paths in shipped files.
+  paths in shipped files. It also checks real code examples against every Markdown export,
+  the content skip-link target and exact agreement with `llms-full.txt`.
 - Cloudflare Web Analytics: the beacon is added only when `PUBLIC_CF_WEB_ANALYTICS_TOKEN` is
   set at build time, never on `/demo/` or the 404 page. No cookies, no other analytics.
 
@@ -200,7 +210,7 @@ synced repository docs are allowed; hand-written pages follow the trademark rule
 Code on the guides and getting-started pages is imported verbatim (`?raw`) from
 `scripts/check-snippets/docs/`, so what readers copy is what was checked. `npm test` runs the
 JavaScript ones; `scripts/check-snippets/run.sh` runs Python (venv with `pycadkit`), Rust
-(`cargo check` and run; `CADKIT_REGISTRY_VERSION=0.5.3` checks against crates.io), C (syntax,
+(`cargo check` and run; `CADKIT_REGISTRY_VERSION=0.5.4` checks against crates.io), C (syntax,
 plus link and run when `CADKIT_CAPI_LIB_DIR` is set) and the CLI (`CADKIT_BIN`, otherwise a
 debug build through the lock). `DOCS_RUN` selects targets.
 
@@ -240,18 +250,43 @@ with no numbers. `STATS_SUMMARY_FILE` (use a local file), `STATS_OFFLINE` and
 `STATS_REFRESH` control the step. The stats collector triggers a rebuild through a Cloudflare
 Pages deploy hook after each daily snapshot, which also renews `security.txt`.
 
-## Cloudflare Pages
+## Cloudflare deployment
 
 | Setting | Value |
 |---|---|
 | Root directory | `site` |
-| Build command | `npm run build` |
+| Build command | `npm run build && npm run verify` |
 | Output directory | `dist` |
 | Environment | `NODE_VERSION=24`; optional `PUBLIC_CF_WEB_ANALYTICS_TOKEN` (public site token) |
 | Build watch paths | `site/*`, `docs/*`, `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md`, `README.md` |
 
 `www.cadkit.org` redirects to the apex at the Cloudflare level (not in this repository): an
 originless proxied `AAAA 100::` record plus a Single Redirect rule (301, path and query kept).
+
+After publishing a new package release, update the site pin with
+`python3 ../scripts/buildlock.py npm install --save-exact cadkit-wasm@<version>` from `site/`,
+commit both package files, and deploy. The engine, metadata, Rust install examples and LLM
+exports all read this pin. Do not label an old engine as the latest release by changing only
+its display text. `verify:live` compares the deployed version with `release.cadkit.org/latest.txt`.
+
+Run `npm run verify:live` after each deployment. It reads the live sitemap and checks every
+HTML/Markdown pair, the full export, OG images, public contacts, discovery headers and several
+bot/user-agent profiles. A nonzero exit means the live site still needs attention. This check
+is deliberately separate from offline CI: CI must be able to validate an unpublished commit.
+The script does not submit URLs, purge caches or change Cloudflare settings. User-agent probes
+from one machine do not prove access from provider IP ranges or inclusion in a search index.
+
+The origin sends `Cache-Control: ... no-transform` so Cloudflare preserves public role
+addresses and does not inject its email-obfuscation script. See
+[Cloudflare email obfuscation](https://developers.cloudflare.com/waf/tools/scrape-shield/email-address-obfuscation/).
+For a `403 / 1010` on a default Python user agent, check the deployed hosting type before
+changing rules. On a Worker custom domain, use a narrowly scoped Configuration Rule for
+`http.host eq "cadkit.org"` to disable Browser Integrity Check if it causes the block. Keep
+other WAF and rate-limit rules intact; use verified-bot identity or published provider IPs,
+not a spoofable user-agent alone, for crawler exceptions. Pages and `workers.dev` can apply
+platform checks that your zone rule cannot bypass. In that case, use a Worker custom domain
+or a descriptive client user agent; see [Cloudflare error 1010](https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-1xxx-errors/error-1010/).
+Re-run `verify:live` to confirm the outcome. Repo headers cannot disable this edge check.
 
 ## Dependencies
 
@@ -266,6 +301,7 @@ All exact-pinned; `package-lock.json` is committed.
 | `@fontsource-variable/archivo`, `@fontsource-variable/jetbrains-mono` | self-hosted OFL variable fonts |
 | `@astrojs/check`, `typescript` (dev) | `astro check`; TypeScript 6 because `@astrojs/check` supports 5 and 6 |
 | `@resvg/resvg-js` (dev) | SVG to PNG for OG cards and the logo PNG/ICO set |
+| `parse5` (dev) | HTML-standard parsing for build-time Markdown copies and the read-only live audit; no browser payload |
 | `fontkit` (dev) | outlines Archivo/JetBrains Mono text to paths for the wordmark and OG cards, at the exact variable-font axes the site uses |
 
 ## Known limits

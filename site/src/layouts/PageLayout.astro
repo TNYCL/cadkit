@@ -55,7 +55,7 @@ Astro.locals.cadkitPage = { custom: true, breadcrumbs, ogImage, jsonLd, noAnalyt
 ---
 
 <StarlightPage frontmatter={{ title, description, template: 'splash', pagefind }} hasSidebar={false}>
-	<div class="ck-page">
+	<div class="ck-page" id="_top" tabindex="-1">
 		{
 			(breadcrumbs || header) && (
 				<header class="ck-page-header ck-container">

@@ -95,7 +95,12 @@ export function mdxToMarkdown(body, { readImport, vars }) {
 		const left = /<\/?[A-Z][A-Za-z]*[\s/>]|^\s*\{/.exec(line.replace(/`+[^`]*`+/g, ''));
 		if (left) throw new Error(`unsupported MDX syntax "${left[0].trim()}" in: ${line.trim().slice(0, 80)}`);
 	}
-	return converted.replace(/\n{3,}/g, '\n\n').trim() + '\n';
+	return normalizeMarkdownSpacing(converted).trim() + '\n';
+}
+
+/** Compact prose spacing without changing blank lines inside source examples. */
+export function normalizeMarkdownSpacing(markdown) {
+	return outsideFences(markdown, (text) => text.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n'));
 }
 
 /** Makes site-relative link targets ("/docs/x/") absolute, outside code. */

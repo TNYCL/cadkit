@@ -8,6 +8,7 @@ import { SITE, NO_ANALYTICS_PREFIXES } from '../../config';
 import { ogImagePath } from '../../lib/og-path.mjs';
 import { breadcrumbJsonLd, techArticleJsonLd } from '../../lib/json-ld';
 import lastmod from '../../generated/lastmod.json';
+import { markdownPathFor } from '../../lib/site-markdown.mjs';
 
 const route = Astro.locals.starlightRoute;
 const page = Astro.locals.cadkitPage;
@@ -61,7 +62,7 @@ const jsonLd = [
 	...(isDoc && !noindex ? [techArticleJsonLd({ title, description, path, image, dateModified })] : []),
 	...(crumbs && !noindex ? [breadcrumbJsonLd(crumbs, path)] : []),
 ];
-const markdownPath = isDoc && !noindex ? path.replace(/\/$/, '') + '.md' : undefined;
+const markdownPath = !noindex ? markdownPathFor(path) : undefined;
 
 const token = import.meta.env.PUBLIC_CF_WEB_ANALYTICS_TOKEN?.trim();
 const analytics =
@@ -72,8 +73,9 @@ const analytics =
 <meta name="theme-color" media="(prefers-color-scheme: light)" content="#fafaf7" />
 <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0b1324" />
 <link rel="manifest" href="/site.webmanifest" />
+<link rel="describedby" type="text/plain" href="/llms.txt" />
 <link rel="alternate" type="application/atom+xml" title="cadkit changelog" href="/changelog/feed.xml" />
-{markdownPath && <link rel="alternate" type="text/markdown" href={markdownPath} />}
+{markdownPath && <link rel="alternate" type="text/markdown" href={markdownPath} data-ck-doc={isDoc || undefined} />}
 <Font cssVariable="--ck-font-sans-face" preload />
 <Font cssVariable="--ck-font-mono-face" preload />
 {

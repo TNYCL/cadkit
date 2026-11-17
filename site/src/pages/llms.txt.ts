@@ -15,7 +15,7 @@ export const GET: APIRoute = async () => {
 	const pages = new Map((await docPages()).map((p) => [p.id, p]));
 	const sections = sidebarSections().map(({ label, entries }) => {
 		const lines = entries.map((e) => {
-			const page = e.slug ? pages.get(e.slug) : undefined;
+				const page = e.slug ? pages.get(e.slug) : undefined;
 			if (page) return `- [${page.title}](${SITE}${page.mdPath}): ${page.description}`;
 			if (!e.link) throw new Error(`llms.txt: sidebar entry "${e.label}" has no page`);
 			const note = NOTES[e.link];
@@ -30,9 +30,13 @@ export const GET: APIRoute = async () => {
 
 Status: DWG is read-only (AC1014 R14 to AC1032 2018; R13 untested). DGN V7 read. DGN V8 read plus a seed-based V8 write subset; external application acceptance pending. DXF ASCII and binary read R12 to 2018, ASCII write R12 to 2018. CityGML 2.0 native read/write and generic geometry; new geometry needs an explicit CRS; optional local structural TKGM preflight (not institutional acceptance). Developed clean-room; no vendor SDK.
 
-Every documentation page is also served as Markdown: replace the trailing slash of its address with ".md" (${SITE}/docs/getting-started/rust.md). The whole documentation in one file: [llms-full.txt](${SITE}/llms-full.txt).
+Every page is also served as Markdown: replace the trailing slash of its address with ".md" (${SITE}/docs/getting-started/rust.md); the home page is ${SITE}/index.md. The complete site content in one file: [llms-full.txt](${SITE}/llms-full.txt). Prefer the linked pages for focused questions.
 
 ${sections.join('\n\n')}
+
+## Website
+
+- [Home](${SITE}/): project overview, supported formats, installation and examples
 
 ## Packages
 
