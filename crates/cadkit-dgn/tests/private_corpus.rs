@@ -183,6 +183,85 @@ fn known_sample(bytes: &[u8]) {
     );
 }
 
+/// One-vertex shapes and unattached tags (FORMAT_NOTES, "Degenerate shapes and null tag
+/// targets"). Every shape decodes: a one-vertex shape becomes a `Point` (92 records in 28
+/// files when this was written). Every tag left standalone (`dgn.type_37`, 111 in 21 files)
+/// has the all-ones target id, an absent target: the lookup misses no element that exists.
+#[test]
+fn private_shapes_decode_and_standalone_tags_have_null_targets() {
+    use cadkit_dgn::native::{ElementData, decode_v8};
+    let read = ReadOptions::default();
+    let (mut files, mut points, mut null_targets, mut standalone) = (0usize, 0, 0, 0);
+    for path in common::private_dgn_paths() {
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        files += 1;
+        let native = cadkit_dgn::native::v8::read(&bytes, &read).unwrap();
+        let (mut one_vertex, mut nulls) = (0usize, 0usize);
+        for raw in native
+            .models
+            .iter()
+            .flat_map(|m| &m.graphic_pages)
+            .flat_map(|p| &p.elements)
+        {
+            match raw.type_code() {
+                6 if raw.bytes.get(0x68..0x6c) == Some(&1u32.to_le_bytes()[..]) => one_vertex += 1,
+                37 => {
+                    let el = decode_v8::decode(raw, encoding_rs::WINDOWS_1252, &read.limits);
+                    if let ElementData::Tag(t) = &el.data
+                        && t.target == Some(u64::MAX)
+                    {
+                        nulls += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let doc = cadkit_dgn::read(&bytes, &read).unwrap();
+        assert!(
+            doc.warnings
+                .iter()
+                .all(|w| w.code != "dgn.decode_failed.type_6")
+        );
+        let (mut file_points, mut file_standalone) = (0usize, 0usize);
+        for m in &doc.models {
+            let mut all = Vec::new();
+            for e in &m.entities {
+                common::walk(e, &mut all);
+            }
+            for e in all {
+                match &e.kind {
+                    EntityKind::Point { .. } if prop_int(e, "dgn.type") == Some(6) => {
+                        file_points += 1;
+                    }
+                    EntityKind::Unknown { type_name } if type_name == "dgn.type_37" => {
+                        file_standalone += 1;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        assert_eq!(file_points, one_vertex);
+        assert_eq!(file_standalone, nulls);
+        assert_eq!(
+            doc.warnings
+                .iter()
+                .any(|w| w.code == "dgn.tag_target_missing"),
+            nulls > 0
+        );
+        points += file_points;
+        null_targets += nulls;
+        standalone += file_standalone;
+    }
+    if files > 0 {
+        eprintln!(
+            "{files} files: {points} one-vertex shapes read as points, {standalone} standalone \
+             tags, {null_targets} tags with the null target id"
+        );
+    }
+}
+
 /// Every raster frame of the private corpus is placed from its matrix and edge lengths
 /// (`0x108`/`0x110` along the image axes) and fits inside its own element range: neither
 /// range fallback is needed, and every frame knows its pixel size.

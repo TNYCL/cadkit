@@ -11,6 +11,7 @@ mod microstation;
 mod raster;
 mod raster_template;
 mod regressions;
+mod source_model;
 mod strip;
 mod structure;
 mod text;

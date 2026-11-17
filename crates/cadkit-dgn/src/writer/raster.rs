@@ -13,7 +13,7 @@ use super::{WriteOptions, compressed, encode::*};
 use crate::native::linkage::{self, LinkageData};
 use crate::native::v8::{AuxPage, AuxRecord, PageHeader, RawElement, V8Model};
 use cadkit_core::LimitKind;
-use cadkit_core::{Document, Entity, EntityKind, Error, ReadOptions, Result};
+use cadkit_core::{Entity, EntityKind, Error, ReadOptions, Result};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Default)]
@@ -70,10 +70,12 @@ fn references_graphics(raw: &RawElement, graphics: &BTreeSet<u64>) -> bool {
 }
 
 /// Images with a seed id, by id, and the number of new images (without an id).
-fn images(doc: &Document) -> Result<(BTreeMap<u64, &Entity>, usize)> {
+fn images<'a>(
+    entities: impl IntoIterator<Item = &'a Entity>,
+) -> Result<(BTreeMap<u64, &'a Entity>, usize)> {
     let mut out = BTreeMap::new();
     let mut new = 0usize;
-    let mut todo: Vec<_> = doc.models.iter().flat_map(|m| &m.entities).collect();
+    let mut todo: Vec<_> = entities.into_iter().collect();
     while let Some(e) = todo.pop() {
         match &e.kind {
             EntityKind::Image { .. } => {
@@ -94,13 +96,13 @@ fn images(doc: &Document) -> Result<(BTreeMap<u64, &Entity>, usize)> {
 
 impl Preserved {
     pub fn prepare(
-        doc: &Document,
+        entities: &[Entity],
         seed: &[u8],
         model: &V8Model,
         read: &ReadOptions,
         options: &WriteOptions,
     ) -> Result<Self> {
-        let (requested, new) = images(doc)?;
+        let (requested, new) = images(entities)?;
         if new > 0 && !requested.is_empty() {
             return Err(Error::Unsupported(
                 "mixing preserved seed rasters with new raster attachments is not supported".into(),
@@ -138,7 +140,7 @@ impl Preserved {
                 ));
             }
             let source = crate::read(seed, read)?;
-            let (original, _) = images(&source)?;
+            let (original, _) = images(source.models.iter().flat_map(|m| &m.entities))?;
             if requested.len() != original.len() {
                 return Err(Error::Unsupported(
                     "adding/removing seed rasters requires rewriting their native control graph"

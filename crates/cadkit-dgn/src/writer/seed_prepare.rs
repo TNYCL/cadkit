@@ -3,9 +3,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use cadkit_core::{
-    Attribute, Color, Document, Entity, EntityKind, Error, GroupKind, HAlign, HatchEdge, HatchLoop,
-    Lineweight, ModelKind, Point3, Props, ReadOptions, Result, Transform, Units, VAlign, Value,
-    Vec3, Vertex,
+    Attribute, Color, Document, Entity, EntityKind, Error, Format, GroupKind, HAlign, HatchEdge,
+    HatchLoop, Lineweight, ModelKind, Point3, Props, ReadOptions, Result, Transform, Units, VAlign,
+    Value, Vec3, Vertex,
 };
 
 use super::{container, raster_template, tables::Tables};
@@ -429,6 +429,15 @@ impl V8Seed {
             .cloned()
             .ok_or_else(|| Error::invalid(0, "missing selected model"))?;
         chosen.kind = ModelKind::Model;
+        // Only a DGN V8 element id can name one of the seed's raster attachments; a DWG
+        // handle on an image would make the writer look for (and fail to find) a seed
+        // attachment to preserve, so images from other formats become new attachments.
+        if matches!(
+            out.source.format,
+            Format::Dwg | Format::Dxf | Format::DgnV7 | Format::CityGml
+        ) {
+            clear_image_ids(&mut chosen.entities);
+        }
         out.models = vec![chosen];
 
         // 2. Explode block inserts before unit/dimension/symbology normalization.
@@ -543,6 +552,30 @@ impl V8Seed {
     }
 }
 
+/// A copy of a 3D `model` as a 2D model: every entity projected onto `z = 0` (and tilted
+/// normals set to `+Z`), as [`DimensionPolicy::ProjectToSeed`] prepares it.
+pub(super) fn projected_2d(model: &cadkit_core::Model) -> cadkit_core::Model {
+    let mut out = model.clone();
+    for e in &mut out.entities {
+        project_entity_2d(e);
+    }
+    out.is_3d = false;
+    out
+}
+
+/// Removes the native id of every image, inside groups too (an explicit stack, so deep
+/// nesting cannot overflow the call stack).
+fn clear_image_ids(entities: &mut [Entity]) {
+    let mut todo: Vec<&mut Entity> = entities.iter_mut().collect();
+    while let Some(e) = todo.pop() {
+        match &mut e.kind {
+            EntityKind::Image { .. } => e.id = None,
+            EntityKind::Group { children, .. } => todo.extend(children.iter_mut()),
+            _ => {}
+        }
+    }
+}
+
 fn scale_dgn_props(entity: &mut Entity, factor: f64) {
     if let Some(Value::Float(len)) = entity.props.get_mut("dgn.text_length") {
         *len *= factor;
@@ -569,7 +602,7 @@ fn hatch_loop_has_nonzero_z(lp: &HatchLoop) -> bool {
     })
 }
 
-fn entity_has_nonzero_z(entity: &Entity) -> bool {
+pub(super) fn entity_has_nonzero_z(entity: &Entity) -> bool {
     let nz = |p: Point3| p.z.abs() > 1e-12;
     if entity.attributes.iter().any(|a| a.position.is_some_and(nz)) {
         return true;
