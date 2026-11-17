@@ -169,6 +169,12 @@ snippet; Rust `cargo check`s a scratch crate (through the build lock); C is `gcc
   `npm run indexnow -- --since 2d` only the recently changed ones (`--dry-run` prints them).
   Cloudflare Crawler Hints is also enabled on the zone. Google is reached through the
   sitemap submitted in Search Console.
+- Content types and CORS: Workers static assets send HTML, CSS and plain text without a
+  `charset`, file types they do not know (`.dgn`, the Pagefind index) without a `Content-Type`,
+  and no CORS header. `public/_headers` sets `charset=utf-8`, `application/octet-stream` and
+  `Access-Control-Allow-Origin: *` (every file is public) explicitly, as Pages did. Only one
+  rule may set `Content-Type` for a URL, because Cloudflare joins the values of matching rules
+  with a comma; `verify` checks both, `verify:live` the served HTML and `llms.txt`.
 - Font licences (SIL OFL 1.1 texts from the font packages) are served at `/licenses/archivo.txt`
   and `/licenses/jetbrains-mono.txt` and linked from `/brand/`.
 - `verify` also enforces unique titles and descriptions (70–170 characters), sitemap

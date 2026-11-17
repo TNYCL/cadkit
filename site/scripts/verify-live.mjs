@@ -20,6 +20,8 @@ try {
 	const { text: llms, response: indexResponse } = await request('/llms.txt');
 	check(llms.startsWith('# cadkit\n'), 'llms.txt: missing project heading');
 	check(!/noindex|none/i.test(indexResponse.headers.get('x-robots-tag') ?? ''), 'llms.txt: noindex header');
+	check(/^text\/plain;\s*charset=utf-8$/i.test(indexResponse.headers.get('content-type') ?? ''), 'llms.txt: content type without charset=utf-8');
+	check(indexResponse.headers.get('access-control-allow-origin') === '*', 'llms.txt: missing Access-Control-Allow-Origin: *');
 	const { text: full, response: fullResponse } = await request('/llms-full.txt', true);
 	check(/noindex/i.test(fullResponse.headers.get('x-robots-tag') ?? ''), 'llms-full.txt: missing noindex header');
 	const version = /Current release: ([\d.]+(?:-[\w.-]+)?)\./.exec(llms)?.[1];
@@ -46,6 +48,7 @@ try {
 			const page = inspectPublishedPage(text, loc);
 			errors.push(...page.issues.map((issue) => `${new URL(loc).pathname}: ${issue}`));
 			check(!/noindex|none/i.test(response.headers.get('x-robots-tag') ?? ''), `${loc}: HTML noindex header`);
+			check(/^text\/html;\s*charset=utf-8$/i.test(response.headers.get('content-type') ?? ''), `${loc}: HTML content type without charset=utf-8`);
 			check(!titles.has(page.title), `${loc}: duplicate title`); titles.add(page.title);
 			check(!descriptions.has(page.description), `${loc}: duplicate description`); descriptions.add(page.description);
 			if (page.markdown) {
