@@ -6,6 +6,91 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `cadkit-wasm`: access to a document without `toJSON()`: `models`, `entityCount`, `entity`,
+  `entities` (paged, filtered), `blocks`, `block`, `stats`, `bbox`, `viewports`; `pick` returns
+  the path of the entity that was hit and of the model entity that owns it (the block
+  reference, for geometry drawn from a block).
+- `cadkit-wasm`: `surfaceMesh` and `lineBuffer` return the triangles and line segments of a
+  model as typed arrays relative to an f64 origin, grouped by layer, with a table that leads
+  each face back to its entity and a ray pick. Closed planar polylines (DGN shapes) can count
+  as surfaces. In Rust: `cadkit_scene::document::{surface_mesh, line_buffer}` and
+  `cadkit_scene::triangulate`.
+- SVG output, all opt-in (`SvgOptions` in Rust, the same names in camelCase on `toSvg` and
+  `toSvgBounded`): `origin` writes coordinates relative to a local origin stated as
+  `data-origin` (browsers process SVG coordinates in 32-bit floats, so drawings in map
+  coordinates used to render as garbage); `entity_refs` tags every element with the path of
+  its entity; `point_px` draws points as dots of constant size; `cap_height_ratio` and
+  `font_family` for text; `hatch_native_spacing`; `layout_viewports` draws a paper layout
+  as clipped windows onto model space.
+- CityGML: `gml::write_buildings` / `gml::buildings_from_document` (`toCityGmlBuildings` in
+  JavaScript) turn the faces of a model into `bldg:Building` objects with wall, roof and
+  ground surfaces classified by the tilt of each face, grouped as one building, per layer,
+  per top-level entity or by connectivity, with a report that names every face left out.
+  `ExportOptions::closed_polylines_as_surfaces` writes closed planar polylines as polygons.
+  `gml::tkgm::preflight_located` and `gml::located_geometry_issues` add the `gml:id` of the
+  element and of its building to each finding (`preflightTkgmLocated`, `geometryIssues`).
+- DGN V8 writer: `WriteOptions::model_index`, `dimension_policy` and `estimate_text_length`;
+  `write_v8_report` returns the bytes with warnings. In JavaScript `toDgn` takes these and a
+  `prepare` option, and `toDgnWithReport` and `prepareForDgn` are new: with `prepare`, every
+  public DXF and DWG sample writes into a stripped seed and reads back.
+- `cadkit-wasm`: `transform`, `retainLayers`, `retainKinds`, `purgeUnused`, `clone`,
+  `toDxfWithReport` / `toDxfBytesWithReport` (what the DXF writer left out), `toCityGmlReport`
+  (the report as an object), `memoryBytes`, and complete TypeScript typings: the document
+  model is generated from the JSON schema.
+- `Document::entity_at`, `WalkContext::path` and `WalkContext::model_path_len`: a walk tells
+  where each entity sits, and a path leads back to the entity.
+  `Document::explode_inserts_with` takes the work budget explicitly.
+
+### Changed
+
+- `cadkit-wasm`: options are parsed by one strict parser for objects and JSON strings alike.
+  The JSON-string form (`read(bytes, '{"maxObjects":10}')`) used to be ignored without
+  notice and is honoured now; every limit of `Limits` can be set and is capped; a value of
+  the wrong type, NaN, negative or fractional is an error of kind `bad_argument`. An unknown
+  option key is reported with `console.warn` in this release and will be an error in the
+  next minor release; methods that are new in this release reject it already.
+- `cadkit-wasm`: the default `maxObjects` is 1,500,000 (it was 5,000,000). A document costs
+  about 900 bytes of WebAssembly memory per entity, and the old default let a 37 MB file
+  exhaust the module. Raise it explicitly for larger drawings.
+- `cadkit-wasm`: `explodeInserts` takes `{maxDepth, maxEntities}` and refuses an expansion
+  that does not fit (`limit_exceeded`) instead of running the module out of memory.
+- `cadkit-wasm`: errors carry `offset`, `limit`, `limitValue` and `needed` as properties;
+  argument errors that were reported as `invalid` "at offset 0" are `bad_argument`.
+- `cadkit-wasm` npm package: the function-name section is no longer shipped (the module is
+  2.6 MB instead of 4.3 MB), the web and Node builds share one `.wasm`, and
+  `import "cadkit-wasm"` resolves to the Node build under Node.
+- DGN V8 writer: a document with one design model and paper layouts (every DXF and DWG)
+  writes its design model instead of failing with "requires exactly one source model".
+- The CityGML reader counts XML tree nodes the way the writer does; it used to count every
+  character reference and refuse files the writer had produced.
+
+### Deprecated
+
+- `cadkit-wasm`: `pickEntity` and `pickEntityBounded`. Their `index` is the position of the
+  hit in the engine's walk (blocks expanded, groups flattened), not an index into
+  `toJSON().models[m].entities`; use `pick`. `toCityGmlWithReport` (returns a JSON string):
+  use `toCityGmlReport`.
+
+### Fixed
+
+- `cadkit-wasm`: passing a value of the wrong type where a string is expected
+  (`doc.toDxf(123)`) trapped the module; byte inputs accept `ArrayBuffer`, typed arrays and
+  `DataView`.
+- `Document::transform` left the blocks of dimensions where they were, so a transformed
+  drawing kept its dimension graphics at the old place.
+- `Document::explode_inserts`: when the work budget ran out inside an insert array the
+  remaining cells were lost; the reference is kept whole.
+- DGN V8 reader: a shape element with a single vertex is read as a point instead of an
+  Unknown entity with a decode warning, and written back as a shape. DGN V7: a record that
+  stores fewer vertices than its type needs is an Unknown entity with a warning instead of
+  a polyline without vertices.
+- The demo at <https://cadkit.org/demo/>: picking on drawings with blocks or groups selects
+  the entity that was hit; drawings in map coordinates display correctly; 3D building
+  models made of DGN shapes are offered in 3D; raster references no longer clutter the
+  sheet.
+
 ## [0.5.4] - 2026-11-16
 
 ### Added
