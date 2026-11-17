@@ -1096,9 +1096,12 @@ impl<'a> Exploder<'a> {
                         Some(l) => Some(l),
                     };
                     self.stack.push(def.name.as_str());
+                    let mark = out.len();
+                    let mut complete = true;
                     'cells: for r in 0..(*rows).max(1) {
                         for c in 0..(*columns).max(1) {
                             if !self.charge(1) {
+                                complete = false;
                                 break 'cells;
                             }
                             let offset = Vec3::new(
@@ -1127,6 +1130,18 @@ impl<'a> Exploder<'a> {
                         }
                     }
                     self.stack.pop();
+                    if !complete {
+                        // The budget ran out between two cells of the array. An insert cannot
+                        // stand for "the cells that are left", so keep the whole reference and
+                        // drop the cells already expanded: nothing is lost and nothing doubled.
+                        out.truncate(mark);
+                        let mut fallback = e.transformed(tf);
+                        fallback.layer = effective_layer.map(str::to_owned);
+                        fallback.color = resolved_color;
+                        fallback.lineweight = resolved_lw;
+                        out.push(fallback);
+                        continue;
+                    }
 
                     // Visible attributes with display geometry become standalone text entities.
                     for attr in &e.attributes {
@@ -1285,9 +1300,9 @@ impl Document {
     ///
     /// Every entity visited and every insert array cell costs one unit, so `max_work` is
     /// also an upper bound on the number of entities the expansion adds. A caller with little
-    /// memory (a WebAssembly module, about 800 bytes per entity) passes a budget it can hold;
-    /// when the budget runs out the remaining inserts are kept as inserts and
-    /// [`WalkStats::truncated`] is set.
+    /// memory (a WebAssembly module, about 900 bytes per entity) passes a budget it can hold;
+    /// when the budget runs out the remaining inserts are kept as inserts (an insert array
+    /// that does not fit is kept whole) and [`WalkStats::truncated`] is set.
     pub fn explode_inserts_with(&mut self, max_depth: u32, max_work: u64) -> WalkStats {
         let mut block_map: HashMap<&str, &Block> = HashMap::new();
         for b in &self.blocks {
@@ -1614,7 +1629,28 @@ mod tests {
         let stats = doc.explode_inserts_with(8, 500);
         assert!(stats.truncated);
         assert!(stats.work <= 500);
-        assert!(doc.models[0].entities.len() <= 500);
+        // The array did not fit: the reference is kept whole, not a part of its cells.
+        assert_eq!(doc.models[0].entities.len(), 1);
+        assert!(matches!(
+            doc.models[0].entities[0].kind,
+            EntityKind::Insert {
+                columns: 1000,
+                rows: 1000,
+                ..
+            }
+        ));
+        // A budget too small even for one cell keeps a plain insert as well.
+        let mut single = doc.clone();
+        if let EntityKind::Insert { columns, rows, .. } = &mut single.models[0].entities[0].kind {
+            *columns = 1;
+            *rows = 1;
+        }
+        let stats = single.explode_inserts_with(8, 1);
+        assert!(stats.truncated);
+        assert!(matches!(
+            single.models[0].entities[0].kind,
+            EntityKind::Insert { .. }
+        ));
         // With room to spare the same call expands a small array completely.
         if let Some(Entity {
             kind: EntityKind::Insert { columns, rows, .. },

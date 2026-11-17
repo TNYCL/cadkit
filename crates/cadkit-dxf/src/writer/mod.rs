@@ -176,7 +176,7 @@ fn resolve_out_codepage(label: &str) -> Result<(&'static str, OutEncoder)> {
     }
     let Some(enc) = crate::native::encoding_for_codepage(label) else {
         return Err(Error::Unsupported(format!(
-            "unsupported DXF output code page `{label}`"
+            "DXF output code page `{label}` is not supported"
         )));
     };
     let dxf_name = if enc == encoding_rs::WINDOWS_1250 {

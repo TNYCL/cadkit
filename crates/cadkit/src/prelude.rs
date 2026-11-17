@@ -11,7 +11,7 @@
 //! ```
 
 #[cfg(feature = "svg")]
-pub use cadkit_core::svg::SvgOptions;
+pub use cadkit_core::svg::{SvgOptions, SvgOrigin};
 pub use cadkit_core::{
     Attribute, AttributeDisplay, BBox, Block, Color, Document, Entity, EntityKind, Error, Format,
     GroupKind, HAlign, HatchEdge, HatchLoop, Layer, LengthUnit, Limits, Linetype, Lineweight,
