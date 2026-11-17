@@ -35,6 +35,7 @@ npm run dev                                        # http://localhost:4321
 ```
 astro.config.mjs        Astro + Starlight config, fonts, component overrides
 ec.config.mjs           Expressive Code (code block) theme
+wrangler.jsonc          Cloudflare Worker: static assets from dist/, Custom Domain cadkit.org
 src/config.ts           single source of site facts: URLs, version, e-mail roles, navigation
 src/sidebar.ts          docs sidebar (extend here)
 src/content.config.ts   Starlight docs collection
@@ -247,18 +248,31 @@ under `/demo/samples/licenses/`. The build therefore needs network access to
 validates it and renders `/stats/` with build-time SVG charts. When the summary cannot be
 fetched or validated the build continues and the page says the statistics are unavailable,
 with no numbers. `STATS_SUMMARY_FILE` (use a local file), `STATS_OFFLINE` and
-`STATS_REFRESH` control the step. The stats collector triggers a rebuild through a Cloudflare
-Pages deploy hook after each daily snapshot, which also renews `security.txt`.
+`STATS_REFRESH` control the step. The stats collector triggers a rebuild through a Workers
+Builds deploy hook after each daily snapshot, which also renews `security.txt`.
 
 ## Cloudflare deployment
+
+The site is a static-assets-only Worker, `cadkit`, configured in `wrangler.jsonc`: the files in
+`dist/` (with `_headers` and `_redirects`), trailing-slash HTML handling, the built `404.html`
+for unknown paths and the Custom Domain `cadkit.org`. It has no production address on
+`workers.dev`. Workers Builds, the Git integration on this repository, builds and deploys it:
 
 | Setting | Value |
 |---|---|
 | Root directory | `site` |
-| Build command | `npm run build && npm run verify` |
-| Output directory | `dist` |
-| Environment | `NODE_VERSION=24`; optional `PUBLIC_CF_WEB_ANALYTICS_TOKEN` (public site token) |
+| Build command | `npm run build` (`postbuild` runs `verify`) |
+| Deploy command | `npx wrangler deploy`, on `main` |
+| Other branches | `npx wrangler versions upload`: a version that is not deployed, with a preview URL on `workers.dev` |
+| Build variables | `NODE_VERSION=24`; optional `PUBLIC_CF_WEB_ANALYTICS_TOKEN` (public site token) |
 | Build watch paths | `site/*`, `docs/*`, `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md`, `README.md` |
+| Deploy hook | `main`; cadkit-stats calls it (secret `PAGES_DEPLOY_HOOK`, named before the move from Pages) |
+
+Wrangler is a pinned dev dependency, so builds deploy with the version in `package-lock.json`.
+`npx wrangler deploy --dry-run` checks the configuration and the assets without an account.
+The site moved from Cloudflare Pages to the Worker on 2026-11-17: Pages applies Browser
+Integrity Check on its own `pages.dev` zone to custom domains too, and no zone setting turns
+that off (see below).
 
 `www.cadkit.org` redirects to the apex at the Cloudflare level (not in this repository): an
 originless proxied `AAAA 100::` record plus a Single Redirect rule (301, path and query kept).
@@ -279,14 +293,15 @@ from one machine do not prove access from provider IP ranges or inclusion in a s
 The origin sends `Cache-Control: ... no-transform` so Cloudflare preserves public role
 addresses and does not inject its email-obfuscation script. See
 [Cloudflare email obfuscation](https://developers.cloudflare.com/waf/tools/scrape-shield/email-address-obfuscation/).
-For a `403 / 1010` on a default Python user agent, check the deployed hosting type before
-changing rules. On a Worker custom domain, use a narrowly scoped Configuration Rule for
-`http.host eq "cadkit.org"` to disable Browser Integrity Check if it causes the block. Keep
-other WAF and rate-limit rules intact; use verified-bot identity or published provider IPs,
-not a spoofable user-agent alone, for crawler exceptions. Pages and `workers.dev` can apply
-platform checks that your zone rule cannot bypass. In that case, use a Worker custom domain
-or a descriptive client user agent; see [Cloudflare error 1010](https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-1xxx-errors/error-1010/).
-Re-run `verify:live` to confirm the outcome. Repo headers cannot disable this edge check.
+Browser Integrity Check answers `403` with error 1010 to some library default user agents, such
+as Python `urllib`. The zone Configuration Rule *Allow public content readers* turns it off for
+`GET` and `HEAD` requests to `cadkit.org` and `release.cadkit.org`
+(`http.host in {"cadkit.org" "release.cadkit.org"} and http.request.method in {"GET" "HEAD"}`).
+Keep the other WAF and rate-limit rules intact, and use verified-bot identity or published
+provider IPs, not a spoofable user agent, for crawler exceptions. Zone rules do not reach the
+platform checks on `*.workers.dev` (the branch preview URLs) and `*.pages.dev`; see
+[Cloudflare error 1010](https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-1xxx-errors/error-1010/).
+Repo headers cannot change this edge check; `verify:live` probes it.
 
 ## Dependencies
 
@@ -302,6 +317,7 @@ All exact-pinned; `package-lock.json` is committed.
 | `@astrojs/check`, `typescript` (dev) | `astro check`; TypeScript 6 because `@astrojs/check` supports 5 and 6 |
 | `@resvg/resvg-js` (dev) | SVG to PNG for OG cards and the logo PNG/ICO set |
 | `parse5` (dev) | HTML-standard parsing for build-time Markdown copies and the read-only live audit; no browser payload |
+| `wrangler` (dev) | deploys `dist/` to the Cloudflare Worker (`wrangler.jsonc`); pinned so Workers Builds and local dry runs use one version |
 | `fontkit` (dev) | outlines Archivo/JetBrains Mono text to paths for the wordmark and OG cards, at the exact variable-font axes the site uses |
 
 ## Known limits

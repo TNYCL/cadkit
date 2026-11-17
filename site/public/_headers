@@ -1,4 +1,4 @@
-# Cloudflare Pages response headers. This file is a template: scripts/postbuild.mjs writes
+# Response headers for Cloudflare Workers static assets. This file is a template: scripts/postbuild.mjs writes
 # dist/_headers with the __CK_*__ placeholders filled in (inline script hashes collected from
 # the built HTML, and the Cloudflare Web Analytics origins only when the beacon is enabled).
 # See site/README.md, "Content Security Policy".

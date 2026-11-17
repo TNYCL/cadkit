@@ -5,3 +5,6 @@ dist/
 src/generated/
 # Pinned third-party demo samples, fetched and sha256-checked by scripts/prebuild.d/10-samples.mjs.
 public/samples/third-party/
+
+# Wrangler local state
+.wrangler/

@@ -1,0 +1,21 @@
+// cadkit.org is a static-assets-only Worker (no server code, no adapter) on the Custom Domain
+// below. Workers Builds runs `npm run build` in this directory, then `npx wrangler deploy` for main
+// and `npx wrangler versions upload` for other branches (site/README.md, "Cloudflare deployment").
+// dist/_headers (CSP with inline script hashes, HSTS, caching) and dist/_redirects are applied by
+// Workers static assets.
+{
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "cadkit",
+	"compatibility_date": "2026-11-16",
+	"assets": {
+		"directory": "./dist",
+		// Directory pages are emitted as <path>/index.html; canonical URLs end with a slash.
+		"html_handling": "auto-trailing-slash",
+		"not_found_handling": "404-page"
+	},
+	// The apex is the only production origin; www redirects to it with a zone rule.
+	"routes": [{ "pattern": "cadkit.org", "custom_domain": true }],
+	// No production copy on workers.dev. Version preview URLs stay on for branch builds.
+	"workers_dev": false,
+	"preview_urls": true
+}
