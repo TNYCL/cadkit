@@ -9,7 +9,7 @@
 use crate::{
     CityGmlDocument, ValidationOptions,
     native::*,
-    validate::{elements, validate},
+    validate::{elements_with_parents, owner_ids, validate},
 };
 use cadkit_core::{Error, Limits, Result};
 use serde::{Deserialize, Serialize};
@@ -75,6 +75,15 @@ pub struct ProfileIssue {
     pub element: usize,
     /// Public schema field name, when relevant.
     pub field: Option<String>,
+    /// `gml:id` of the element at [`Self::element`], filled only by [`preflight_located`]
+    /// and only when the element has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// `gml:id` of the `bldg:Building` that is or encloses the element, filled only by
+    /// [`preflight_located`]. Storeys and independent sections refer to their building by
+    /// link, not by nesting, so this stays empty for them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub building_id: Option<String>,
 }
 
 /// Results of the documented local subset. Empty issues never imply online acceptance.
@@ -173,6 +182,8 @@ impl ProfileReport {
             severity,
             element,
             field: field.map(str::to_owned),
+            id: None,
+            building_id: None,
         });
     }
     fn fields(&mut self, e: &Element, index: usize, fields: &[(&str, &str)], conditional: &[&str]) {
@@ -222,6 +233,27 @@ pub fn preflight(
     profile: Profile,
     limits: &Limits,
 ) -> Result<ProfileReport> {
+    run(doc, profile, limits, false)
+}
+
+/// [`preflight`] with [`ProfileIssue::id`] and [`ProfileIssue::building_id`] filled, so a
+/// caller can point at the object. Unlike [`preflight`], whose findings carry no source
+/// identifiers, these `gml:id`s are chosen by whoever wrote the file and may encode
+/// client data (parcel or registry numbers): keep such reports with the file's owner.
+pub fn preflight_located(
+    doc: &CityGmlDocument,
+    profile: Profile,
+    limits: &Limits,
+) -> Result<ProfileReport> {
+    run(doc, profile, limits, true)
+}
+
+fn run(
+    doc: &CityGmlDocument,
+    profile: Profile,
+    limits: &Limits,
+    locate: bool,
+) -> Result<ProfileReport> {
     validate(
         doc,
         &ValidationOptions {
@@ -230,7 +262,7 @@ pub fn preflight(
             ..Default::default()
         },
     )?;
-    let nodes = elements(doc, limits)?;
+    let (nodes, parents) = elements_with_parents(doc, limits)?;
     let ids: HashMap<_, _> = nodes
         .iter()
         .filter_map(|(e, _)| e.attribute(GML, "id").map(|id| (id, *e)))
@@ -447,6 +479,13 @@ pub fn preflight(
     }
     if !root_envelope {
         report.issue("tkgm.missing_envelope", 0, None);
+    }
+    if locate {
+        for issue in &mut report.issues {
+            let (id, _, building) = owner_ids(&nodes, &parents, issue.element);
+            issue.id = id.map(str::to_owned);
+            issue.building_id = building.map(str::to_owned);
+        }
     }
     Ok(report)
 }

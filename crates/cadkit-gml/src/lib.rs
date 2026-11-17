@@ -1,21 +1,27 @@
 //! Bounded CityGML 2.0 reader, validator, and writer.
 
+mod buildings;
 mod curves;
 mod export;
 mod geometry;
 mod mapping;
 pub mod native;
+mod surface;
 pub mod tkgm;
 pub mod validate;
 mod xml;
 
+pub use buildings::{
+    BuildingGrouping, BuildingIssue, BuildingOptions, BuildingReport, BuildingSummary,
+    buildings_from_document, write_buildings,
+};
 use cadkit_core::LimitKind;
 use cadkit_core::{Document, Error, Format, ReadOptions, Result, Summary};
 pub use export::{
     ExportIssue, ExportOptions, ExportReport, UnsupportedGeometry, from_document,
     from_document_with_report,
 };
-pub use geometry::{GeometryIssue, geometry_issues};
+pub use geometry::{GeometryIssue, LocatedGeometryIssue, geometry_issues, located_geometry_issues};
 pub use mapping::{ImportOptions, to_document};
 pub use native::CityGmlDocument;
 pub use validate::{ValidationOptions, ValidationReport, validate};

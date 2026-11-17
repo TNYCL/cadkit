@@ -102,11 +102,61 @@ pub(crate) fn elements<'a>(
     doc: &'a CityGmlDocument,
     limits: &Limits,
 ) -> Result<Vec<(&'a Element, usize)>> {
+    traverse(doc, limits, None)
+}
+
+/// Elements in traversal order with their inherited coordinate dimension.
+pub(crate) type Nodes<'a> = Vec<(&'a Element, usize)>;
+
+/// [`elements`] plus, for each element, the index of its parent element in the same
+/// list. A parent always precedes its children.
+pub(crate) fn elements_with_parents<'a>(
+    doc: &'a CityGmlDocument,
+    limits: &Limits,
+) -> Result<(Nodes<'a>, Vec<Option<usize>>)> {
+    let mut parents = vec![];
+    let nodes = traverse(doc, limits, Some(&mut parents))?;
+    Ok((nodes, parents))
+}
+
+/// `gml:id`s that locate the element at `index` of [`elements_with_parents`]: its own,
+/// that of the nearest enclosing-or-self city object, and of the nearest
+/// enclosing-or-self `bldg:Building`.
+pub(crate) fn owner_ids<'a>(
+    nodes: &[(&'a Element, usize)],
+    parents: &[Option<usize>],
+    index: usize,
+) -> (Option<&'a str>, Option<&'a str>, Option<&'a str>) {
+    let own = nodes
+        .get(index)
+        .and_then(|(e, _)| e.attribute(crate::native::GML, "id"));
+    let (mut object, mut building) = (None, None);
+    let mut at = Some(index);
+    // Parents precede children, so this walk strictly decreases and ends at the root.
+    while let Some(i) = at {
+        let Some((e, _)) = nodes.get(i) else { break };
+        if object.is_none() && crate::mapping::is_city_object(e) {
+            object = e.attribute(crate::native::GML, "id");
+        }
+        if e.name.is(crate::native::BUILDING, "Building") {
+            building = e.attribute(crate::native::GML, "id");
+            break;
+        }
+        at = parents.get(i).copied().flatten().filter(|&p| p < i);
+    }
+    (own, object, building)
+}
+
+fn traverse<'a>(
+    doc: &'a CityGmlDocument,
+    limits: &Limits,
+    mut parents: Option<&mut Vec<Option<usize>>>,
+) -> Result<Vec<(&'a Element, usize)>> {
     let mut result = vec![];
-    let mut stack = vec![(&doc.root, 0u32, 3usize)];
+    let mut stack = vec![(&doc.root, 0u32, 3usize, None::<usize>)];
     let mut bytes = 0u64;
     let mut nodes = 1u64;
-    while let Some((e, depth, inherited)) = stack.pop() {
+    while let Some((e, depth, inherited, parent)) = stack.pop() {
         if depth >= limits.max_depth.min(256) || result.len() as u64 >= limits.max_objects {
             return Err(Error::limit(
                 LimitKind::Objects,
@@ -144,7 +194,9 @@ pub(crate) fn elements<'a>(
         }
         for child in &e.children {
             match child {
-                Node::Element(child) => stack.push((child, depth + 1, dimension)),
+                Node::Element(child) => {
+                    stack.push((child, depth + 1, dimension, Some(result.len())));
+                }
                 Node::Text(t) | Node::Comment(t) => {
                     check_string(t, e.offset, limits, &mut bytes)?;
                 }
@@ -157,6 +209,9 @@ pub(crate) fn elements<'a>(
             ));
         }
         result.push((e, dimension));
+        if let Some(parents) = parents.as_deref_mut() {
+            parents.push(parent);
+        }
     }
     Ok(result)
 }
@@ -536,7 +591,7 @@ pub fn validate(doc: &CityGmlDocument, options: &ValidationOptions) -> Result<Va
         }
     }
     if options.geometry
-        && let Some(issue) = crate::geometry::inspect(&nodes, options)?.first()
+        && let Some((_, issue)) = crate::geometry::inspect(&nodes, options)?.first()
     {
         return Err(Error::invalid(issue.offset, &issue.message));
     }

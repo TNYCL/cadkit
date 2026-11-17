@@ -90,6 +90,10 @@ provides optional, read-only local structural/field preflight checks on native
   cavities are contained, or that buildings satisfy an external delivery profile.
 - `geometry_issues` collects offset/code/message diagnostics separately from
   structural counters. It does not include source IDs or coordinates.
+  `located_geometry_issues` returns the same findings in the same order with the
+  element index and the `gml:id`s of the polygon or solid, of the nearest enclosing
+  city object and of the enclosing `bldg:Building`. Those ids are written by the file's
+  author and may encode client data, so this variant is opt-in.
 - XSD validation is independent. `scripts/validate-citygml.py --fetch` retrieves
   official public OGC schemas into the ignored public corpus, records URLs and
   hashes, and builds a local catalog (including OGC's xAL copy). Later validation
@@ -139,6 +143,8 @@ acceptance. No external receiving-system test has been performed.
 - Closed neutral polylines serialize as closed `gml:LineString` curves. Closure
   alone does not establish a planar surface: crossing or nonplanar CAD paths are
   valid curves. Explicit `Polygon`, `Face` and mesh surfaces retain strict checks.
+  `ExportOptions::closed_polylines_as_surfaces` (default off) opts in to surfaces; see
+  the next section.
 - Circles use `gml:Curve/gml:segments/gml:Circle` with three distinct, non-collinear
   positions, `numArc="1"` and `interpolation="circularArc3Points"`. This is exact
   geometry, not tessellation. The neutral importer decodes single explicit Circle
@@ -170,3 +176,122 @@ cadkit validate-gml native-building.gml --tkgm-profile city-model-tender
 The first command produces a generic CAD projection with diagnostics, not a
 TKGM building model. CLI diagnostics go to stderr; the XML keeps an embedded
 record of each unsupported geometry item even if that report is separated.
+
+## Surfaces and buildings from CAD faces (2026-11 follow-up)
+
+3D building models delivered as DGN arrive as hundreds to thousands of closed,
+planar, straight polylines (DGN shape elements; in the drawings this was designed for
+about 81 % vertical, 19 % horizontal and under 1 % sloped). Written as generic
+objects they are line strings, so such a model had no surface at all.
+
+### Closed polylines as surfaces
+
+With `ExportOptions::closed_polylines_as_surfaces` a polyline is a surface candidate
+when it is flagged closed or ends on its first vertex, has no bulge and no width, and
+keeps at least three distinct vertices after consecutive duplicates are dropped (a
+zero-length edge is invalid GML but carries no geometry). It is written as
+`gml:Polygon` only when all of these hold; otherwise the generic export keeps the
+line string and reports it (`ExportReport::issues`, code below), and the building
+export skips it:
+
+| Check | Rule | Code |
+|---|---|---|
+| Degenerate | fewer than 3 distinct vertices, zero bounding-box diagonal, or area at most `tolerance x diagonal` (narrower than the planarity tolerance, so no reliable normal) | `gml.face_degenerate` |
+| Planar | every ring point within `min(planarity_tolerance x diagonal, max_planarity_deviation)` of the plane through the first vertex with the Newell normal | `gml.face_not_planar` |
+| Simple | `cadkit_core::polygon::validate` with that tolerance and the 1e-6 crossing tolerance | `gml.face_self_intersecting`, `gml.face_invalid` |
+| Straight | no bulge / no width (building export only; the generic export keeps its own bulge handling) | `gml.face_curved`, `gml.face_wide` |
+
+Defaults: `planarity_tolerance = 1e-3` of the face's bounding-box diagonal, capped
+by `max_planarity_deviation = 0.01` coordinate units. The cap equals the default
+`ValidationOptions::planarity_tolerance`, and the plane test uses the same reference
+point and normal as validation, so every accepted face passes default validation
+after a write/read round trip (`f64` text is the shortest round-trip representation).
+A cap above 0.01 needs the same planarity tolerance when the file is validated.
+
+### Buildings
+
+`buildings_from_document(doc, model, &BuildingOptions)` and `write_buildings` turn
+the surfaces of one model (`Polygon` with holes, `Face`, `Mesh` faces and, with the
+option above, closed polylines) into `bldg:Building` objects. They use
+`Document::walk`, so geometry inside block references and groups is placed in model
+space, hidden layers and invisible entities are skipped, and the walk is bounded by
+`BuildingOptions::max_work`. LoD must be 2, 3 or 4: CityGML 2.0 has thematic boundary
+surfaces only from LoD 2. The CRS is an explicit identifier; nothing is reprojected.
+
+Classification uses the tilt, the angle between the face normal and the vertical axis,
+so winding does not matter:
+
+| Tilt | Lowest point of the face | Class |
+|---|---|---|
+| >= `wall_min_tilt_degrees` (80) | any | `WallSurface` |
+| <= `horizontal_max_tilt_degrees` (10) | within `ground_tolerance` (0.01) of the building's lowest point | `GroundSurface` |
+| <= `horizontal_max_tilt_degrees` | above that band | `RoofSurface` |
+| between | above that band | `RoofSurface` |
+| between | within the band | unclassified, `gml.face_sloped_at_base` |
+
+The base is per building, so grouping changes it. Ground faces are rewound so their
+normal points down and roof faces up; walls keep the drawn winding (outward needs a
+closed shell, which CAD models do not guarantee). Holes are wound against their
+exterior. Unclassified faces are written into the building's own
+`bldg:lodNMultiSurface` and reported, never dropped silently.
+
+Limits of the rule: it knows geometry, not use. Interior floor slabs, soffits and the
+undersides of overhangs are horizontal faces above the base and become roofs. A ramp,
+a battered wall or an A-frame roof plane reaching the ground is unclassified. Faces
+of DGN complex shapes (chains of separate segments) are not surfaces yet, and no
+`lod2Solid` is written, since closure of the faces is not checked.
+
+Grouping (`BuildingGrouping`): `Single` (default, all faces), `Layer` (effective
+layer; layer `0` inside a block takes the inserting entity's layer), `TopLevel` (one
+building per model entity: a cell, group or block reference, or a single top-level
+face) and `Connected` (faces sharing a vertex within `weld_tolerance`, 0.001 by
+default; a spatial hash grid with one representative per welded vertex and
+union-find, linear in the number of vertices and charged to the work budget).
+Vertices are welded to the first representative within the tolerance, so a chain of
+vertices each just under the tolerance apart may split.
+
+Output layout: a root 3D `gml:Envelope` (`srsName` from the options,
+`srsDimension="3"`), and per building an envelope, then in CityGML 2.0
+`_AbstractBuilding` order the unclassified `lodNMultiSurface` and the `bldg:boundedBy`
+surfaces (for LoD 3/4 `boundedBy` comes first). One thematic surface per face, each
+with `bldg:lodNMultiSurface/gml:MultiSurface/gml:surfaceMember/gml:Polygon` and a
+`gml:posList` ring (`srsDimension="3"`; fewer XML nodes than one `gml:pos` per
+vertex). Ids are `cadkit_bldg_{n}`, `cadkit_bldg_{n}_s{k}` (surface) and
+`cadkit_bldg_{n}_p{k}` (polygon), numbered in walk order: equal input gives equal
+bytes. The XML node count (10 per face, 10 per building) is checked against
+`limits.max_objects` before the tree is built.
+
+`BuildingReport` gives per-building and total surface counts, unclassified and
+skipped faces, skipped faces per code, ignored non-surface entities, closed polylines
+ignored because the option is off, and one `BuildingIssue` per skipped or
+unclassified face (at most min(max_objects, 100,000); `issues_truncated` beyond):
+code, `WalkContext::path` (resolve with `Document::entity_at`; every cell of an
+insert array shares it), `model_path_len`, mesh face index, native entity id,
+effective layer, entity kind, and for written faces the building and polygon ids.
+The report holds the caller's own layer names and ids; it is not meant for
+third parties.
+
+Evidence (synthetic tests in `tests/buildings.rs`): a box and a gable house drawn as
+closed polylines in both windings classify as 4 walls/1 roof/1 ground and 4 walls/2
+roofs/1 ground; all four grouping modes; welding within and outside the tolerance;
+non-planar, degenerate, self-intersecting, curved and out-of-range mesh faces skipped
+with resolving paths; faces inside two block references placed in model space with
+paths `[insert, 6]`; an A-frame at LoD 2, 3 and 4. Every output is read with
+`read_native` and `read` and passes `validate` with default geometry checks.
+Measured in a debug build: 20,000 boxes (120,000 faces, `Connected`) write 58.8 MB in
+9.1 s and read and validate in 9.3 s.
+
+### Reader node count
+
+The reader used to count every XML event as a node, while the writer's preflight
+counts tree nodes. A text with entity references is several events (text, reference,
+text, ...) but one node, and `quick_xml` escapes every `"` of the `cadkit.entity`
+JSON as `&quot;`. Large generic exports could therefore exceed `max_objects` on
+read although the writer had checked the same limit (reported: 66,053 polylines,
+144 MB, "limit exceeded: XML nodes"). The reader now counts nodes as the tree holds
+them: elements, comments inside the root, and one node per run of adjacent text,
+CDATA and references. A synthetic 66,053-polyline generic export (113.8 MB with
+6.6 million `&quot;` references) now reads with default limits. Escaping quotes in
+text content is not required by XML and roughly doubles the size of the JSON
+metadata; using a text-only escape in the writer would shrink such files but changes
+their bytes, so it is left for a separate change.
