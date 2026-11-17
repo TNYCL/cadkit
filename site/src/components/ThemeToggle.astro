@@ -33,7 +33,14 @@ const { withLabel = false } = Astro.props;
 	for (const button of document.querySelectorAll<HTMLButtonElement>('[data-ck-theme-toggle]')) {
 		button.addEventListener('click', () => {
 			const next = root.dataset.theme === 'dark' ? 'light' : 'dark';
-			root.dataset.theme = next;
+			const apply = () => {
+				root.dataset.theme = next;
+			};
+			// Paper and blueprint cross-fade where the browser supports view transitions; reduced
+			// motion switches at once.
+			if (document.startViewTransition && !matchMedia('(prefers-reduced-motion: reduce)').matches)
+				document.startViewTransition(apply);
+			else apply();
 			try {
 				localStorage.setItem(KEY, next);
 			} catch {

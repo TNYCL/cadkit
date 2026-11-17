@@ -1,0 +1,230 @@
+---
+// Landing page architecture map: which crate depends on which, drawn as tiers. Dependencies
+// (checked against crates/*/Cargo.toml): the interfaces use `cadkit`; `cadkit` uses the format
+// crates, which use `cadkit-core`; `cadkit-geom` uses no other cadkit crate; `cadkit-scene`
+// uses `cadkit-geom` (and `cadkit-core` optionally); `cadkit-gpu` uses `cadkit-scene`.
+import { docsRsUrl, NPM_PACKAGE, PYPI_PACKAGE } from '../../config';
+
+interface Node {
+	name: string;
+	role: string;
+	href: string;
+}
+const tiers: { label: string; nodes: Node[] }[] = [
+	{
+		label: 'Interfaces',
+		nodes: [
+			{ name: 'cadkit-cli', role: 'CLI', href: '/docs/getting-started/cli/' },
+			{ name: PYPI_PACKAGE, role: 'Python', href: '/docs/reference/python/' },
+			{ name: NPM_PACKAGE, role: 'JavaScript', href: '/docs/reference/javascript/' },
+			{ name: 'cadkit-capi', role: 'C and C++17', href: '/docs/reference/c-api/' },
+		],
+	},
+	{
+		label: 'Facade',
+		nodes: [{ name: 'cadkit', role: 'open, inspect, convert, export', href: docsRsUrl('cadkit') }],
+	},
+	{
+		label: 'Formats',
+		nodes: ['dwg', 'dgn', 'dxf', 'gml'].map((f) => ({
+			name: `cadkit-${f}`,
+			role: f === 'gml' ? 'CityGML' : f.toUpperCase(),
+			href: docsRsUrl(`cadkit-${f}`),
+		})),
+	},
+	{
+		label: 'Model',
+		nodes: [{ name: 'cadkit-core', role: 'document, layers, blocks, entities, JSON, SVG', href: docsRsUrl('cadkit-core') }],
+	},
+];
+const render: Node[] = [
+	{ name: 'cadkit-gpu', role: 'wgpu plan and mesh renderers', href: docsRsUrl('cadkit-gpu') },
+	{ name: 'cadkit-scene', role: 'chunked plans and meshes, no GPU', href: docsRsUrl('cadkit-scene') },
+	{ name: 'cadkit-geom', role: 'curves, booleans, offsets', href: docsRsUrl('cadkit-geom') },
+];
+---
+
+<div class="ck-arch">
+	<ol class="ck-arch-stack" aria-label="File I/O crates, from interfaces down to the document model">
+		{
+			tiers.map((t) => (
+				<li class="ck-arch-tier">
+					<span class="ck-arch-label">{t.label}</span>
+					<ul class:list={['ck-arch-nodes', t.nodes.length === 1 && 'ck-arch-nodes--one']}>
+						{t.nodes.map((n) => (
+							<li>
+								<a href={n.href}>
+									<code>{n.name}</code>
+									<span>{n.role}</span>
+								</a>
+							</li>
+						))}
+					</ul>
+				</li>
+			))
+		}
+	</ol>
+	<div class="ck-arch-side">
+		<span class="ck-arch-label">Geometry and rendering, Rust only</span>
+		<ol class="ck-arch-chain" aria-label="Geometry and rendering crates, each using the one below it">
+			{
+				render.map((n) => (
+					<li>
+						<a href={n.href}>
+							<code>{n.name}</code>
+							<span>{n.role}</span>
+						</a>
+					</li>
+				))
+			}
+		</ol>
+		<p class="ck-arch-note">
+			Optional. <code>cadkit-geom</code> uses no other cadkit crate; the readers never pull in a GPU.
+		</p>
+	</div>
+</div>
+
+<style>
+	.ck-arch {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		gap: var(--ck-space-8);
+	}
+	@media (min-width: 60rem) {
+		.ck-arch {
+			grid-template-columns: minmax(0, 2.4fr) minmax(0, 1fr);
+			gap: var(--ck-space-12);
+		}
+	}
+	.ck-arch ol,
+	.ck-arch ul {
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+	.ck-arch-label {
+		display: block;
+		margin-bottom: var(--ck-space-2);
+		font-family: var(--__sl-font-mono);
+		font-size: var(--sl-text-2xs);
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--ck-muted);
+	}
+
+	/* Tiers joined by a short vertical lead: each tier uses the one below it. */
+	.ck-arch-stack {
+		display: grid;
+		gap: var(--ck-space-6);
+	}
+	.ck-arch-tier {
+		position: relative;
+	}
+	.ck-arch-tier + .ck-arch-tier::before {
+		content: '';
+		position: absolute;
+		left: 50%;
+		bottom: 100%;
+		height: var(--ck-space-6);
+		border-left: 1px solid var(--ck-border-ui);
+	}
+	.ck-arch-tier + .ck-arch-tier::after {
+		content: '';
+		position: absolute;
+		left: calc(50% - 3px);
+		top: -1px;
+		width: 7px;
+		height: 7px;
+		background: var(--ck-border-ui);
+	}
+	.ck-arch-nodes {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(min(100%, 9.5rem), 1fr));
+		gap: var(--ck-space-2);
+	}
+	.ck-arch a {
+		display: flex;
+		flex-direction: column;
+		gap: 0.125rem;
+		height: 100%;
+		padding: var(--ck-space-3) var(--ck-space-4);
+		overflow-wrap: anywhere;
+		border: 1px solid var(--ck-border-strong);
+		background: var(--ck-surface);
+		text-decoration: none;
+	}
+	.ck-arch-nodes--one a {
+		flex-direction: row;
+		flex-wrap: wrap;
+		align-items: baseline;
+		justify-content: center;
+		gap: 0 var(--ck-space-3);
+		border-color: var(--ck-text);
+		text-align: center;
+	}
+	@media (max-width: 40rem) {
+		.ck-arch a {
+			padding: var(--ck-space-2) var(--ck-space-3);
+		}
+		.ck-arch-stack,
+		.ck-arch-chain {
+			gap: var(--ck-space-4);
+		}
+		.ck-arch-tier + .ck-arch-tier::before,
+		.ck-arch-chain li + li::before {
+			height: var(--ck-space-4);
+		}
+	}
+	.ck-arch a:hover {
+		border-color: var(--ck-accent);
+	}
+	.ck-arch code {
+		padding: 0;
+		background: none;
+		font-size: var(--sl-text-sm);
+		font-weight: 600;
+		color: var(--ck-text);
+	}
+	.ck-arch a span {
+		font-size: var(--sl-text-xs);
+		color: var(--ck-muted);
+	}
+
+	.ck-arch-side {
+		display: flex;
+		flex-direction: column;
+	}
+	.ck-arch-chain {
+		display: grid;
+		gap: var(--ck-space-6);
+	}
+	.ck-arch-chain li {
+		position: relative;
+	}
+	.ck-arch-chain li + li::before {
+		content: '';
+		position: absolute;
+		left: var(--ck-space-6);
+		bottom: 100%;
+		height: var(--ck-space-6);
+		border-left: 1px solid var(--ck-border-ui);
+	}
+	.ck-arch-chain li + li::after {
+		content: '';
+		position: absolute;
+		left: calc(var(--ck-space-6) - 3px);
+		top: -1px;
+		width: 7px;
+		height: 7px;
+		background: var(--ck-border-ui);
+	}
+	.ck-arch-note {
+		margin: var(--ck-space-4) 0 0;
+		font-size: var(--sl-text-sm);
+		color: var(--ck-muted);
+	}
+	.ck-arch-note code {
+		font-size: inherit;
+		font-weight: 400;
+	}
+</style>

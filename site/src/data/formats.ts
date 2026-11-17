@@ -9,6 +9,8 @@ export interface Capability {
 	label: string;
 	/** Versions / scope, shown next to the chip. */
 	detail?: string;
+	/** A few words for the landing page format diagram. */
+	brief?: string;
 }
 
 export interface FormatRow {
@@ -26,7 +28,7 @@ export const FORMATS: FormatRow[] = [
 	{
 		id: 'dwg',
 		name: 'DWG',
-		read: { status: 'ok', label: 'Read', detail: 'AC1014 (R14) to AC1032 (2018), including 2007' },
+		read: { status: 'ok', label: 'Read', detail: 'AC1014 (R14) to AC1032 (2018), including 2007', brief: 'R14 to 2018' },
 		write: { status: 'pending', label: 'No writer' },
 		note: 'Read-only. R13 (AC1012) is untested; entity coverage is still growing.',
 		evidence: [{ label: 'Format notes', href: repoFile('docs/dwg/FORMAT_NOTES.md') }],
@@ -35,7 +37,7 @@ export const FORMATS: FormatRow[] = [
 	{
 		id: 'dgn-v7',
 		name: 'DGN V7',
-		read: { status: 'ok', label: 'Read', detail: 'including tags' },
+		read: { status: 'ok', label: 'Read', detail: 'including tags', brief: 'with tags' },
 		write: { status: 'pending', label: 'No writer' },
 		note: 'Implemented, including tags.',
 		evidence: [{ label: 'Format notes', href: repoFile('docs/dgn/FORMAT_NOTES.md') }],
@@ -45,7 +47,7 @@ export const FORMATS: FormatRow[] = [
 		id: 'dgn-v8',
 		name: 'DGN V8',
 		read: { status: 'ok', label: 'Read' },
-		write: { status: 'partial', label: 'Subset', detail: 'seed-based V8 writer' },
+		write: { status: 'partial', label: 'Subset', detail: 'seed-based V8 writer', brief: 'seed-based subset' },
 		note: 'Local tests pass; external application acceptance is pending. Writing needs a seed file.',
 		evidence: [
 			{ label: 'Interchange status', href: repoFile('docs/INTERCHANGE_STATUS.md') },
@@ -56,8 +58,8 @@ export const FORMATS: FormatRow[] = [
 	{
 		id: 'dxf',
 		name: 'DXF',
-		read: { status: 'ok', label: 'Read', detail: 'ASCII and binary, R12 to 2018' },
-		write: { status: 'ok', label: 'Write', detail: 'ASCII, R12 to 2018' },
+		read: { status: 'ok', label: 'Read', detail: 'ASCII and binary, R12 to 2018', brief: 'R12 to 2018, ASCII and binary' },
+		write: { status: 'ok', label: 'Write', detail: 'ASCII, R12 to 2018', brief: 'R12 to 2018' },
 		note: 'Entity coverage is still growing.',
 		evidence: [{ label: 'DXF notes', href: repoFile('docs/dxf/NOTES.md') }],
 		page: '/formats/dxf/',
@@ -65,8 +67,8 @@ export const FORMATS: FormatRow[] = [
 	{
 		id: 'citygml',
 		name: 'CityGML 2.0',
-		read: { status: 'ok', label: 'Read', detail: 'native XML and geometry' },
-		write: { status: 'ok', label: 'Write', detail: 'native XML and explicit generic geometry' },
+		read: { status: 'ok', label: 'Read', detail: 'native XML and geometry', brief: 'native XML and geometry' },
+		write: { status: 'ok', label: 'Write', detail: 'native XML and explicit generic geometry', brief: 'with an explicit CRS' },
 		note: 'New geometry needs an explicit CRS. Optional local structural TKGM preflight; not institutional acceptance.',
 		evidence: [
 			{ label: 'Format notes', href: repoFile('docs/gml/FORMAT_NOTES.md') },

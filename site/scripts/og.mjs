@@ -26,11 +26,34 @@ const C = {
 const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
 /**
- * @param {{title: string, description: string, path: string, version: string, date: string}} page
+ * The landing page floor plan (cadkit's own SVG, see scripts/hero.mjs) for the card: layer
+ * colours as attributes and no text, since resvg renders here without fonts.
+ * @param {string} svg
+ * @param {{x: number, y: number, w: number, h: number}} box
+ */
+function planForCard(svg, box) {
+	const viewBox = /viewBox="([^"]+)"/.exec(svg)?.[1];
+	if (!viewBox) return '';
+	const stroke = { WALLS: C.text, DOORS: C.accent, WINDOWS: C.accent, DIMENSIONS: C.redline, GRID: C.major, TEXT: C.muted };
+	const body = svg
+		.replace(/^[\s\S]*?<svg[^>]*>/, '')
+		.replace(/<\/svg>\s*$/, '')
+		.replace(/<title[^>]*>[\s\S]*?<\/title>/g, '')
+		.replace(/<text[\s\S]*?<\/text>/g, '')
+		.replace(/<g data-layer="([^"]+)" fill="none"/g, (_, layer) =>
+			`<g data-layer="${layer}" fill="${layer === 'WALLS' ? C.border : 'none'}" stroke="${stroke[layer] ?? C.muted}" stroke-width="${layer === 'WALLS' ? 0.05 : 0.035}"`
+		);
+	return `<svg x="${box.x}" y="${box.y}" width="${box.w}" height="${box.h}" viewBox="${viewBox}">${body}</svg>`;
+}
+
+/**
+ * @param {{title: string, description: string, path: string, version: string, date: string, drawing?: string}} page
+ *   drawing: optional cadkit SVG shown in a sheet on the right (the landing page uses the plan)
  * @returns {Buffer} PNG bytes
  */
 export function renderOgCard(page) {
-	const TITLE = { family: 'sans', size: 66, width: 115, weight: 600, tracking: -0.015 };
+	const TITLE = { family: 'sans', size: page.drawing ? 58 : 66, width: 115, weight: 600, tracking: -0.015 };
+	const STEP = page.drawing ? 66 : 74;
 	const DESC = { family: 'sans', size: 28, width: 100, weight: 400 };
 	const LABEL = { family: 'mono', size: 14, weight: 500, tracking: 0.08 };
 	const VALUE = { family: 'mono', size: 21, weight: 500 };
@@ -38,6 +61,8 @@ export function renderOgCard(page) {
 
 	const x0 = 72;
 	const maxW = W - 2 * x0;
+	const sheet = page.drawing ? { x: 676, y: 128, w: W - x0 - 676, h: 340 } : null;
+	const textW = sheet ? sheet.x - x0 - 48 : maxW;
 	let body = '';
 
 	// Grid: 12 px minor, 60 px major.
@@ -55,15 +80,26 @@ export function renderOgCard(page) {
 	const urlText = measure(url, urlOpts) > 520 ? url.slice(0, 40) + '\u2026' : url;
 	body += `<path d="${textPath(urlText, W - x0 - measure(urlText, urlOpts), 84, urlOpts)}" fill="${C.muted}"/>`;
 
+	// Drawing sheet with grips at two corners, like the hero on the site.
+	if (sheet && page.drawing) {
+		body += `<rect x="${sheet.x + 0.5}" y="${sheet.y + 0.5}" width="${sheet.w - 1}" height="${sheet.h - 1}" fill="${C.surface}" stroke="${C.border}"/>`;
+		body += planForCard(page.drawing, { x: sheet.x + 16, y: sheet.y + 16, w: sheet.w - 32, h: sheet.h - 32 });
+		for (const [gx, gy] of [
+			[sheet.x, sheet.y],
+			[sheet.x + sheet.w, sheet.y + sheet.h],
+		])
+			body += `<rect x="${gx - 4}" y="${gy - 4}" width="8" height="8" fill="${C.accent}"/>`;
+	}
+
 	// Title (up to 3 lines) and description (up to 2 lines).
-	const titleLines = wrap(page.title, maxW, 3, TITLE);
-	let y = titleLines.length === 1 ? 300 : titleLines.length === 2 ? 262 : 222;
+	const titleLines = wrap(page.title, textW, 3, TITLE);
+	let y = titleLines.length === 1 ? 300 : titleLines.length === 2 ? 262 : page.drawing ? 206 : 222;
 	for (const line of titleLines) {
 		body += `<path d="${textPath(line, x0, y, TITLE)}" fill="${C.text}"/>`;
-		y += 74;
+		y += STEP;
 	}
 	y += 8;
-	for (const line of wrap(page.description, maxW, 2, DESC)) {
+	for (const line of wrap(page.description, textW, 2, DESC)) {
 		body += `<path d="${textPath(line, x0, y, DESC)}" fill="${C.muted}"/>`;
 		y += 40;
 	}

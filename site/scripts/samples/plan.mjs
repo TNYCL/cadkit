@@ -242,12 +242,13 @@ export function buildR12() {
 		['ENTRY', 3.66, 5.16, 6.54, 8.7],
 		['BEDROOM', 6.66, 0.3, 11.7, 5.04],
 		['CORRIDOR', 6.66, 5.16, 11.7, 6.36],
-		['BATH', 6.66, 6.48, 8.7, 8.7],
-		['STUDY', 8.82, 6.48, 11.7, 8.7],
+		// Bath and study labels sit above the door swings that open into those small rooms.
+		['BATH', 6.66, 6.48, 8.7, 8.7, 0.45],
+		['STUDY', 8.82, 6.48, 11.7, 8.7, 0.45],
 	];
-	for (const [name, x0, y0, x1, y1] of rooms) {
+	for (const [name, x0, y0, x1, y1, lift = 0] of rooms) {
 		const cx = (x0 + x1) / 2;
-		const cy = (y0 + y1) / 2;
+		const cy = (y0 + y1) / 2 + lift;
 		const area = ((x1 - x0) * (y1 - y0)).toFixed(2);
 		if (name === 'CORRIDOR') {
 			s.text('TEXT', cx + 1.6, cy, 0.2, name);

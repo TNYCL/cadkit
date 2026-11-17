@@ -139,22 +139,24 @@ a {
 	pointer-events: none;
 	background-image:
 		linear-gradient(to right, var(--ck-grid-major) 1px, transparent 1px),
-		linear-gradient(to bottom, var(--ck-grid-major) 1px, transparent 1px),
-		linear-gradient(to right, var(--ck-grid-minor) 1px, transparent 1px),
-		linear-gradient(to bottom, var(--ck-grid-minor) 1px, transparent 1px);
-	background-size:
-		40px 40px,
-		40px 40px,
-		8px 8px,
-		8px 8px;
+		linear-gradient(to bottom, var(--ck-grid-major) 1px, transparent 1px);
+	background-size: 40px 40px;
 	background-position: -1px -1px;
-	-webkit-mask-image: linear-gradient(to bottom, #000 0%, rgb(0 0 0 / 0.55) 40%, transparent 100%);
-	mask-image: linear-gradient(to bottom, #000 0%, rgb(0 0 0 / 0.55) 40%, transparent 100%);
+	-webkit-mask-image: linear-gradient(to bottom, #000 0%, rgb(0 0 0 / 0.5) 45%, transparent 100%);
+	mask-image: linear-gradient(to bottom, #000 0%, rgb(0 0 0 / 0.5) 45%, transparent 100%);
 }
 
 /* Docs pages: keep the grid to the header band only. */
 :root[data-has-sidebar] .ck-grid-bg {
 	height: 18rem;
+}
+
+/* Pages without the docs sidebar: the header content sits on the same columns as the page
+   container (.ck-container), so the brand lines up with the headings below it. */
+@media (min-width: 50rem) {
+	:root:not([data-has-sidebar]) {
+		--sl-nav-pad-x: var(--ck-space-8);
+	}
 }
 
 /* ---- Layout helpers for hand-written pages ------------------------------------------------- */
@@ -187,6 +189,30 @@ a {
 	max-width: 44rem;
 }
 
+/* Section label above a heading: a short rule, the sheet number and the section name. */
+.ck-label {
+	display: flex;
+	align-items: center;
+	gap: var(--ck-space-3);
+	margin: 0;
+	font-family: var(--__sl-font-mono);
+	font-size: var(--sl-text-xs);
+	font-weight: 500;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: var(--ck-muted);
+}
+.ck-label::before {
+	content: '';
+	width: 1.5rem;
+	height: 1px;
+	background: currentColor;
+}
+.ck-label b {
+	font-weight: 500;
+	color: var(--ck-text);
+}
+
 /* Grip squares as list bullets. */
 .ck-grips {
 	list-style: none;
@@ -212,38 +238,76 @@ a {
 
 /* ---- Buttons ------------------------------------------------------------------------------ */
 
+/* The accent colour belongs to the primary action; secondary buttons are outlined in the
+   neutral control colour (--ck-border-ui, 3:1 against the page). */
 .ck-btn {
 	display: inline-flex;
 	align-items: center;
+	justify-content: center;
 	gap: var(--ck-space-2);
 	min-height: 2.75rem;
 	padding: 0 var(--ck-space-4);
-	border: 1px solid var(--ck-accent);
+	border: 1px solid var(--ck-border-ui);
 	border-radius: var(--ck-radius);
 	font-family: var(--__sl-font);
 	font-weight: 600;
 	font-size: var(--sl-text-sm);
 	letter-spacing: 0.01em;
 	text-decoration: none;
-	color: var(--ck-accent);
+	color: var(--ck-text);
 	background: transparent;
 	white-space: nowrap;
 }
 .ck-btn:hover {
-	background: color-mix(in srgb, var(--ck-accent) 10%, transparent);
+	color: var(--ck-text);
+	border-color: var(--ck-text);
+	background: color-mix(in srgb, var(--ck-text) 6%, transparent);
 }
 .ck-btn--primary {
+	border-color: var(--ck-accent);
 	color: var(--ck-on-accent);
 	background: var(--ck-accent);
 }
 .ck-btn--primary:hover {
+	border-color: color-mix(in srgb, var(--ck-accent) 86%, var(--ck-text));
 	color: var(--ck-on-accent);
 	background: color-mix(in srgb, var(--ck-accent) 86%, var(--ck-text));
+}
+.ck-btn--lg {
+	min-height: 3.25rem;
+	padding: 0 var(--ck-space-6);
+	font-size: var(--sl-text-base);
 }
 .ck-btn svg {
 	width: 1rem;
 	height: 1rem;
 	flex: none;
+}
+@media (prefers-reduced-motion: no-preference) {
+	.ck-btn .ck-arrow {
+		transition: transform var(--ck-duration) var(--ck-ease);
+	}
+	.ck-btn:hover .ck-arrow {
+		transform: translateX(3px);
+	}
+	.ck-btn:active {
+		transform: translateY(1px);
+	}
+}
+
+/* ---- Tabs (Starlight <Tabs>) --------------------------------------------------------------- */
+
+/* Tab labels are controls, not links: neutral until selected, 44px tall touch targets. */
+starlight-tabs [role='tab'] {
+	min-height: 2.75rem;
+	color: var(--ck-muted);
+}
+starlight-tabs [role='tab']:hover {
+	color: var(--ck-text);
+}
+starlight-tabs [role='tab'][aria-selected='true'] {
+	color: var(--ck-text);
+	border-color: var(--ck-accent);
 }
 
 /* ---- Starlight content refinements --------------------------------------------------------- */

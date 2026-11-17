@@ -11,6 +11,8 @@
 	--ck-surface: #101b31;
 	--ck-raised: #16233d;
 	--ck-border: #22314f;
+	--ck-border-strong: #33466b;
+	--ck-border-ui: #6a7fa6;
 	--ck-grid-minor: #132038;
 	--ck-grid-major: #1b2a47;
 	--ck-text: #e8edf5;
@@ -29,6 +31,8 @@
 	--ck-surface: #ffffff;
 	--ck-raised: #f2f2ec;
 	--ck-border: #e2e1d8;
+	--ck-border-strong: #cdcbbf;
+	--ck-border-ui: #7d8391;
 	--ck-grid-minor: #ecebe4;
 	--ck-grid-major: #dcdbd0;
 	--ck-text: #14171c;

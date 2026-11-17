@@ -1,0 +1,270 @@
+---
+// Landing page format diagram: every reader feeds one document model, every writer reads it.
+// Data: src/data/formats.ts (the full matrix with evidence is on /formats/).
+import { FORMATS } from '../../data/formats';
+import Logo from '../Logo.astro';
+
+const inputs = FORMATS.map((f) => ({ name: f.name, brief: f.read.brief, href: f.page }));
+const writeOrder = ['dxf', 'dgn-v8', 'citygml'];
+const outputs = [
+	...FORMATS.filter((f) => f.write.status !== 'pending')
+		.sort((a, b) => writeOrder.indexOf(a.id) - writeOrder.indexOf(b.id))
+		.map((f) => ({ name: f.name, brief: f.write.brief, href: f.page })),
+	{ name: 'SVG', brief: 'from every interface', href: '/docs/guides/dxf-to-svg/' },
+	{ name: 'JSON', brief: 'versioned schema', href: '/docs/reference/document-schema/' },
+];
+---
+
+<div class="ck-flow">
+	<div class="ck-flow-side ck-flow-in">
+		<p class="ck-flow-head" id="ck-flow-read">Reads</p>
+		<ul aria-labelledby="ck-flow-read">
+			{
+				inputs.map((f) => (
+					<li>
+						<a href={f.href}>
+							<b>{f.name}</b>
+							{f.brief && <span>{f.brief}</span>}
+						</a>
+					</li>
+				))
+			}
+		</ul>
+	</div>
+
+	<div class="ck-flow-core">
+		<p class="ck-flow-head" aria-hidden="true">&nbsp;</p>
+		<div class="ck-flow-model">
+			<span class="ck-flow-grip ck-flow-grip--tl" aria-hidden="true"></span>
+			<span class="ck-flow-grip ck-flow-grip--br" aria-hidden="true"></span>
+			<Logo size={36} />
+			<p class="ck-flow-model-name">One document model</p>
+			<p class="ck-flow-model-body">Layers, blocks, entities, units and warnings, the same for every format.</p>
+			<a class="ck-flow-model-link" href="/docs/reference/document-schema/">Document schema</a>
+		</div>
+	</div>
+
+	<div class="ck-flow-side ck-flow-out">
+		<p class="ck-flow-head" id="ck-flow-write">Writes</p>
+		<ul aria-labelledby="ck-flow-write">
+			{
+				outputs.map((f) => (
+					<li>
+						<a href={f.href}>
+							<b>{f.name}</b>
+							{f.brief && <span>{f.brief}</span>}
+						</a>
+					</li>
+				))
+			}
+		</ul>
+	</div>
+</div>
+
+<style>
+	.ck-flow {
+		--ck-flow-gap: 3.5rem;
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) minmax(13rem, 17rem) minmax(0, 1fr);
+		column-gap: var(--ck-flow-gap);
+	}
+	.ck-flow-head {
+		margin: 0 0 var(--ck-space-3);
+		font-family: var(--__sl-font-mono);
+		font-size: var(--sl-text-2xs);
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--ck-muted);
+	}
+	.ck-flow-out .ck-flow-head {
+		text-align: end;
+	}
+	.ck-flow ul {
+		display: grid;
+		gap: var(--ck-space-2);
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+	.ck-flow li {
+		position: relative;
+	}
+	.ck-flow li a {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: var(--ck-space-3);
+		min-height: 3.25rem;
+		padding: var(--ck-space-3) var(--ck-space-4);
+		border: 1px solid var(--ck-border-strong);
+		background: var(--ck-surface);
+		color: var(--ck-text);
+		text-decoration: none;
+	}
+	.ck-flow li a:hover {
+		border-color: var(--ck-accent);
+	}
+	.ck-flow b {
+		font-family: var(--__sl-font-mono);
+		font-size: var(--sl-text-sm);
+		font-weight: 600;
+		white-space: nowrap;
+	}
+	.ck-flow li span {
+		font-size: var(--sl-text-xs);
+		color: var(--ck-muted);
+		text-align: end;
+	}
+	.ck-flow-out li a {
+		flex-direction: row-reverse;
+	}
+	.ck-flow-out li span {
+		text-align: start;
+	}
+
+	/* Leader lines from each format to the model, in the gap between the columns. */
+	.ck-flow-in li::after,
+	.ck-flow-out li::before {
+		content: '';
+		position: absolute;
+		top: 50%;
+		width: var(--ck-flow-gap);
+		border-top: 1px solid var(--ck-border-ui);
+	}
+	.ck-flow-in li::after {
+		left: 100%;
+		transform-origin: left;
+	}
+	.ck-flow-out li::before {
+		right: 100%;
+		transform-origin: right;
+	}
+
+	.ck-flow-core {
+		display: flex;
+		flex-direction: column;
+	}
+	.ck-flow-model {
+		position: relative;
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		justify-content: center;
+		align-items: flex-start;
+		gap: var(--ck-space-2);
+		padding: var(--ck-space-6);
+		border: 1px solid var(--ck-text);
+		background:
+			linear-gradient(to right, var(--ck-grid-major) 1px, transparent 1px) -1px -1px / 20px 20px,
+			linear-gradient(to bottom, var(--ck-grid-major) 1px, transparent 1px) -1px -1px / 20px 20px,
+			var(--ck-surface);
+	}
+	.ck-flow-grip {
+		position: absolute;
+		width: 7px;
+		height: 7px;
+		background: var(--ck-accent);
+	}
+	.ck-flow-grip--tl {
+		top: -4px;
+		left: -4px;
+	}
+	.ck-flow-grip--br {
+		right: -4px;
+		bottom: -4px;
+	}
+	.ck-flow-model-name {
+		margin: var(--ck-space-2) 0 0;
+		font-stretch: var(--ck-heading-stretch);
+		font-size: var(--sl-text-xl);
+		font-weight: 600;
+		line-height: 1.2;
+		color: var(--ck-text);
+	}
+	.ck-flow-model-body {
+		margin: 0;
+		font-size: var(--sl-text-sm);
+		color: var(--ck-muted);
+	}
+	.ck-flow-model-link {
+		margin-top: var(--ck-space-2);
+		font-size: var(--sl-text-sm);
+		font-weight: 600;
+	}
+
+	/* The leader lines draw in as the diagram scrolls into view (decoration only). */
+	@media (prefers-reduced-motion: no-preference) {
+		@supports (animation-timeline: view()) {
+			.ck-flow-in li::after,
+			.ck-flow-out li::before {
+				animation: ck-flow-lead linear both;
+				animation-timeline: view();
+				animation-range: entry 20% cover 45%;
+			}
+		}
+	}
+	@keyframes ck-flow-lead {
+		from {
+			transform: scaleX(0);
+		}
+		to {
+			transform: scaleX(1);
+		}
+	}
+
+	/* Narrow screens: inputs, the model and outputs stacked, joined by one vertical lead. */
+	@media (max-width: 55.99rem) {
+		.ck-flow {
+			grid-template-columns: minmax(0, 1fr);
+			row-gap: var(--ck-space-8);
+		}
+		.ck-flow ul {
+			grid-template-columns: repeat(auto-fill, minmax(min(100%, 10rem), 1fr));
+		}
+		.ck-flow li a,
+		.ck-flow-out li a {
+			flex-direction: column;
+			align-items: flex-start;
+			justify-content: center;
+			gap: 0;
+			min-height: 3rem;
+			padding: var(--ck-space-2) var(--ck-space-3);
+		}
+		.ck-flow li span,
+		.ck-flow-out li span {
+			text-align: start;
+		}
+		.ck-flow-out .ck-flow-head {
+			text-align: start;
+		}
+		.ck-flow-in li::after,
+		.ck-flow-out li::before {
+			display: none;
+		}
+		.ck-flow-core .ck-flow-head {
+			display: none;
+		}
+		.ck-flow-core {
+			position: relative;
+		}
+		.ck-flow-core::before,
+		.ck-flow-core::after {
+			content: '';
+			position: absolute;
+			left: 50%;
+			height: var(--ck-space-8);
+			border-left: 1px solid var(--ck-border-ui);
+		}
+		.ck-flow-core::before {
+			bottom: 100%;
+		}
+		.ck-flow-core::after {
+			top: 100%;
+		}
+		.ck-flow-model {
+			align-items: center;
+			padding: var(--ck-space-4);
+			text-align: center;
+		}
+	}
+</style>

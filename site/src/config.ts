@@ -99,8 +99,8 @@ export interface NavLink {
 export const NAV: readonly NavLink[] = [
 	{ label: 'Docs', href: '/docs/' },
 	{ label: 'Demo', href: '/demo/' },
+	{ label: 'Formats', href: '/formats/' },
 	{ label: 'Changelog', href: '/changelog/' },
-	{ label: 'Stats', href: '/stats/' },
 	{ label: 'Community', href: '/community/' },
 ];
 
