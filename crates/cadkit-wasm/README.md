@@ -46,8 +46,16 @@ doc.free();
   `pickEntityBounded` are deprecated: their `index` is a visiting order, not an entity index.
 - In-place operations: `convertUnits`, `explodeInserts`, `transform`, `retainLayers`,
   `retainKinds`, `purgeUnused`; `clone` copies a document.
-- Export: `toSvg` / `toSvgBounded`, `toDxf` / `toDxfWithReport` (lists what DXF left out),
-  `toDgn`, `toCityGml` / `toCityGmlReport`.
+- Export: `toSvg` / `toSvgBounded` (with a local origin for map coordinates and `data-e`
+  entity references for viewers), `toDxf` / `toDxfWithReport` (lists what DXF left out),
+  `toDgn` / `toDgnWithReport` (with `prepare` for documents from other formats) and
+  `prepareForDgn`, `toCityGml` / `toCityGmlReport`, `toCityGmlBuildings` (buildings with
+  wall, roof and ground surfaces from faces and closed polylines).
+- Renderer buffers: `surfaceMesh` (triangles, normals, colours and outlines) and `lineBuffer`
+  (segments) as typed arrays relative to an f64 origin, grouped by layer, with an item table
+  that leads every triangle and segment back to its entity, and a ray pick.
+- CityGML checks: `validate`, `geometryIssues`, and `preflightTkgm` / `preflightTkgmLocated`,
+  local structural checks of a TKGM subset that never establish acceptance.
 
 Options are plain objects or JSON text; a wrong value throws `bad_argument` naming the option,
 and an unknown key is reported with `console.warn` (it becomes an error in the next minor
@@ -57,8 +65,8 @@ release). Errors are `Error` objects with `kind` and, when known, `offset`, `lim
 memory never shrinks: `memoryBytes()` tells a host when to recycle its worker. The TypeScript
 declarations cover every option and result, and the document model as a discriminated union.
 
-This npm package does not export the standalone Rust `cadkit-geom`, `cadkit-scene` or
-`cadkit-gpu` APIs. See the [format matrix](https://github.com/TNYCL/cadkit#format-support) and
+This npm package does not export the standalone Rust `cadkit-geom`, `cadkit-gpu` or
+`cadkit-scene` plan APIs; it builds the `cadkit-scene` buffers. See the [format matrix](https://github.com/TNYCL/cadkit#format-support) and
 the API reference in [docs/wasm.md](https://github.com/TNYCL/cadkit/blob/main/docs/wasm.md).
 
 "DWG", "DGN" and "DXF" name file formats only; cadkit is not affiliated with or certified by

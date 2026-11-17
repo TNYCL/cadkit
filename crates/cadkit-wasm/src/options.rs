@@ -377,7 +377,25 @@ impl Opts {
         match self.take(key)? {
             None | Some(Opt::Null) => Ok(None),
             Some(Opt::Num(n)) if n.is_finite() && n >= min && n <= max => Ok(Some(n)),
-            Some(other) => Err(self.wrong(key, &format!("a number from {min} to {max}"), &other)),
+            Some(other) => Err(self.wrong(key, &range_text(min, max), &other)),
+        }
+    }
+
+    /// A finite number option in `min..=max` that may be `null` on purpose: `Some(None)` for
+    /// `null`.
+    pub(crate) fn nullable_number(
+        &mut self,
+        key: &str,
+        min: f64,
+        max: f64,
+    ) -> Result<Option<Option<f64>>, JsValue> {
+        match self.take(key)? {
+            None => Ok(None),
+            Some(Opt::Null) => Ok(Some(None)),
+            Some(Opt::Num(n)) if n.is_finite() && n >= min && n <= max => Ok(Some(Some(n))),
+            Some(other) => {
+                Err(self.wrong(key, &format!("{} or null", range_text(min, max)), &other))
+            }
         }
     }
 
@@ -510,6 +528,31 @@ impl Opts {
     }
 }
 
+/// An option that is either a boolean or a nested options object (see [`Opts::bool_or_object`]).
+pub(crate) enum BoolOr {
+    Bool(bool),
+    Object(Opts),
+}
+
+impl Opts {
+    /// A boolean option or a nested options object; `null` counts as not given.
+    pub(crate) fn bool_or_object(&mut self, key: &str) -> Result<Option<BoolOr>, JsValue> {
+        let path = format!("{}.{key}", self.path);
+        let strict_keys = self.strict_keys;
+        match self.take(key)? {
+            None | Some(Opt::Null) => Ok(None),
+            Some(Opt::Bool(b)) => Ok(Some(BoolOr::Bool(b))),
+            Some(Opt::Obj(entries)) => Ok(Some(BoolOr::Object(Opts {
+                path,
+                used: vec![false; entries.len()],
+                entries,
+                strict_keys,
+            }))),
+            Some(other) => Err(self.wrong(key, "a boolean or an object", &other)),
+        }
+    }
+}
+
 /// The finite numbers of an [`Opt::List`], or `None` when it is something else.
 pub(crate) fn numbers_of(opt: &Opt, max_items: usize) -> Option<Vec<f64>> {
     let Opt::List(items) = opt else { return None };
@@ -523,6 +566,19 @@ pub(crate) fn numbers_of(opt: &Opt, max_items: usize) -> Option<Vec<f64>> {
             _ => None,
         })
         .collect()
+}
+
+/// "a number from 0 to 1", "a number greater than 0 and at most 1000", "a finite number
+/// greater than 0": the accepted range of a number option, without printing the smallest
+/// positive or the largest finite f64.
+fn range_text(min: f64, max: f64) -> String {
+    let unbounded = max == f64::MAX;
+    match (min == f64::MIN_POSITIVE, unbounded) {
+        (true, true) => "a finite number greater than 0".to_owned(),
+        (true, false) => format!("a number greater than 0 and at most {max}"),
+        (false, true) => format!("a finite number of at least {min}"),
+        (false, false) => format!("a number from {min} to {max}"),
+    }
 }
 
 /// `maxObjects` -> `max_objects`.
@@ -694,6 +750,20 @@ mod tests {
         assert_eq!(l.max_depth, 64);
         assert_eq!(default_read_limits().max_objects, 1_500_000);
         assert!(capped(Limits::default()).max_total_vertices <= ceilings().max_total_vertices);
+    }
+
+    #[test]
+    fn ranges_are_stated_without_extreme_floats() {
+        assert_eq!(range_text(0.0, 1.0), "a number from 0 to 1");
+        assert_eq!(
+            range_text(f64::MIN_POSITIVE, 1000.0),
+            "a number greater than 0 and at most 1000"
+        );
+        assert_eq!(
+            range_text(f64::MIN_POSITIVE, f64::MAX),
+            "a finite number greater than 0"
+        );
+        assert_eq!(range_text(0.0, f64::MAX), "a finite number of at least 0");
     }
 
     #[test]

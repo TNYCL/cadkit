@@ -166,6 +166,17 @@ jobs:
         run: python crates/cadkit-wasm/build.py --check-size
       - name: TypeScript model is generated from the current schema
         run: node crates/cadkit-wasm/scripts/schema-to-ts.mjs --check
+      # The corpus tests (every public DXF and DWG sample written into the stripped GDAL DGN
+      # seed, corpus reads, mutations) skip without it.
+      - name: Restore public corpus
+        id: corpus
+        uses: actions/cache@v4
+        with:
+          path: corpus/public
+          key: corpus-public-${{ hashFiles('scripts/fetch-corpus.py') }}
+      - name: Fetch public corpus
+        if: steps.corpus.outputs.cache-hit != 'true'
+        run: python scripts/fetch-corpus.py
       # One file at a time: memory_test grows the wasm memory to about 1.5 GB.
       - run: node --test --test-concurrency=1 "crates/cadkit-wasm/tests/*_test.mjs"
       - name: Pack the npm package, install it and test every entry point

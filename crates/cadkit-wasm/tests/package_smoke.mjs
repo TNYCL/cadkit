@@ -51,6 +51,14 @@ function exercise(api, label) {
     assert.throws(() => doc.toDxf(123), { kind: "bad_argument" });
     assert.equal(doc.pick(0, 5, 2.5, { tolerance: 0.5 })?.kind, "line");
     assert.equal(doc.entity(0, 0).kind.type, "line");
+    const lines = doc.lineBuffer();
+    try {
+      assert.ok(lines instanceof api.LineBuffer, label);
+      assert.ok(lines.segments() instanceof Float32Array, label);
+    } finally {
+      lines.free();
+    }
+    assert.ok(api.SurfaceMesh, label);
   } finally {
     doc.free();
   }

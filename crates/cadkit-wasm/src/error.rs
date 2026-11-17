@@ -153,8 +153,7 @@ fn convert(e: &cadkit::Error, limits: Option<&Limits>) -> JsValue {
 }
 
 /// Removes a leading `"<prefix>: "` that the rest of the message repeats
-/// (`"unsupported: unsupported: x"` and `"unsupported: unsupported DXF code page"` lose the
-/// first `"unsupported: "`): some messages already start with the word the error kind's
+/// (`"unsupported: unsupported: x"` and `"invalid: invalid data"` lose the first prefix): some messages already start with the word the error kind's
 /// display adds.
 pub(crate) fn dedupe_prefix(message: &str) -> String {
     let mut text = message;
@@ -192,9 +191,11 @@ mod tests {
             "invalid data at offset 4: x"
         );
         assert_eq!(dedupe_prefix("a: b"), "a: b");
+        assert_eq!(dedupe_prefix("invalid: invalid data"), "invalid data");
+        // The DXF writer's message does not repeat the kind and is kept whole.
         assert_eq!(
-            dedupe_prefix("unsupported: unsupported DXF output code page `x`"),
-            "unsupported DXF output code page `x`"
+            dedupe_prefix("unsupported: DXF output code page `x` is not supported"),
+            "unsupported: DXF output code page `x` is not supported"
         );
         assert_eq!(
             dedupe_prefix("unsupported: unsupportedness"),

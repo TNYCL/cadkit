@@ -125,11 +125,42 @@ test("other option sets use the same parser", () => {
       ["pick", (o) => doc.pick(0, 5, 2.5, { tolerance: 0.5, ...o })],
       ["entities", (o) => doc.entities(0, o)],
       ["explodeInserts", (o) => doc.clone().explodeInserts(o)],
+      ["toCityGml", (o) => doc.toCityGml("EPSG:4979", 1, o)],
+      ["toCityGmlReport", (o) => doc.toCityGmlReport("EPSG:4979", 1, true, o)],
     ]) {
       const [, warnings] = captureWarnings(() => call({ bogusKey: 1 }));
       assert.equal(warnings.length, 1, name);
       assert.match(warnings[0], new RegExp(`${name}\\(\\): unknown option "bogusKey"`));
     }
+    // Methods added in this release reject unknown keys from the start.
+    for (const [name, call] of [
+      ["surfaceMesh", (o) => doc.surfaceMesh(o).free()],
+      ["lineBuffer", (o) => doc.lineBuffer(o).free()],
+      ["toCityGmlBuildings", (o) => doc.toCityGmlBuildings({ srsName: "EPSG:4979", lod: 2, ...o })],
+      ["toCityGmlBuildingsDocument", (o) => doc.toCityGmlBuildingsDocument({ srsName: "EPSG:4979", lod: 2, ...o }).document.free()],
+      ["toDgnWithReport", (o) => doc.toDgnWithReport(new Uint8Array(8), o)],
+      ["prepareForDgn", (o) => doc.prepareForDgn(new Uint8Array(8), o)],
+    ]) {
+      const [e, warnings] = captureWarnings(() => thrown(() => call({ bogusKey: 1 })));
+      assert.equal(e?.kind, "bad_argument", name);
+      assert.match(e.message, new RegExp(`unknown option bogusKey for ${name}\\(\\)`), e.message);
+      assert.deepEqual(warnings, [], name);
+      assert.equal(thrown(() => call({}))?.kind === "bad_argument", false, `${name} with no options`);
+    }
+    // Option values of the buffers.
+    for (const options of [
+      { maxTriangles: -1 }, { maxSegments: 1.5 }, { maxWork: 0 }, { maxDepth: "2" }, { polylines: "sometimes" },
+      { planarity: -1 }, { wires: 1 }, { outlines: "no" }, { tolerance: 0 }, { maxError: -1 }, { neutralColor: [1, 2] },
+      { neutralColor: [0, 0, 256] }, { neutralColor: "#12345g" }, { neutralColor: "red" }, { lineBackground: {} },
+      { expandInserts: "yes" }, { model: 2 }, { maxGeometryWork: NaN },
+    ]) {
+      assert.equal(thrown(() => doc.surfaceMesh(options))?.kind, "bad_argument", JSON.stringify(options));
+    }
+    for (const options of [{ threeD: 1 }, { background: [0, 0] }, { maxSegments: -1 }, { tolerance: Infinity }, { polylines: "auto" }]) {
+      assert.equal(thrown(() => doc.lineBuffer(options))?.kind, "bad_argument", JSON.stringify(options));
+    }
+    const viaJson = doc.surfaceMesh('{"max_triangles": 1, "neutral_color": "#c9ccd2", "line_background": null}');
+    viaJson.free();
     assert.equal(thrown(() => doc.toSvg({ widthPx: "800" }))?.kind, "bad_argument");
     assert.equal(thrown(() => doc.toSvg({ text: 1 }))?.kind, "bad_argument");
     assert.equal(thrown(() => doc.toSvg({ model: 0.5 }))?.kind, "bad_argument");
@@ -178,11 +209,16 @@ const BAD = {
   spec: [123, true, null, undefined, [1, 2], { matrix: [1] }, { scale: "x" }, { translate: [NaN, 0] }, { scale: 0 },
     { rotateZ: "1" }, { matrix: Array(12).fill(0) }, "[1,2]", { scale: 2, matrix: Array(12).fill(1) }],
   profile: [123, {}, null, undefined, "nope"],
+  index: [NaN, -1, 1.5, "0", {}, [], null, undefined, Infinity],
+  vec3: [123, "0,0,1", {}, [], [1, 2], [1, 2, NaN], [1, "2", 3], [1, 2, 3, 4], null, undefined, new Float32Array(2), new DataView(new ArrayBuffer(12))],
+  layerList: [123, "0", {}, [-1], [1.5], ["0"], [99], [null]],
 };
 
 test("every export validates its arguments and throws bad_argument without trapping", () => {
   const doc = wasm.read(blockDxf());
   const native = wasm.readCityGml(GML);
+  const mesh = doc.surfaceMesh();
+  const lines = doc.lineBuffer();
   const seed = new Uint8Array(16);
   const pick = { tolerance: 1, maxOutputBytes: 4096 };
   // [name, call(args), valid args, kind of each argument]
@@ -209,10 +245,19 @@ test("every export validates its arguments and throws bad_argument without trapp
     ["retainKinds", (a) => doc.clone().retainKinds(...a), [["line"]], ["kinds"]],
     ["retainLayers", (a) => doc.clone().retainLayers(...a), [["0"]], ["strings"]],
     ["stats", (a) => doc.stats(...a), [0], ["optPath"]],
-    ["toCityGml", (a) => doc.toCityGml(...a), ["EPSG:4979", 1], ["string", "lod"]],
-    ["toCityGmlReport", (a) => doc.toCityGmlReport(...a), ["EPSG:4979", 1, true], ["string", "lod", "optBool"]],
+    ["toCityGml", (a) => doc.toCityGml(...a), ["EPSG:4979", 1, {}], ["string", "lod", "options"]],
+    ["toCityGmlReport", (a) => doc.toCityGmlReport(...a), ["EPSG:4979", 1, true, {}], ["string", "lod", "optBool", "options"]],
+    ["toCityGmlBuildings", (a) => doc.toCityGmlBuildings(...a), [{ srsName: "EPSG:4979", lod: 2 }], ["requiredOptions"]],
+    ["toCityGmlBuildingsDocument", (a) => doc.toCityGmlBuildingsDocument(...a), [{ srsName: "EPSG:4979", lod: 2 }], ["requiredOptions"]],
     ["toCityGmlWithReport", (a) => doc.toCityGmlWithReport(...a), ["EPSG:4979", 1, true], ["string", "lod", "optBool"]],
     ["toDgn", (a) => doc.toDgn(...a), [seed, {}], ["bytes", "options"]],
+    ["toDgnWithReport", (a) => doc.toDgnWithReport(...a), [seed, {}], ["bytes", "options"]],
+    ["prepareForDgn", (a) => doc.prepareForDgn(...a), [seed, {}], ["bytes", "options"]],
+    ["surfaceMesh", (a) => doc.surfaceMesh(...a), [{}], ["options"]],
+    ["lineBuffer", (a) => doc.lineBuffer(...a), [{}], ["options"]],
+    ["SurfaceMesh.item", (a) => mesh.item(...a), [0], ["index"]],
+    ["SurfaceMesh.pick", (a) => mesh.pick(...a), [[0, 0, 1], [0, 0, -1], []], ["vec3", "vec3", "layerList"]],
+    ["LineBuffer.item", (a) => lines.item(...a), [0], ["index"]],
     ["toDxf", (a) => doc.toDxf(...a), ["r2000"], ["version"]],
     ["toDxfWithReport", (a) => doc.toDxfWithReport(...a), ["r2000"], ["version"]],
     ["toDxfBytes", (a) => doc.toDxfBytes(...a), ["r2000", "windows-1254"], ["version", "optString"]],
@@ -223,6 +268,8 @@ test("every export validates its arguments and throws bad_argument without trapp
     ["transform", (a) => doc.clone().transform(...a), [{ scale: 2 }], ["spec"]],
     ["viewports", (a) => doc.viewports(...a), [0], ["model"]],
     ["preflightTkgm", (a) => native.preflightTkgm(...a), ["city-model-tender"], ["profile"]],
+    ["preflightTkgmLocated", (a) => native.preflightTkgmLocated(...a), ["city-model-tender"], ["profile"]],
+    ["geometryIssues", (a) => native.geometryIssues(...a), [{}], ["options"]],
     ["toDocument", (a) => native.toDocument(...a), [1], ["optLod"]],
     ["toGml", (a) => native.toGml(...a), [{}], ["options"]],
     ["validate", (a) => native.validate(...a), [{}], ["options"]],
@@ -243,10 +290,12 @@ test("every export validates its arguments and throws bad_argument without trapp
       });
     }
   } finally {
+    mesh.free();
+    lines.free();
     doc.free();
     native.free();
   }
-  assert.ok(checked > 250, `${checked} cases`);
+  assert.ok(checked > 350, `${checked} cases`);
   // The module is still usable.
   assert.equal(wasm.detect(bytes), "dxf");
 });
@@ -328,6 +377,9 @@ test("messages do not repeat their prefix", () => {
     collect(() => doc.toCityGmlWithReport("urn:x", 2, false));
     collect(() => doc.convertUnits("parsec-ish"));
     collect(() => doc.toDxfBytes("r2000", "no-such-code-page"));
+    const codepage = thrown(() => doc.toDxfBytes("r2000", "no-such-code-page"));
+    assert.equal(codepage?.kind, "unsupported");
+    assert.match(codepage.message, /DXF output code page `no-such-code-page` is not supported/);
   } finally {
     doc.free();
   }

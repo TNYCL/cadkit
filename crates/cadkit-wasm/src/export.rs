@@ -1,14 +1,14 @@
 //! Writers: JSON is in `document.rs`; here SVG, DXF (with a report of what was left out),
 //! DGN V8 and CityGML 2.0.
 
-use cadkit::{DxfVersion, SvgOptions};
+use cadkit::{DxfVersion, SvgOptions, SvgOrigin};
 use js_sys::{Object, Reflect, Uint8Array};
 use wasm_bindgen::prelude::*;
 
 use crate::args::{self, MAX_SAFE_INTEGER};
 use crate::document::CadDocument;
 use crate::error::{bad_argument, from_cadkit, from_cadkit_with, js_error};
-use crate::options::{Call, Opts, default_write_limits, limits};
+use crate::options::{Call, Opt, Opts, default_write_limits, limits};
 use crate::value::{json_to_js, to_js};
 
 fn dxf_version(value: Option<&JsValue>) -> Result<DxfVersion, JsValue> {
@@ -53,8 +53,72 @@ fn svg_options(doc: &CadDocument, o: &mut Opts) -> Result<(SvgOptions, bool), Js
     if let Some(b) = o.bool("expandBlocks")? {
         s.expand_blocks = b;
     }
+    if let Some(origin) = o.take("origin")? {
+        s.origin = svg_origin(&origin)?;
+    }
+    if let Some(b) = o.bool("entityRefs")? {
+        s.entity_refs = b;
+    }
+    // The core ignores values out of range; here they are argument errors, so that a typo
+    // does not silently fall back to the default rendering.
+    if let Some(p) = o.nullable_number("pointPx", f64::MIN_POSITIVE, 1000.0)? {
+        s.point_px = p;
+    }
+    if let Some(r) = o.nullable_number("capHeightRatio", 0.05, 20.0)? {
+        s.cap_height_ratio = r;
+    }
+    if let Some(f) = o.nullable_string("fontFamily", 1024)? {
+        s.font_family = f.filter(|f| !f.is_empty());
+    }
+    if let Some(b) = o.bool("hatchNativeSpacing")? {
+        s.hatch_native_spacing = b;
+    }
+    if let Some(b) = o.bool("layoutViewports")? {
+        s.layout_viewports = b;
+    }
     let hidden = o.bool("includeHiddenLayers")?.unwrap_or(false);
     Ok((s, hidden))
+}
+
+/// `origin`: `"auto"`, `"none"`, `null` (none), `[x, y]` or `{x, y}` in drawing units.
+fn svg_origin(value: &Opt) -> Result<SvgOrigin, JsValue> {
+    let wrong = || {
+        bad_argument(
+            "option origin must be \"auto\", \"none\", null, [x, y] or {x, y} with finite numbers",
+        )
+    };
+    let finite = |v: &Opt| match v {
+        Opt::Num(n) if n.is_finite() => Some(*n),
+        _ => None,
+    };
+    match value {
+        Opt::Null => Ok(SvgOrigin::None),
+        Opt::Str(s) if s == "auto" => Ok(SvgOrigin::Auto),
+        Opt::Str(s) if s == "none" => Ok(SvgOrigin::None),
+        Opt::List(items) => match items.as_slice() {
+            [x, y] => match (finite(x), finite(y)) {
+                (Some(x), Some(y)) => Ok(SvgOrigin::Explicit { x, y }),
+                _ => Err(wrong()),
+            },
+            _ => Err(wrong()),
+        },
+        Opt::Obj(entries) => {
+            let get = |key: &str| {
+                entries
+                    .iter()
+                    .find(|(k, _)| k == key)
+                    .and_then(|(_, v)| finite(v))
+            };
+            if entries.len() != 2 {
+                return Err(wrong());
+            }
+            match (get("x"), get("y")) {
+                (Some(x), Some(y)) => Ok(SvgOrigin::Explicit { x, y }),
+                _ => Err(wrong()),
+            }
+        }
+        _ => Err(wrong()),
+    }
 }
 
 /// `{ text | bytes, warnings }` as a JS object.
@@ -86,12 +150,52 @@ fn citygml_args(srs_name: &JsValue, lod: &JsValue) -> Result<(String, u8), JsVal
     Ok((srs, u8::try_from(lod).unwrap_or(4)))
 }
 
+/// The surface keys of `gml::ExportOptions` (`closedPolylinesAsSurfaces`,
+/// `planarityTolerance`, `maxPlanarityDeviation`) and the limit keys, on top of
+/// `ExportOptions::new(srs, lod)` with the default write limits.
+pub(crate) fn citygml_export_keys(
+    o: &mut Opts,
+    srs: String,
+    lod: u8,
+    call: &mut Call,
+) -> Result<cadkit::gml::ExportOptions, JsValue> {
+    let mut e = cadkit::gml::ExportOptions::new(srs, lod);
+    e.limits = limits(o, default_write_limits(), call)?;
+    if let Some(b) = o.bool("closedPolylinesAsSurfaces")? {
+        e.closed_polylines_as_surfaces = b;
+    }
+    if let Some(t) = o.number("planarityTolerance", f64::MIN_POSITIVE, f64::MAX)? {
+        e.planarity_tolerance = t;
+    }
+    if let Some(t) = o.number("maxPlanarityDeviation", f64::MIN_POSITIVE, f64::MAX)? {
+        e.max_planarity_deviation = t;
+    }
+    Ok(e)
+}
+
+fn citygml_export_options(
+    name: &'static str,
+    srs_name: &JsValue,
+    lod: &JsValue,
+    options: Option<&JsValue>,
+) -> Result<cadkit::gml::ExportOptions, JsValue> {
+    let mut call = Call::new(name);
+    let (srs, lod) = citygml_args(srs_name, lod)?;
+    let mut o = Opts::parse("options", options)?;
+    let e = citygml_export_keys(&mut o, srs, lod, &mut call)?;
+    o.finish(&mut call)?;
+    Ok(e)
+}
+
 #[wasm_bindgen]
 impl CadDocument {
     /// Renders one model as SVG. Options (`SvgOptions`): `model`, `widthPx`, `strokePx`,
     /// `background` (CSS color; `null` or `"none"` for transparent), `text`, `images`,
-    /// `expandBlocks`, `includeHiddenLayers`. Very large drawings are cut at an internal body
-    /// size with a marker; use `toSvgBounded` for untrusted input.
+    /// `expandBlocks`, `includeHiddenLayers`, and for viewers `origin` (coordinates relative
+    /// to a point, drawing units), `entityRefs` (`data-e` entity paths), `pointPx`,
+    /// `capHeightRatio`, `fontFamily`, `hatchNativeSpacing` and `layoutViewports`. Very large
+    /// drawings are cut at an internal body size with a marker; use `toSvgBounded` for
+    /// untrusted input.
     #[wasm_bindgen(js_name = toSvg)]
     pub fn to_svg(
         &self,
@@ -198,63 +302,25 @@ impl CadDocument {
         )
     }
 
-    /// Writes DGN V8 bytes into a copy of `seed` (a DGN V8 file). Options (`DgnWriteOptions`):
-    /// `clearSeedModel`, `codepage`, `timestampMs`, `planarityTolerance`,
-    /// `preserveSeedRasters`, `preserveSeedControls` and the limit keys.
-    #[wasm_bindgen(js_name = toDgn)]
-    pub fn to_dgn(
-        &self,
-        #[wasm_bindgen(unchecked_param_type = "BytesLike")] seed: JsValue,
-        #[wasm_bindgen(unchecked_optional_param_type = "DgnWriteOptions | string | null")]
-        options: Option<JsValue>,
-    ) -> Result<Vec<u8>, JsValue> {
-        let mut call = Call::new("toDgn");
-        let mut o = Opts::parse("options", options.as_ref())?;
-        let mut w = cadkit::dgn::WriteOptions::default();
-        w.limits = limits(&mut o, default_write_limits(), &mut call)?;
-        if let Some(b) = o.bool("clearSeedModel")? {
-            w.clear_seed_model = b;
-        }
-        if let Some(cp) = o.nullable_string("codepage", 64)? {
-            w.codepage = cp;
-        }
-        if let Some(t) = o.number("timestampMs", 0.0, 1e15)? {
-            w.timestamp_ms = t;
-        }
-        if let Some(t) = o.number("planarityTolerance", 0.0, f64::MAX)? {
-            w.planarity_tolerance = t;
-        }
-        if let Some(b) = o.bool("preserveSeedRasters")? {
-            w.preserve_seed_rasters = b;
-        }
-        if let Some(b) = o.bool("preserveSeedControls")? {
-            w.preserve_seed_controls = b;
-        }
-        o.finish(&mut call)?;
-        let seed = args::bytes("seed", &seed, w.limits.max_input_bytes)?;
-        cadkit::to_dgn(&self.doc, &seed, &w).map_err(|e| from_cadkit_with(&e, &w.limits))
-    }
-
     /// Writes generic CityGML 2.0 objects (UTF-8 XML bytes) with the CRS name `srsName` of the
     /// existing coordinates and `lod` (0 to 4). No reprojection and no axis swap are done.
+    /// Options (`CityGmlExportOptions`): `closedPolylinesAsSurfaces`, `planarityTolerance`,
+    /// `maxPlanarityDeviation` and the limit keys.
     #[wasm_bindgen(js_name = toCityGml)]
     pub fn to_citygml(
         &self,
         #[wasm_bindgen(unchecked_param_type = "string")] srs_name: JsValue,
         #[wasm_bindgen(unchecked_param_type = "number")] lod: JsValue,
+        #[wasm_bindgen(unchecked_optional_param_type = "CityGmlExportOptions | string | null")]
+        options: Option<JsValue>,
     ) -> Result<Vec<u8>, JsValue> {
-        let (srs, lod) = citygml_args(&srs_name, &lod)?;
-        let limits = default_write_limits();
-        cadkit::to_citygml(
-            &self.doc,
-            &cadkit::gml::ExportOptions::new(srs, lod).with_limits(limits),
-        )
-        .map_err(|e| from_cadkit_with(&e, &limits))
+        let e = citygml_export_options("toCityGml", &srs_name, &lod, options.as_ref())?;
+        cadkit::to_citygml(&self.doc, &e).map_err(|err| from_cadkit_with(&err, &e.limits))
     }
 
     /// Like `toCityGml`, returning `{xml, report}` as an object. With `metadataOnly` false an
     /// entity without CityGML geometry is an `unsupported` error; with true it is kept as JSON
-    /// metadata and listed in `report.issues`.
+    /// metadata and listed in `report.issues`. `options` as for `toCityGml`.
     #[wasm_bindgen(js_name = toCityGmlReport, unchecked_return_type = "CityGmlReportResult")]
     pub fn to_citygml_report(
         &self,
@@ -263,8 +329,16 @@ impl CadDocument {
         #[wasm_bindgen(unchecked_optional_param_type = "boolean | null")] metadata_only: Option<
             JsValue,
         >,
+        #[wasm_bindgen(unchecked_optional_param_type = "CityGmlExportOptions | string | null")]
+        options: Option<JsValue>,
     ) -> Result<JsValue, JsValue> {
-        let (xml, report) = self.citygml_with_report(&srs_name, &lod, metadata_only.as_ref())?;
+        let (xml, report) = self.citygml_with_report(
+            "toCityGmlReport",
+            &srs_name,
+            &lod,
+            metadata_only.as_ref(),
+            options.as_ref(),
+        )?;
         let out = Object::new();
         Reflect::set(&out, &"xml".into(), &JsValue::from_str(&xml))?;
         Reflect::set(&out, &"report".into(), &to_js(&report)?)?;
@@ -283,7 +357,13 @@ impl CadDocument {
             JsValue,
         >,
     ) -> Result<String, JsValue> {
-        let (xml, report) = self.citygml_with_report(&srs_name, &lod, metadata_only.as_ref())?;
+        let (xml, report) = self.citygml_with_report(
+            "toCityGmlWithReport",
+            &srs_name,
+            &lod,
+            metadata_only.as_ref(),
+            None,
+        )?;
         serde_json::to_string(&serde_json::json!({ "xml": xml, "report": report }))
             .map_err(|e| js_error("invalid", &e.to_string()))
     }
@@ -292,16 +372,18 @@ impl CadDocument {
 impl CadDocument {
     fn citygml_with_report(
         &self,
+        name: &'static str,
         srs_name: &JsValue,
         lod: &JsValue,
         metadata_only: Option<&JsValue>,
+        options: Option<&JsValue>,
     ) -> Result<(String, cadkit::gml::ExportReport), JsValue> {
-        let (srs, lod) = citygml_args(srs_name, lod)?;
+        let e = citygml_export_options(name, srs_name, lod, options)?;
         let metadata_only = args::opt_bool("metadataOnly", metadata_only)?.unwrap_or(false);
-        let limits = default_write_limits();
+        let limits = e.limits;
         let (bytes, report) = cadkit::gml::write_document_with_report(
             &self.doc,
-            &cadkit::gml::ExportOptions::new(srs, lod).with_limits(limits),
+            &e,
             if metadata_only {
                 cadkit::gml::UnsupportedGeometry::MetadataOnly
             } else {

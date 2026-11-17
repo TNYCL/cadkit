@@ -313,6 +313,25 @@ test("explodeInserts honours maxDepth and maxEntities", () => {
   }
 });
 
+test("explodeInserts expands an insert array completely or not at all", () => {
+  const doc = wasm.read(blockDxf({ columns: 3, rows: 2 }));
+  try {
+    // 6 cells of a line and a circle: 12 entities.
+    const refused = doc.clone();
+    const e = thrown(() => refused.explodeInserts({ maxEntities: 11 }));
+    assert.deepEqual([e?.kind, e.needed], ["limit_exceeded", 12]);
+    assert.equal(refused.stats(0).kinds.insert, 1, "the array is still one insert");
+    refused.free();
+    const done = doc.clone();
+    const r = done.explodeInserts({ maxEntities: 12 });
+    assert.deepEqual([r.truncated, r.entities], [false, 13]);
+    assert.deepEqual(done.stats(0).kinds, { line: 7, circle: 6 });
+    done.free();
+  } finally {
+    doc.free();
+  }
+});
+
 test("transform, retainLayers, retainKinds, purgeUnused and clone change the document in place", () => {
   const doc = wasm.read(blockDxf());
   try {

@@ -79,7 +79,24 @@ export interface SvgOptions {
   images?: boolean;
   expandBlocks?: boolean;
   includeHiddenLayers?: boolean;
+  /** Write coordinates relative to this point, for drawings in map coordinates (browsers hold SVG coordinates in 32-bit floats). The root then carries `data-origin="ox oy"` and an SVG point (sx, sy) is the drawing point (ox + sx, oy - sy). Default none. */
+  origin?: SvgOriginOption | null;
+  /** Tag drawn elements with `data-e="i.j.k"` (the path of the model entity, for `entity(model, path)`), contrast-replaced colours with `data-c="#rrggbb"` and image frames with `data-image-path` and `data-image-px`. Default false. */
+  entityRefs?: boolean;
+  /** Draw points as round dots of this diameter in CSS pixels (greater than 0, at most 1000) instead of crosses. Default null. */
+  pointPx?: number | null;
+  /** Cap height / font size of the display font (0.05 to 20, about 0.7 for sans-serif): `font-size` becomes the CAD height divided by it. Default null (font-size is the CAD height). */
+  capHeightRatio?: number | null;
+  /** CSS `font-family` on the root element (at most 1,024 UTF-16 units); `null` or `""` writes none. */
+  fontFamily?: string | null;
+  /** Space hatch pattern lines by the pattern's own spacing (3.175 drawing units times the scale), at most 500 lines across a hatch, instead of 0.8 % to 8 % of the drawing. Default false. */
+  hatchNativeSpacing?: boolean;
+  /** For a paper layout, draw each viewport as a clipped, scaled window onto the first design model. Default false. */
+  layoutViewports?: boolean;
 }
+
+/** `"auto"`: a round number near the centre of the drawing; `[x, y]` or `{x, y}`: that point in drawing units; `"none"`: no shift. */
+export type SvgOriginOption = "auto" | "none" | [number, number] | { x: number; y: number };
 
 /** Complete SVG export with a strict UTF-8 output budget. */
 export interface BoundedSvgOptions extends SvgOptions {
@@ -348,16 +365,61 @@ export interface DxfBytesResult {
   warnings: WarningInfo[];
 }
 
+/** How a 2D/3D difference between the source model and the seed is handled. */
+export type DgnDimensionPolicy = "strict" | "promote_2d_to_3d" | "project_to_seed";
+
+/** What `prepare` (and `prepareForDgn`) does to the copy of the document. */
+export interface DgnPrepareSteps {
+  /** Default `"promote_2d_to_3d"` (or the writer's `dimensionPolicy` when given). */
+  dimensionPolicy?: DgnDimensionPolicy;
+  /** Explode block references (default true). */
+  explodeInserts?: boolean;
+  /** Convert to the seed's master unit when both scales are known (default true). */
+  convertUnits?: boolean;
+  /** Normalise colours, lineweights, linetypes, fonts, widths, text alignment and other DGN-specific constraints (default true). */
+  normalizeForDgn?: boolean;
+}
+
 /** `dgn::WriteOptions`; camelCase or snake_case keys. */
 export interface DgnWriteOptions extends LimitOptions {
   clearSeedModel?: boolean;
   clear_seed_model?: boolean;
   codepage?: string | null;
   timestampMs?: number;
+  /** Largest distance of polygon ring points from their plane, drawing units (default 0.01). */
   planarityTolerance?: number;
   planarity_tolerance?: number;
   preserveSeedRasters?: boolean;
   preserveSeedControls?: boolean;
+  /** Model to write (default: the only model, or the only design model beside paper layouts). */
+  modelIndex?: number;
+  /** Default `"strict"`: a model of the other dimension than the seed is an error. */
+  dimensionPolicy?: DgnDimensionPolicy;
+  /** Write centred and right-aligned text without a stored length with an estimated one instead of failing (default false). */
+  estimateTextLength?: boolean;
+  /** Prepare a copy of the document for the seed first (`true` for the default steps). Needed for most documents that did not come from the seed's own file. */
+  prepare?: boolean | DgnPrepareSteps;
+}
+
+/** Options of `prepareForDgn()`. Unknown keys are errors. */
+export interface DgnPrepareOptions extends LimitOptions, DgnPrepareSteps {
+  /** Model to prepare (default: the first design model). */
+  modelIndex?: number;
+  /** Code page of the seed's 8-bit text. */
+  codepage?: string | null;
+}
+
+/** A DGN writer warning: `dgn.model_not_written` (`object`: the model index), `dgn.model_dimension_changed`, `dgn.text_length_estimated`. */
+export interface DgnWriteWarning extends WarningInfo {
+  object: number | null;
+}
+
+/** Result of `toDgnWithReport()`. */
+export interface DgnWriteResult {
+  bytes: Uint8Array;
+  /** Index of the source model that was written. */
+  modelIndex: number;
+  warnings: DgnWriteWarning[];
 }
 
 /** `dgn::StripSeedOptions`; snake_case or camelCase keys. An unknown key is an error. */
@@ -436,11 +498,13 @@ export interface TkgmIssue {
   severity: "error" | "review";
   element: number;
   field: string | null;
-  id: string | null;
-  building_id: string | null;
+  /** `gml:id` of the element; only from `preflightTkgmLocated()`, when it has one. */
+  id?: string;
+  /** `gml:id` of the enclosing building; only from `preflightTkgmLocated()`. */
+  building_id?: string;
 }
 
-/** Result of `preflightTkgm()`; `acceptance_verified` is always false. */
+/** Result of `preflightTkgm()` and `preflightTkgmLocated()`: local checks only; `acceptance_verified` is always false. */
 export type TkgmReport = {
   profile: string;
   workflow: string;
@@ -453,9 +517,9 @@ export type TkgmReport = {
   unchecked_rules: string[];
 };
 
-/** One entity kept as metadata only. */
+/** One entity kept as metadata only, or a closed polyline written as a line string. */
 export interface CityGmlExportIssue {
-  /** Currently `"gml.metadata_only"`. */
+  /** `"gml.metadata_only"`, or with `closedPolylinesAsSurfaces` why a closed polyline stayed a line string (`"gml.face_not_planar"`, `"gml.face_degenerate"`, `"gml.face_self_intersecting"`, `"gml.face_invalid"`). */
   code: string;
   model: number;
   /** Top-level entity index followed by group child indices. */
@@ -475,4 +539,262 @@ export interface CityGmlExportReport {
 export interface CityGmlReportResult {
   xml: string;
   report: CityGmlExportReport;
+}
+
+/** Surface options of the CityGML exports; camelCase or snake_case keys. */
+export interface CityGmlExportOptions extends LimitOptions {
+  /** Write closed, straight polylines with at least three distinct vertices as surfaces when they are planar and simple (default false). */
+  closedPolylinesAsSurfaces?: boolean;
+  /** Largest distance of a ring point from the face plane, as a fraction of the face's bounding-box diagonal (default 1e-3). */
+  planarityTolerance?: number;
+  /** Ceiling of that distance in coordinate units (default 0.01, the default validation tolerance). */
+  maxPlanarityDeviation?: number;
+}
+
+export type CityGmlBuildingGrouping = "single" | "layer" | "top_level" | "connected";
+
+/** Options of `toCityGmlBuildings()`. Unknown keys are errors. */
+export interface CityGmlBuildingOptions extends CityGmlExportOptions {
+  /** CRS identifier of the existing coordinates (no reprojection). Required. */
+  srsName: string;
+  /** Level of detail; CityGML 2.0 has wall, roof and ground surfaces from LoD 2. Required. */
+  lod: 2 | 3 | 4;
+  /** Source model (default 0). */
+  model?: number;
+  /** One building for all faces (default), per effective layer, per top-level entity, or per connected component. */
+  grouping?: CityGmlBuildingGrouping;
+  /** Smallest tilt of a wall, degrees from horizontal (default 80). */
+  wallMinTiltDegrees?: number;
+  /** Largest tilt of a horizontal face, degrees (default 10); below `wallMinTiltDegrees`. */
+  horizontalMaxTiltDegrees?: number;
+  /** Height band above a building's lowest point that counts as its base, coordinate units (default 0.01). */
+  groundTolerance?: number;
+  /** Distance within which vertices are shared for `"connected"`, coordinate units (default 0.001). */
+  weldTolerance?: number;
+  /** Work budget of the walk, the face checks and the welding (default 100,000,000). */
+  maxWork?: number;
+}
+
+export interface CityGmlBuildingSummary {
+  /** `gml:id` of the building. */
+  id: string;
+  /** The layer, for `grouping: "layer"`. */
+  layer: string | null;
+  /** The top-level entity index, for `grouping: "top_level"`. */
+  topLevel: number | null;
+  wallSurfaces: number;
+  roofSurfaces: number;
+  groundSurfaces: number;
+  unclassifiedFaces: number;
+}
+
+/** A face that was skipped or kept without a class. */
+export interface CityGmlBuildingIssue {
+  /** Skipped: `gml.face_degenerate`, `gml.face_not_planar`, `gml.face_self_intersecting`, `gml.face_invalid`, `gml.face_curved`, `gml.face_wide`, `gml.face_index_out_of_range`; kept unclassified: `gml.face_sloped_at_base`. */
+  code: string;
+  /** Path of the source entity: `entity(model, path)` returns it. */
+  path: number[];
+  /** Path of the model entity that owns it (the outermost insert for block geometry). */
+  modelPath: number[];
+  /** Face index in a `mesh` entity. */
+  meshFace: number | null;
+  entityId: number | null;
+  /** Effective layer. */
+  layer: string;
+  entityType: EntityKindName;
+  buildingId: string | null;
+  polygonId: string | null;
+}
+
+export interface CityGmlBuildingReport {
+  /** Source model index. */
+  model: number;
+  buildings: CityGmlBuildingSummary[];
+  wallSurfaces: number;
+  roofSurfaces: number;
+  groundSurfaces: number;
+  unclassifiedFaces: number;
+  skippedFaces: number;
+  skippedByCode: Record<string, number>;
+  /** Visited entities that are not face candidates (lines, open polylines, text, ...). */
+  ignoredEntities: number;
+  /** Closed polylines not considered because `closedPolylinesAsSurfaces` is off. */
+  closedPolylinesIgnored: number;
+  /** Skipped faces in traversal order, then unclassified ones. */
+  issues: CityGmlBuildingIssue[];
+  /** More issues than min(maxObjects, 100,000): the rest are only counted. */
+  issuesTruncated: boolean;
+}
+
+/** Result of `toCityGmlBuildings()`. */
+export interface CityGmlBuildingsResult {
+  /** UTF-8 XML, validated with geometry checks. */
+  xml: Uint8Array;
+  report: CityGmlBuildingReport;
+}
+
+/** Result of `toCityGmlBuildingsDocument()`; free `document` when done. */
+export interface CityGmlBuildingsDocumentResult {
+  document: CityGmlDocument;
+  report: CityGmlBuildingReport;
+}
+
+/** A polygon or solid-shell issue of `CityGmlDocument.geometryIssues()`. The ids come from the file and may encode client data. */
+export interface GmlGeometryIssue {
+  /** Byte offset in the source XML (0 for built documents). */
+  offset: number;
+  code: string;
+  message: string;
+  /** Index of the polygon or solid in the element traversal (as `TkgmIssue.element`). */
+  element: number;
+  /** `gml:id` of the polygon or solid. */
+  id: string | null;
+  /** `gml:id` of the nearest enclosing city object, such as a wall surface. */
+  objectId: string | null;
+  buildingId: string | null;
+}
+
+// --- Renderer buffers (surfaceMesh, lineBuffer) -----------------------------------------------
+
+/** Three finite numbers. */
+export type Vector3 = [number, number, number] | Float32Array | Float64Array;
+
+/** sRGB: `[r, g, b]` with integers 0 to 255, or `"#rrggbb"`. */
+export type RgbOption = [number, number, number] | string;
+
+/** Options shared by `surfaceMesh()` and `lineBuffer()`. Unknown keys are errors. */
+export interface SceneWalkOptions {
+  /** Model index (default 0). */
+  model?: number;
+  /** Deepest block and group nesting expanded (default 32, at most 64). */
+  maxDepth?: number;
+  /** Expand block references (default true). */
+  expandInserts?: boolean;
+  /** Walk work budget (default 20,000,000); when it runs out the buffers hold a prefix and the report says `truncated`. */
+  maxWork?: number;
+}
+
+export interface SurfaceMeshOptions extends SceneWalkOptions {
+  /** Closed polylines as faces: in 3D models only (`"auto"`, default), `"always"` or `"never"`. */
+  polylines?: "auto" | "always" | "never";
+  /** Largest distance of a polyline face vertex from its plane, as a fraction of its bounding-box diagonal (default 1e-3). */
+  planarity?: number;
+  /** Draw lines, open polylines and curves as segments (default true). */
+  wires?: boolean;
+  /** Draw face outlines as segments (default true). */
+  outlines?: boolean;
+  /** Chordal tolerance of flattened curves, drawing units (default 0.1 mm in drawing units). */
+  tolerance?: number;
+  /** Throw `limit_exceeded` (`limit: "maxError"`) when a stored f32 coordinate is further than this from the drawing coordinate (drawing units). Default: no limit. */
+  maxError?: number;
+  /** Colour of faces that resolve to black (ACI 7, no colour); `null` keeps black. Default [201, 204, 210]. */
+  neutralColor?: RgbOption | null;
+  /** Background that segment colours are contrasted against; default `null` (colours as resolved). */
+  lineBackground?: RgbOption | null;
+  /** Most triangles (default 2,000,000, at most 4,000,000). */
+  maxTriangles?: number;
+  /** Most segments (default 2,000,000, at most 4,000,000). */
+  maxSegments?: number;
+  /** Work budget of duplicate detection, hatch nesting and triangulation (default 200,000,000). */
+  maxGeometryWork?: number;
+}
+
+export interface LineBufferOptions extends SceneWalkOptions {
+  /** Store x, y and z per end point (default false: x and y). */
+  threeD?: boolean;
+  /** Chordal tolerance of flattened curves, drawing units. */
+  tolerance?: number;
+  /** As in `SurfaceMeshOptions`. */
+  maxError?: number;
+  /** Background that colours are contrasted against (default white); `null` keeps colours as resolved. */
+  background?: RgbOption | null;
+  /** Most segments (default 2,000,000, at most 4,000,000). */
+  maxSegments?: number;
+}
+
+/** Origin and extents of a buffer. */
+export interface SceneBounds {
+  /** Drawing coordinates (f64) that every position is relative to. */
+  origin: [number, number, number];
+  /** Lowest corner of the box around all positions, relative to `origin`. */
+  min: [number, number, number];
+  /** Highest corner, relative to `origin`. */
+  max: [number, number, number];
+  /** Largest error of one stored f32 coordinate, drawing units. */
+  maxError: number;
+}
+
+/** Where one layer's triangles and segments sit in the buffers. */
+export interface SceneLayerRange {
+  name: string;
+  firstTriangle: number;
+  triangleCount: number;
+  firstSegment: number;
+  segmentCount: number;
+}
+
+/** The item table as columns: item `i` has the path `paths.subarray(pathStart[i], pathStart[i] + pathLength[i])`. */
+export interface SceneItemTable {
+  count: number;
+  pathStart: Uint32Array;
+  pathLength: Uint32Array;
+  /** Leading part of the path that addresses the model entity (the outermost insert). */
+  modelPathLength: Uint32Array;
+  /** Index into `layers()`. */
+  layer: Uint32Array;
+  /** Index into `kindNames`. */
+  kind: Uint8Array;
+  kindNames: EntityKindName[];
+  /** 1 for a face, 0 for wire geometry. */
+  surface: Uint8Array;
+  paths: Uint32Array;
+}
+
+/** One item: a face or the wire geometry of one entity. */
+export interface SceneItem {
+  index: number;
+  /** `entity(model, path)` returns the entity drawn. */
+  path: number[];
+  /** Path of the model entity that owns it. */
+  modelPath: number[];
+  layer: string | null;
+  layerIndex: number;
+  kind: EntityKindName;
+  surface: boolean;
+}
+
+export interface SurfaceMeshReport {
+  faces: number;
+  triangles: number;
+  segments: number;
+  /** Entities drawn as wires. */
+  wires: number;
+  /** Faces left out because another face has the same corners. */
+  duplicates: number;
+  /** Faces and wires without area or length, or with non-finite coordinates. */
+  degenerate: number;
+  /** Curved entities flattened into segments. */
+  flattened: number;
+  /** Entities drawn neither as faces nor as wires, per kind. */
+  skipped: Partial<Record<EntityKindName, number>>;
+  /** A budget ran out: the buffers hold a prefix of the model in walk order. */
+  truncated: boolean;
+}
+
+export interface LineBufferReport {
+  drawn: number;
+  segments: number;
+  flattened: number;
+  degenerate: number;
+  skipped: Partial<Record<EntityKindName, number>>;
+  truncated: boolean;
+}
+
+/** Result of `SurfaceMesh.pick()`. */
+export interface RayHit {
+  triangle: number;
+  /** Index of the item (`item(hit.item)`). */
+  item: number;
+  /** Ray parameter of the hit; drawing units when the direction has unit length. */
+  distance: number;
 }

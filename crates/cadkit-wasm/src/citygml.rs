@@ -16,6 +16,24 @@ pub struct CityGmlDocument {
     doc: cadkit::gml::CityGmlDocument,
 }
 
+impl CityGmlDocument {
+    pub(crate) fn new(doc: cadkit::gml::CityGmlDocument) -> Self {
+        Self { doc }
+    }
+}
+
+fn profile_arg(profile: &JsValue) -> Result<cadkit::gml::tkgm::Profile, JsValue> {
+    let name = args::string("profile", profile, 64)?;
+    match name.as_str() {
+        "city-model-tender" | "digital-building-registration" => name
+            .parse::<cadkit::gml::tkgm::Profile>()
+            .map_err(|e| crate::error::from_cadkit(&e)),
+        _ => Err(bad_argument(
+            "profile must be \"city-model-tender\" or \"digital-building-registration\"",
+        )),
+    }
+}
+
 /// Reads CityGML 2.0 bytes into a lossless native `CityGmlDocument`. `options` are read
 /// options as for `read`.
 #[wasm_bindgen(js_name = readCityGml)]
@@ -73,21 +91,58 @@ impl CityGmlDocument {
         &self,
         #[wasm_bindgen(unchecked_param_type = "TkgmProfile")] profile: JsValue,
     ) -> Result<JsValue, JsValue> {
-        let name = args::string("profile", &profile, 64)?;
-        let profile = match name.as_str() {
-            "city-model-tender" | "digital-building-registration" => name
-                .parse::<cadkit::gml::tkgm::Profile>()
-                .map_err(|e| crate::error::from_cadkit(&e))?,
-            _ => {
-                return Err(bad_argument(
-                    "profile must be \"city-model-tender\" or \"digital-building-registration\"",
-                ));
-            }
-        };
+        let profile = profile_arg(&profile)?;
         let limits = default_write_limits();
         let report = cadkit::gml::tkgm::preflight(&self.doc, profile, &limits)
             .map_err(|e| from_cadkit_with(&e, &limits))?;
         to_js(&report)
+    }
+
+    /// `preflightTkgm` with `id` and `building_id` (the `gml:id`s of the element and of its
+    /// building) on every issue, so a caller can point at the object. These ids come from the
+    /// file and may encode client data (parcel or registry numbers): keep such reports with
+    /// the file's owner. Local checks only; `acceptance_verified` is always `false`.
+    #[wasm_bindgen(js_name = preflightTkgmLocated, unchecked_return_type = "TkgmReport")]
+    pub fn preflight_tkgm_located(
+        &self,
+        #[wasm_bindgen(unchecked_param_type = "TkgmProfile")] profile: JsValue,
+    ) -> Result<JsValue, JsValue> {
+        let profile = profile_arg(&profile)?;
+        let limits = default_write_limits();
+        let report = cadkit::gml::tkgm::preflight_located(&self.doc, profile, &limits)
+            .map_err(|e| from_cadkit_with(&e, &limits))?;
+        to_js(&report)
+    }
+
+    /// Polygon and solid-shell geometry issues after structural validation, each with the
+    /// `gml:id`s that locate it: `[{offset, code, message, element, id, objectId,
+    /// buildingId}]` (`GmlGeometryIssue`). `options` as for `validate` (`geometry` has no
+    /// effect). The ids come from the file and may encode client data.
+    #[wasm_bindgen(js_name = geometryIssues, unchecked_return_type = "GmlGeometryIssue[]")]
+    pub fn geometry_issues(
+        &self,
+        #[wasm_bindgen(unchecked_optional_param_type = "GmlValidationOptions | string | null")]
+        options: Option<JsValue>,
+    ) -> Result<JsValue, JsValue> {
+        let mut call = Call::new("CityGmlDocument.geometryIssues");
+        let opts = validation_options(&mut call, options.as_ref())?;
+        let issues = cadkit::gml::located_geometry_issues(&self.doc, &opts)
+            .map_err(|e| from_cadkit_with(&e, &opts.limits))?;
+        let list: Vec<serde_json::Value> = issues
+            .iter()
+            .map(|i| {
+                serde_json::json!({
+                    "offset": i.offset,
+                    "code": i.code,
+                    "message": i.message,
+                    "element": i.element,
+                    "id": i.id,
+                    "objectId": i.object_id,
+                    "buildingId": i.building_id,
+                })
+            })
+            .collect();
+        crate::value::json_to_js(&serde_json::Value::Array(list))
     }
 
     /// Builds and validates a native document from its JSON text (`toJsonString()`).
