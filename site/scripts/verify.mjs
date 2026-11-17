@@ -506,6 +506,24 @@ else {
 	}
 	for (const h of ['Strict-Transport-Security', 'X-Content-Type-Options', 'Referrer-Policy: strict-origin-when-cross-origin', 'Permissions-Policy'])
 		if (!headers.includes(h)) err('_headers', `missing ${h}`);
+	// Workers static assets send no charset on HTML and text and no CORS header (Pages did).
+	for (const [pattern, header] of [
+		['/', 'Content-Type: text/html; charset=utf-8'],
+		['/*/', 'Content-Type: text/html; charset=utf-8'],
+		['/*.txt', 'Content-Type: text/plain; charset=utf-8'],
+		['/*', 'Access-Control-Allow-Origin: *'],
+	]) {
+		const rule = rules.find((b) => b.split('\n')[0].trim() === pattern);
+		if (!rule?.split('\n').some((line) => line.trim() === header)) err('_headers', `${pattern} must send ${header}`);
+	}
+	// Cloudflare joins the values of two rules that set one header on the same URL.
+	const glob = (p) => new RegExp('^' + p.split('*').map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$');
+	const typeRules = rules.filter((b) => /^\s+Content-Type:/m.test(b)).map((b) => b.split('\n')[0].trim());
+	for (const file of files) {
+		const path = urlPathOf(dist, file);
+		const hits = typeRules.filter((p) => glob(p).test(path));
+		if (hits.length > 1) err(path, `several Content-Type rules match: ${hits.join(', ')}`);
+	}
 }
 
 for (const file of htmlFiles.filter((f) => urlPathOf(dist, f).startsWith('/demo/'))) {

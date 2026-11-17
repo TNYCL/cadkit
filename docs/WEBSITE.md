@@ -9,7 +9,7 @@ services around it and the one-time setup that lives outside the repository.
 | What | Where | Notes |
 |---|---|---|
 | Domain and DNS | Cloudflare (`cadkit.org`) | apex is canonical; `www` redirects to the apex |
-| Hosting | Cloudflare Pages, Git integration on this repository | settings in [site/README.md](../site/README.md#cloudflare-pages) |
+| Hosting | Cloudflare Worker `cadkit` (static assets) on the Custom Domain `cadkit.org`, built by Workers Builds from this repository | settings in [site/README.md](../site/README.md#cloudflare-deployment) |
 | Release downloads | Cloudflare R2 bucket `cadkit-release`, custom domain `release.cadkit.org` | public read through the custom domain only (the `r2.dev` address is off), minimum TLS 1.2; written by the release workflow, see [RELEASING.md](RELEASING.md) |
 | Web analytics | Cloudflare Web Analytics | cookieless; beacon only when `PUBLIC_CF_WEB_ANALYTICS_TOKEN` is set; never on `/demo/` |
 | Search | Google Search Console, Bing Webmaster Tools | domain property verified with a DNS TXT record; submit `https://cadkit.org/sitemap-index.xml` |
@@ -31,15 +31,16 @@ DMARC record (start with `p=none` and a report address, then move to `p=quaranti
 
 ## One-time setup checklist
 
-1. Cloudflare: add the zone, create the Pages project (root `site`, build `npm run build`,
-   output `dist`, `NODE_VERSION=24`, build watch paths from the site README), attach
-   `cadkit.org` and `www.cadkit.org`, and add a redirect rule `www` → apex (301, keep path
-   and query).
-2. Cloudflare Web Analytics: create a site for `cadkit.org` and set its token as the Pages
-   environment variable `PUBLIC_CF_WEB_ANALYTICS_TOKEN` (it is a public value). Do not enable
+1. Cloudflare: add the zone, create the Worker `cadkit` and connect this repository with
+   Workers Builds (settings in the site README); the deploy from `main` attaches the Custom
+   Domain `cadkit.org` named in `site/wrangler.jsonc`. Add a proxied `AAAA 100::` record for
+   `www.cadkit.org` with a redirect rule `www` → apex (301, keep path and query), and the
+   Configuration Rule that turns off Browser Integrity Check for public reads (site README).
+2. Cloudflare Web Analytics: create a site for `cadkit.org` and set its token as the Workers
+   Builds build variable `PUBLIC_CF_WEB_ANALYTICS_TOKEN` (it is a public value). Do not enable
    automatic injection, which would also add the beacon to `/demo/`.
-3. Pages deploy hook: create one for `main` and store its URL as the secret
-   `PAGES_DEPLOY_HOOK` in TNYCL/cadkit-stats, so the site rebuilds after each daily snapshot
+3. Deploy hook: create a Workers Builds deploy hook for `main` and store its URL as the secret
+   `PAGES_DEPLOY_HOOK` in TNYCL/cadkit-stats (the name predates the move from Pages), so the site rebuilds after each daily snapshot
    (this also renews `security.txt`).
 4. Traffic statistics: create a fine-grained personal access token limited to TNYCL/cadkit with
    *Administration: read-only* and store it as `TRAFFIC_TOKEN` in TNYCL/cadkit-stats. GitHub
