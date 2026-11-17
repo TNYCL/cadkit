@@ -281,7 +281,8 @@ page can draw a dot instead (a test pins the shape).
   of their size), bulge-free polylines with three or more vertices are surfaces too: DGN shape
   elements, the walls and slabs of building models, arrive that way. A model with true surfaces
   that leave the XY plane opens in 3D; a model whose surfaces are only such polylines opens in
-  3D when its height is at least 12 % of its larger horizontal extent, otherwise on the sheet
+  3D when its height is at least 12 % of its larger horizontal extent and it has more such shapes
+  than lines, otherwise on the sheet
   with the 3D button offered.
 - **Raster references.** Images without their data are drawn by the engine as dashed frames in
   `<g data-kind="images">`, outside its viewBox, and in real files they are larger than the

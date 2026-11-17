@@ -96,6 +96,15 @@ function insideRing(ring: P2[], q: P2): boolean {
 	return inside;
 }
 
+/** The direction from corner k of a counter-clockwise loop towards m lies within the loop's angle at k. */
+function locallyInside(loop: P2[], k: number, m: P2): boolean {
+	const n = loop.length;
+	const u = loop[(k + n - 1) % n]!;
+	const p = loop[k]!;
+	const w = loop[(k + 1) % n]!;
+	return cross(u, p, w) > 0 ? cross(p, w, m) >= 0 && cross(u, p, m) >= 0 : cross(p, w, m) >= 0 || cross(u, p, m) >= 0;
+}
+
 /**
  * Triangulates a polygon given as rings of 2D points (the first ring is the outline, the rest
  * are holes). Returns triangles as indices into the concatenation of the rings. Rings may have
@@ -147,6 +156,9 @@ export function triangulate(rings: P2[][]): number[] {
 			const p = at(loop[k]!);
 			const dist = (p[0] - m[0]) ** 2 + (p[1] - m[1]) ** 2;
 			if (dist >= bestD) continue;
+			// An outline corner that already carries a bridge occurs once per angle between its
+			// bridges: join the copy whose angle the new bridge lies in, or two bridges cross.
+			if (!locallyInside(loop.map(at), k, m)) continue;
 			// The bridge must not cross an edge, run through a corner, or cut through a hole.
 			if (edges.some(([a, b]) => segmentsCross(m, p, a, b))) continue;
 			if (corners.some((c) => onSegment(m, p, c))) continue;
@@ -372,7 +384,7 @@ export interface SurfaceInfo {
 
 /** Surfaces of a model and how it should open (see SurfaceInfo). */
 export function surfaceInfo(doc: DocJson, model: number, opts: SurfaceOptions = {}): SurfaceInfo {
-	const { faces } = collect(doc, model, opts);
+	const { faces, wires } = collect(doc, model, opts);
 	let zmin = Infinity;
 	let zmax = -Infinity;
 	let span = 0;
@@ -395,7 +407,10 @@ export function surfaceInfo(doc: DocJson, model: number, opts: SurfaceOptions = 
 	const spatial = faces.length > 0 && zmax - zmin > 1e-9 * Math.max(1, span);
 	// The height is a difference of two coordinates written in decimal: allow its last bits, so a
 	// model exactly 12 % tall (1.1 to 1.46 over 3 units: 1.46 - 1.1 is just below 0.36) opens in 3D.
-	const open3d = spatial && (shapes < faces.length || zmax - zmin >= SHAPES_OPEN_3D_RATIO * span * (1 - 1e-9));
+	// A model made of shapes opens in 3D only when shapes are most of what it draws: a line
+	// drawing that happens to hold a few closed polylines at different heights stays a sheet.
+	const tall = zmax - zmin >= SHAPES_OPEN_3D_RATIO * span * (1 - 1e-9);
+	const open3d = spatial && (shapes < faces.length || (tall && shapes > wires.length));
 	return { surfaces: faces.length, shapes, spatial, open3d };
 }
 
@@ -421,8 +436,9 @@ function newell(ring: P3[]): [number, number, number] {
 }
 
 /**
- * Builds the mesh of one model: null when it has no surfaces. Two faces with the same set of
- * corner points are drawn once; the more deeply nested one wins. A CityGML building lists the
+ * Builds the mesh of one model: null when it has no surfaces. Two faces with the same rings
+ * (the same corners in the same cyclic order, holes included) are drawn once; the more deeply
+ * nested one wins. A CityGML building lists the
  * faces of its solid directly and again inside each boundary surface (wall, roof, ground), and
  * the nested copy carries the surface type as its layer.
  */
@@ -445,13 +461,43 @@ export function buildMesh(doc: DocJson, model: number, opts: SurfaceOptions = {}
 	const center: [number, number, number] = [(lo[0]! + hi[0]!) / 2, (lo[1]! + hi[1]!) / 2, (lo[2]! + hi[2]!) / 2];
 	const size = Math.max(hi[0]! - lo[0]!, hi[1]! - lo[1]!, hi[2]! - lo[2]!, 1e-12);
 
-	// Duplicates: same corner set after rounding to a millionth of the model size.
-	const q = (v: number, c: number) => Math.round(((v - c) / size) * 1e6);
-	const keyOf = (f: RawFace) =>
-		f.rings[0]!
-			.map((p) => q(p.x, center[0]) + ',' + q(p.y, center[1]) + ',' + q(p.z, center[2]))
-			.sort()
-			.join(';');
+	// Duplicates: the same rings, each as its corners in cyclic order from its smallest corner
+	// in the direction that gives the smaller sequence (so neither the first corner nor the
+	// winding matters), holes included. Corners are rounded to a millionth of the face's own
+	// size: a face and the same face with a hole, or two different polygons through one set of
+	// corners, are different faces, and a stray entity far away does not make small faces alike.
+	const ringKey = (ring: P3[], scale: number): string => {
+		const all = ring.map((p) => Math.round((p.x - center[0]) * scale) + ',' + Math.round((p.y - center[1]) * scale) + ',' + Math.round((p.z - center[2]) * scale));
+		const keys = all.filter((k, i) => i === 0 || k !== all[i - 1]);
+		while (keys.length > 1 && keys[0] === keys[keys.length - 1]) keys.pop();
+		const n = keys.length;
+		const least = keys.reduce((a, b) => (b < a ? b : a), keys[0] ?? '');
+		let best: string | null = null;
+		for (let s = 0; s < n; s++) {
+			if (keys[s] !== least) continue;
+			for (const dir of [1, n - 1]) {
+				let seq = '';
+				for (let i = 0; i < n; i++) seq += keys[(s + dir * i) % n] + ';';
+				if (best === null || seq < best) best = seq;
+			}
+		}
+		return n + ':' + (best ?? '');
+	};
+	const keyOf = (f: RawFace) => {
+		let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
+		for (const p of f.rings[0]!) {
+			x0 = Math.min(x0, p.x);
+			y0 = Math.min(y0, p.y);
+			z0 = Math.min(z0, p.z);
+			x1 = Math.max(x1, p.x);
+			y1 = Math.max(y1, p.y);
+			z1 = Math.max(z1, p.z);
+		}
+		const diag = Math.hypot(x1 - x0, y1 - y0, z1 - z0);
+		const scale = diag > 0 && Number.isFinite(diag) ? 1e6 / diag : 1;
+		const [outline, ...holes] = f.rings.map((r) => ringKey(r, scale));
+		return outline + '|' + holes.sort().join('|');
+	};
 	const byKey = new Map<string, number>();
 	const kept: RawFace[] = [];
 	let duplicates = 0;

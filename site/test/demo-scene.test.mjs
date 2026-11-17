@@ -400,6 +400,61 @@ test('mesh: models of polylines only open in 3D when they are tall enough', () =
 	assert.deepEqual(M.surfaceInfo(plan, 0, { shapes: true }), { surfaces: 1, shapes: 1, spatial: false, open3d: false });
 });
 
+test('mesh: a line drawing with a few closed polylines stays a sheet', () => {
+	const q = (x, y, z) => ({ x, y, z });
+	const shape = (pts) => ({ layer: 'S', kind: { type: 'polyline', closed: true, vertices: pts.map((position) => ({ position, bulge: 0 })) } });
+	const line = (a, b) => ({ layer: 'L', kind: { type: 'line', start: a, end: b } });
+	const shapes = [shape([q(0, 0, 0), q(1, 0, 0), q(0, 1, 0)]), shape([q(0, 0, 2), q(1, 0, 2), q(0, 1, 2)])];
+	const lines = [line(q(0, 0, 0), q(3, 0, 0)), line(q(0, 1, 0), q(3, 1, 0)), line(q(0, 2, 0), q(3, 2, 0))];
+	// Tall enough by the height rule, but most of the drawing is lines.
+	assert.equal(M.surfaceInfo({ models: [{ entities: [...shapes, ...lines] }] }, 0, { shapes: true }).open3d, false);
+	assert.equal(M.surfaceInfo({ models: [{ entities: [...shapes, lines[0]] }] }, 0, { shapes: true }).open3d, true);
+});
+
+test('mesh: faces that share corners but differ are both drawn', () => {
+	const q = (x, y, z = 0) => ({ x, y, z });
+	const poly = (exterior, interiors = []) => ({ layer: 'A', kind: { type: 'polygon', exterior, interiors } });
+	const square = [q(0, 0), q(10, 0), q(10, 10), q(0, 10)];
+	const hole = [q(4, 4), q(6, 4), q(6, 6), q(4, 6)];
+	// The same face twice (another start corner, the other winding, a repeated closing point): once.
+	const again = [q(10, 10), q(10, 0), q(0, 0), q(0, 10), q(10, 10)];
+	assert.equal(M.buildMesh({ models: [{ entities: [poly(square), poly(again)] }] }, 0).duplicates, 1);
+	// A face and the same face with a hole are two faces.
+	const holed = M.buildMesh({ models: [{ entities: [poly(square), poly(square, [hole])] }] }, 0);
+	assert.equal(holed.duplicates, 0);
+	assert.equal(holed.faces.length, 2);
+	// Two concave quads through the same four corners.
+	const a = [q(0, 0), q(4, 0), q(1, 1), q(0, 4)];
+	const b = [q(0, 0), q(1, 1), q(4, 0), q(0, 4)];
+	assert.equal(M.buildMesh({ models: [{ entities: [poly(a), poly(b)] }] }, 0).duplicates, 0);
+	// Small faces next to each other stay apart when something lies far away.
+	const tiny = (dx) => poly([q(500000 + dx, 4000000), q(500000.5 + dx, 4000000), q(500000 + dx, 4000000.5)]);
+	const far = M.buildMesh({ models: [{ entities: [tiny(0), tiny(1), tiny(2), poly([q(0, 0), q(1, 0), q(0, 1)])] }] }, 0);
+	assert.equal(far.duplicates, 0);
+});
+
+test('triangulate: two holes joined to the same outline corner', () => {
+	// Both holes see the lower-left corner first; their bridges must not cross.
+	const outer = [[0, 0], [20, 0], [20, 20], [0, 20]];
+	const h1 = [[2, 6], [4, 6], [4, 8], [2, 8]];
+	const h2 = [[6, 2], [8, 2], [8, 4], [6, 4]];
+	const h3 = [[3, 3], [4, 3], [4, 4], [3, 4]];
+	for (const holes of [[h1, h2], [h2, h1], [h1, h2, h3], [h3, h2, h1]]) {
+		const rings = [outer, ...holes];
+		const pts = rings.flat();
+		const t = M.triangulate(rings);
+		let area = 0;
+		for (let i = 0; i < t.length; i += 3) {
+			const [p, r, s] = [pts[t[i]], pts[t[i + 1]], pts[t[i + 2]]];
+			area += Math.abs((r[0] - p[0]) * (s[1] - p[1]) - (r[1] - p[1]) * (s[0] - p[0])) / 2;
+			// No triangle has its centre inside a hole.
+			const c = [(p[0] + r[0] + s[0]) / 3, (p[1] + r[1] + s[1]) / 3];
+			for (const h of holes) assert.ok(!(c[0] > h[0][0] && c[0] < h[1][0] && c[1] > h[0][1] && c[1] < h[2][1]), 'triangle inside a hole');
+		}
+		close(area, 400 - holes.reduce((n, h) => n + (h[1][0] - h[0][0]) * (h[2][1] - h[0][1]), 0));
+	}
+});
+
 test('mesh: the triangle budget holds for many shapes', () => {
 	// 10,000 shapes (2,000 boxes) at map coordinates, as a district of DGN buildings arrives.
 	const entities = [];
