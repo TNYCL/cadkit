@@ -1217,8 +1217,47 @@ impl Document {
     ///
     /// Block definitions remain in block-local coordinates while [`EntityKind::Insert`] entities
     /// absorb the world-space transform into their placement, scale, and rotation.
+    ///
+    /// The block of a [`EntityKind::Dimension`] is the exception: it holds the dimension's
+    /// drawn geometry in model coordinates (nothing places it), so the blocks named by the
+    /// dimensions of the transformed models are transformed with them.
     pub fn transform(&mut self, tf: &Transform) {
         let has_design = self.models.iter().any(|m| m.kind == ModelKind::Model);
+        let mut dimension_blocks: HashSet<&str> = HashSet::new();
+        for model in &self.models {
+            if has_design && model.kind != ModelKind::Model {
+                continue;
+            }
+            // Groups can nest: walk them with a stack instead of recursion.
+            let mut lists: Vec<&[Entity]> = vec![&model.entities];
+            while let Some(list) = lists.pop() {
+                for entity in list {
+                    match &entity.kind {
+                        EntityKind::Dimension {
+                            block: Some(name), ..
+                        } => {
+                            dimension_blocks.insert(name.as_str());
+                        }
+                        EntityKind::Group { children, .. } => lists.push(children),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        let dimension_blocks: Vec<usize> = self
+            .blocks
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| dimension_blocks.contains(b.name.as_str()))
+            .map(|(i, _)| i)
+            .collect();
+        for index in dimension_blocks {
+            if let Some(block) = self.blocks.get_mut(index) {
+                for entity in &mut block.entities {
+                    *entity = entity.transformed(tf);
+                }
+            }
+        }
         for model in &mut self.models {
             if has_design && model.kind != ModelKind::Model {
                 continue;
@@ -1595,6 +1634,89 @@ mod tests {
         assert_eq!(purged.blocks, 2); // SYM was exploded, UNUSED_BLK never used!
         assert_eq!(purged.linetypes, 1);
         assert_eq!(purged.text_styles, 1);
+    }
+
+    #[test]
+    fn transform_moves_dimension_blocks_with_their_dimensions() {
+        let line = |x0: f64, x1: f64| {
+            Entity::new(EntityKind::Line {
+                start: Point3::xy(x0, 0.0),
+                end: Point3::xy(x1, 0.0),
+            })
+        };
+        let dimension = Entity::new(EntityKind::Dimension {
+            dimension_type: crate::model::DimensionType::Linear,
+            points: vec![Point3::xy(0.0, 0.0), Point3::xy(4.0, 0.0)],
+            text_position: Some(Point3::xy(2.0, 1.0)),
+            measurement: Some(4.0),
+            text: None,
+            block: Some("*D1".into()),
+            style: None,
+        });
+        let mut doc = Document {
+            blocks: vec![
+                // Drawn geometry of the dimension, in model coordinates.
+                Block {
+                    name: "*D1".into(),
+                    entities: vec![line(0.0, 4.0)],
+                    ..Block::default()
+                },
+                // An ordinary block stays in its own coordinates.
+                Block {
+                    name: "SYM".into(),
+                    entities: vec![line(0.0, 1.0)],
+                    ..Block::default()
+                },
+            ],
+            models: vec![crate::Model {
+                entities: vec![
+                    Entity::new(EntityKind::Group {
+                        group_kind: crate::model::GroupKind::Other,
+                        name: None,
+                        origin: None,
+                        children: vec![dimension],
+                    }),
+                    Entity::new(EntityKind::Insert {
+                        block: "SYM".into(),
+                        position: Point3::xy(1.0, 1.0),
+                        scale: Vec3::new(1.0, 1.0, 1.0),
+                        rotation: 0.0,
+                        normal: Vec3::Z,
+                        columns: 1,
+                        rows: 1,
+                        column_spacing: 0.0,
+                        row_spacing: 0.0,
+                    }),
+                ],
+                ..crate::Model::default()
+            }],
+            ..Document::default()
+        };
+        let before = doc.bbox(0).unwrap();
+        doc.transform(&Transform::translation(Vec3::new(100.0, 50.0, 0.0)));
+        let start_of = |name: &str| match &doc
+            .blocks
+            .iter()
+            .find(|b| b.name == name)
+            .unwrap()
+            .entities[0]
+            .kind
+        {
+            EntityKind::Line { start, .. } => *start,
+            _ => unreachable!(),
+        };
+        assert_eq!(start_of("*D1"), Point3::xy(100.0, 50.0));
+        assert_eq!(start_of("SYM"), Point3::xy(0.0, 0.0));
+        // Everything that is drawn moved by the same vector.
+        let after = doc.bbox(0).unwrap();
+        assert_eq!(
+            after.min,
+            Point3::new(before.min.x + 100.0, before.min.y + 50.0, before.min.z)
+        );
+        assert_eq!(
+            after.max,
+            Point3::new(before.max.x + 100.0, before.max.y + 50.0, before.max.z)
+        );
     }
 
     #[test]
