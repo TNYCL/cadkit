@@ -72,7 +72,7 @@ use buffer::{Budget, Buffer};
 mod bounded_tests;
 
 use crate::geom::{BBox, Point3, Vec3};
-use crate::geom_ops::{EllipseArc, Transform, ccw_sweep, conjugate_to_axes};
+use crate::geom_ops::{EllipseArc, Transform, arbitrary_axes, ccw_sweep, conjugate_to_axes};
 use crate::model::{
     Block, Color, Document, Entity, EntityKind, HAlign, HatchEdge, Layer, Linetype, Lineweight,
     ModelKind, VAlign, Value, Vertex,
@@ -135,9 +135,10 @@ pub struct SvgOptions {
     /// writes nothing. Default `None`.
     pub font_family: Option<String>,
     /// Space non-solid hatch pattern lines by the pattern's own spacing (`3.175` drawing units
-    /// times the pattern scale) instead of clamping the spacing to 0.8 %..8 % of the drawing
-    /// extents. The spacing is raised where needed so that at most 500 lines cross the larger
-    /// side of the hatch's own extents (and to at least 1e-5 of the drawing extents).
+    /// times the pattern scale, times the scale of the inserts a hatch from a block is drawn
+    /// through) instead of clamping the spacing to 0.8 %..8 % of the drawing extents. The
+    /// spacing is raised where needed so that at most 500 lines cross the larger side of the
+    /// hatch's own extents (and to at least 1e-5 of the drawing extents).
     /// Default `false`.
     pub hatch_native_spacing: bool,
     /// When the rendered model is a paper layout (any kind other than
@@ -158,8 +159,9 @@ pub struct SvgOptions {
 /// rotation centres, the background rectangle, the `viewBox`, image frames) is written
 /// relative to it, and the root element states it as `data-origin="ox oy"` (shortest
 /// round-trip decimal form). An SVG user-space point `(sx, sy)` is the drawing point
-/// `(ox + sx, oy - sy)`: X is shifted, Y is shifted and flipped. Hatch pattern tiles are
-/// pattern-local and unaffected.
+/// `(ox + sx, oy - sy)`: X is shifted, Y is shifted and flipped. Hatch pattern tiles keep
+/// their size and angle but are anchored at the SVG origin, so pattern lines can sit up to one
+/// spacing away from where they are drawn without an origin (the model has no pattern origin).
 #[derive(Debug, Clone, Copy, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -1646,15 +1648,29 @@ impl<'a> Renderer<'a> {
                         hex(color)
                     ))
                 } else {
-                    let own_extent = if self.opts.hatch_native_spacing {
-                        e.bbox_in(&ctx.transform)
-                            .map_or(self.extent, |b| b.width().max(b.height()))
+                    let (own_extent, scale) = if self.opts.hatch_native_spacing {
+                        // A pattern in a block is drawn scaled by the insert, like its loops
+                        // (and like the hatch once the insert is exploded).
+                        let insert_scale =
+                            hatch_plane_scale(&ctx.transform, *normal, *pattern_angle);
+                        let scale = if insert_scale.is_finite()
+                            && insert_scale > 0.0
+                            && (insert_scale - 1.0).abs() > 1e-12
+                        {
+                            *pattern_scale * insert_scale
+                        } else {
+                            *pattern_scale
+                        };
+                        let own = e
+                            .bbox_in(&ctx.transform)
+                            .map_or(self.extent, |b| b.width().max(b.height()));
+                        (own, scale)
                     } else {
-                        self.extent
+                        (self.extent, *pattern_scale)
                     };
                     let pid = self.hatch_pattern_id(
                         pattern.as_deref(),
-                        (*pattern_scale, *pattern_angle),
+                        (scale, *pattern_angle),
                         own_extent,
                         color,
                     );
@@ -2061,6 +2077,20 @@ enum TextBody<'a> {
     Multi(&'a [String], f64),
 }
 
+/// Mean length of `tf` applied to the unit pattern axes of a hatch in the plane of `normal`
+/// rotated by `angle`: the factor by which a placement scales the hatch's pattern.
+fn hatch_plane_scale(tf: &Transform, normal: Vec3, angle: f64) -> f64 {
+    let (ax, ay, _) = arbitrary_axes(normal);
+    let (s, c) = if angle.is_finite() {
+        angle.sin_cos()
+    } else {
+        (0.0, 1.0)
+    };
+    let sx = tf.apply_vector(ax * c + ay * s).length();
+    let sy = tf.apply_vector(ay * c - ax * s).length();
+    0.5 * (sx + sy)
+}
+
 fn hatch_loop(pb: &mut PathBuilder<'_>, edges: &[HatchEdge], normal: Vec3, t: &Transform) {
     pb.cur = None;
     for edge in edges {
@@ -2402,9 +2432,18 @@ fn render_internal(
     {
         let remaining = options.max_work.saturating_sub(spent);
         let mut model_origin = (0.0, 0.0);
-        if let Some(source) = plan.source
-            && let Some(mbb) = fit_bbox(doc, source, remaining, include_hidden_layers)
-        {
+        let source_bbox = plan.source.map(|source| {
+            (
+                source,
+                fit_bbox(doc, source, remaining, include_hidden_layers),
+            )
+        });
+        if let Some((source, None)) = source_bbox {
+            // No extents: an empty model space, or one the rest of the work budget did not
+            // reach. The second must not pass for a complete drawing.
+            truncated |= walk_exceeds(doc, source, remaining, include_hidden_layers);
+        }
+        if let Some((source, Some(mbb))) = source_bbox {
             let own = mbb.width().max(mbb.height()) * 1.04;
             // Precision and point/hatch sizes follow the smallest area a viewport shows.
             let shown = plan
@@ -2458,11 +2497,13 @@ fn render_internal(
             let (x, y) = (fmt.num(x0 - ox), fmt.num(-(y1 - oy)));
             let (w, h) = (fmt.num(f.w), fmt.num(f.h));
             let mut item = budget.buffer();
-            if !model_content.is_empty() {
-                // Model view point (mx, my) lands on sheet view point (k mx + tx, k my + ty).
-                let k = f.h / f.vh;
-                let tx = (f.cx - ox) + (model_origin.0 - f.vcx) * k;
-                let ty = (oy - f.cy) - (model_origin.1 - f.vcy) * k;
+            // Model view point (mx, my) lands on sheet view point (k mx + tx, k my + ty).
+            let k = f.h / f.vh;
+            let tx = (f.cx - ox) + (model_origin.0 - f.vcx) * k;
+            let ty = (oy - f.cy) - (model_origin.1 - f.vcy) * k;
+            // A scale or placement that overflows cannot be written: frame only.
+            let placeable = k.is_finite() && k > 0.0 && tx.is_finite() && ty.is_finite();
+            if !model_content.is_empty() && placeable {
                 item.push_str(&budget.format(format_args!(
                     "<clipPath id=\"cadkit-viewport-{n}\"><rect x=\"{x}\" y=\"{y}\" width=\"{w}\" height=\"{h}\"/></clipPath>\n\
                      <g clip-path=\"url(#cadkit-viewport-{n})\"{refs} data-scale=\"{scale}\"><use href=\"#cadkit-model\" transform=\"matrix({ks} 0 0 {ks} {txs} {tys})\"/></g>\n",
@@ -2549,6 +2590,21 @@ fn fit_bbox(doc: &Document, model: usize, max_work: u64, include_hidden: bool) -
         doc.bbox_with(model, &no_images)
             .or_else(|| doc.bbox_with(model, &with_images))
     }
+}
+
+/// Whether walking `models[model]` as [`fit_bbox`] does needs more than `max_work`.
+fn walk_exceeds(doc: &Document, model: usize, max_work: u64, include_hidden: bool) -> bool {
+    let walk = WalkOptions {
+        max_work,
+        ..WalkOptions::default()
+    };
+    let visit = |_: &Entity, _: &WalkContext<'_>| true;
+    let stats = if include_hidden {
+        doc.walk_all_layers_while(model, &walk, visit)
+    } else {
+        doc.walk_while(model, &walk, visit)
+    };
+    stats.truncated
 }
 
 /// Root element attributes after the `viewBox`; empty with default options.
@@ -4395,5 +4451,349 @@ mod tests {
             .with_font_family(Some("x".repeat(100)))
             .with_max_output_bytes(50);
         assert!(render_bounded(&d, &long, false).is_err());
+    }
+
+    /// Every element id is defined once and every `url(#..)` / `href="#.."` reference has a
+    /// definition.
+    fn assert_ids_resolve(s: &str) {
+        let ids: Vec<&str> = s
+            .split(" id=\"")
+            .skip(1)
+            .filter_map(|r| r.split('"').next())
+            .collect();
+        let unique: std::collections::BTreeSet<&str> = ids.iter().copied().collect();
+        assert_eq!(unique.len(), ids.len(), "duplicate ids: {s}");
+        for r in s.split("url(#").skip(1).chain(s.split("href=\"#").skip(1)) {
+            let id = r.split([')', '"']).next().unwrap_or("");
+            assert!(unique.contains(id), "{id} is not defined: {s}");
+        }
+    }
+
+    /// `every_kind_document` as model space, and a layout with a hatch of its own (another
+    /// colour, so a second pattern) and two windows onto the model.
+    fn layout_of_every_kind(dx: f64, dy: f64) -> Document {
+        let mut d = every_kind_document(dx, dy);
+        let viewport = |center: Point3, w: f64, h: f64, view_center: Point3, view_height: f64| {
+            Entity::new(EntityKind::Viewport {
+                center,
+                width: w,
+                height: h,
+                view_center,
+                view_height,
+            })
+        };
+        let mut hatch = square_hatch(0.0, 2.0, 0.1);
+        hatch.color = Color::Aci { index: 1 };
+        d.models.push(Model {
+            name: "Layout1".into(),
+            kind: ModelKind::Layout,
+            entities: vec![
+                viewport(Point3::xy(5.0, 4.0), 10.0, 8.0, Point3::xy(5.0, 4.0), 8.0),
+                viewport(
+                    Point3::xy(3.0, 4.0),
+                    4.0,
+                    4.0,
+                    Point3::xy(23.0 + dx, 21.0 + dy),
+                    50.0,
+                ),
+                viewport(
+                    Point3::xy(8.0, 4.0),
+                    4.0,
+                    4.0,
+                    Point3::xy(11.0 + dx, 23.0 + dy),
+                    8.0,
+                ),
+                hatch,
+            ],
+            ..Model::default()
+        });
+        d
+    }
+
+    #[test]
+    fn layout_ids_stay_unique_when_both_spaces_have_patterns() {
+        let d = layout_of_every_kind(0.0, 0.0);
+        let opts = SvgOptions::default()
+            .with_model(1)
+            .with_layout_viewports(true);
+        for opts in [
+            opts.clone(),
+            opts.clone()
+                .with_hatch_native_spacing(true)
+                .with_entity_refs(true)
+                .with_origin(SvgOrigin::Auto),
+        ] {
+            let s = render(&d, &opts);
+            assert_eq!(s.matches("<pattern ").count(), 2, "{s}");
+            assert_eq!(s.matches("<clipPath ").count(), 2, "{s}");
+            assert_eq!(s.matches("<use ").count(), 2, "{s}");
+            assert_ids_resolve(&s);
+        }
+    }
+
+    #[test]
+    fn layout_references_resolve_in_their_own_space() {
+        let d = layout_of_every_kind(0.0, 0.0);
+        let s = render(
+            &d,
+            &SvgOptions::default()
+                .with_model(1)
+                .with_layout_viewports(true)
+                .with_entity_refs(true),
+        );
+        let (model_part, sheet_part) = s
+            .split_once("</defs>")
+            .expect("the model is rendered into <defs>");
+        let paths = |part: &str| -> Vec<Vec<usize>> {
+            part.split(" data-e=\"")
+                .skip(1)
+                .filter_map(|r| r.split('"').next())
+                .map(|p| p.split('.').map(|i| i.parse().expect("index")).collect())
+                .collect()
+        };
+        let in_model = paths(model_part);
+        assert!(in_model.len() > 20, "{s}");
+        for path in &in_model {
+            assert!(d.entity_at(0, path).is_some(), "{path:?}");
+        }
+        // The sheet: two windows (clip group and frame each) and the sheet's own hatch.
+        let in_sheet = paths(sheet_part);
+        let kinds: Vec<&str> = in_sheet
+            .iter()
+            .map(|p| d.entity_at(1, p).map_or("missing", |e| e.kind.type_name()))
+            .collect();
+        assert_eq!(
+            kinds,
+            ["viewport", "viewport", "viewport", "viewport", "hatch"],
+            "{s}"
+        );
+        // Text, attribute text and dimension text in model space name their entities.
+        for (needle, kind) in [
+            ("<text data-e=\"7\" ", "text"),
+            ("<text data-e=\"11\" ", "mtext"),
+            ("<text data-e=\"12\" ", "insert"),
+            ("<text data-e=\"16\" ", "dimension"),
+            ("<path data-e=\"15\" ", "hatch"),
+            ("<path data-e=\"21\" ", "image"),
+        ] {
+            assert!(model_part.contains(needle), "{needle}: {s}");
+            let index: usize = needle
+                .split('"')
+                .nth(1)
+                .and_then(|i| i.parse().ok())
+                .expect("index");
+            let found = d.entity_at(0, &[index]).map(|e| e.kind.type_name());
+            assert_eq!(found, Some(kind), "{needle}");
+        }
+    }
+
+    #[test]
+    fn bounded_layout_rendering_is_exact_with_every_option() {
+        let d = layout_of_every_kind(512_345.678, 4_087_654.321);
+        let opts = SvgOptions::default()
+            .with_model(1)
+            .with_origin(SvgOrigin::Auto)
+            .with_entity_refs(true)
+            .with_point_px(Some(3.0))
+            .with_cap_height_ratio(Some(0.7))
+            .with_font_family(Some("serif"))
+            .with_hatch_native_spacing(true)
+            .with_layout_viewports(true);
+        for hidden in [false, true] {
+            let expected = if hidden {
+                render_all_layers(&d, &opts)
+            } else {
+                render(&d, &opts)
+            };
+            assert!(expected.contains("<use "), "{expected}");
+            assert!(!expected.contains("data-truncated"), "{expected}");
+            let exact = opts.clone().with_max_output_bytes(expected.len());
+            assert_eq!(
+                render_bounded(&d, &exact, hidden).expect("exact budget"),
+                expected
+            );
+            assert!(matches!(
+                render_bounded(&d, &exact.with_max_output_bytes(expected.len() - 1), hidden),
+                Err(crate::Error::LimitExceeded {
+                    limit: crate::LimitKind::Output,
+                    ..
+                })
+            ));
+        }
+    }
+
+    #[test]
+    fn layout_model_beyond_the_work_budget_is_reported_not_dropped() {
+        let mut d = layout_document();
+        if let Some(model) = d.models.get_mut(0) {
+            // One entity that costs most of the budget: after the sheet, the rest of the
+            // budget does not reach it.
+            model.entities = vec![Entity::new(EntityKind::Polyline {
+                vertices: (0..1000)
+                    .map(|i| Vertex::at(Point3::xy(f64::from(i) / 10.0, f64::from(i % 7))))
+                    .collect(),
+                closed: false,
+                normal: Vec3::Z,
+            })];
+        }
+        let opts = SvgOptions::default()
+            .with_model(1)
+            .with_layout_viewports(true);
+        let mut complete = 0;
+        for max_work in 950..1100 {
+            let o = opts.clone().with_max_work(max_work);
+            let s = render(&d, &o);
+            assert!(
+                s.contains("<use ") || s.contains("data-truncated=\"true\""),
+                "max_work {max_work}: {s}"
+            );
+            if let Ok(s) = render_bounded(&d, &o, false) {
+                assert!(s.contains("<use "), "max_work {max_work}: {s}");
+                complete += 1;
+            }
+        }
+        assert!(complete > 0);
+    }
+
+    #[test]
+    fn layout_viewports_with_unrepresentable_scales_are_frames_only() {
+        let mut d = layout_document();
+        if let Some(layout) = d.models.get_mut(1) {
+            layout.entities.extend([
+                // Scale h / view_height overflows.
+                Entity::new(EntityKind::Viewport {
+                    center: Point3::xy(5.0, 4.0),
+                    width: 1e300,
+                    height: 1e300,
+                    view_center: Point3::xy(50.0, 50.0),
+                    view_height: 1e-300,
+                }),
+                // The placement overflows.
+                Entity::new(EntityKind::Viewport {
+                    center: Point3::xy(5.0, 4.0),
+                    width: 1.0,
+                    height: 1.0,
+                    view_center: Point3::xy(1e308, 0.0),
+                    view_height: 1e-10,
+                }),
+            ]);
+        }
+        let s = render(
+            &d,
+            &SvgOptions::default()
+                .with_model(1)
+                .with_layout_viewports(true),
+        );
+        // The well-formed window keeps its placement; the others get no window.
+        assert_eq!(s.matches("<use ").count(), 1, "{s}");
+        assert!(s.contains("transform=\"matrix(0.2 0 0 0.2 -5 6)\""), "{s}");
+        assert!(!s.contains("matrix(0 "), "{s}");
+        assert_ids_resolve(&s);
+    }
+
+    #[test]
+    fn thousands_of_viewports_stay_linear_and_bounded() {
+        let mut d = layout_document();
+        if let Some(layout) = d.models.get_mut(1) {
+            layout.entities = (0..3000)
+                .map(|i| {
+                    let x = f64::from(i % 60) * 5.0;
+                    let y = f64::from(i / 60) * 5.0;
+                    Entity::new(EntityKind::Viewport {
+                        center: Point3::xy(x, y),
+                        width: 4.0,
+                        height: 4.0,
+                        view_center: Point3::xy(50.0, 50.0),
+                        view_height: 1.0 + f64::from(i % 10),
+                    })
+                })
+                .collect();
+        }
+        let opts = SvgOptions::default()
+            .with_model(1)
+            .with_layout_viewports(true)
+            .with_entity_refs(true);
+        let s = render(&d, &opts);
+        assert_eq!(s.matches("<use ").count(), 3000);
+        assert_eq!(s.matches("<g id=\"cadkit-model\"").count(), 1);
+        assert!(s.len() < 3000 * 400, "{}", s.len());
+        assert_ids_resolve(&s);
+        let exact = opts.with_max_output_bytes(s.len());
+        assert_eq!(render_bounded(&d, &exact, false).expect("exact"), s);
+    }
+
+    #[test]
+    fn native_hatch_spacing_scales_with_the_insert() {
+        let mut insert = Entity::insert("H", Point3::xy(0.0, 0.0));
+        if let EntityKind::Insert { scale, .. } = &mut insert.kind {
+            *scale = Vec3::new(10.0, 10.0, 1.0);
+        }
+        let mut d = doc(vec![insert]);
+        d.blocks.push(Block {
+            name: "H".into(),
+            entities: vec![square_hatch(0.0, 10.0, 1.0)],
+            ..Block::default()
+        });
+        let mut exploded = d.clone();
+        exploded.explode_inserts(DEFAULT_WALK_DEPTH);
+        let opts = SvgOptions::default().with_hatch_native_spacing(true);
+        let block = render(&d, &opts);
+        // 3.175 drawing units of the block are 31.75 units of the drawing.
+        assert_eq!(pattern_widths(&block), ["31.75"], "{block}");
+        assert_eq!(pattern_widths(&render(&exploded, &opts)), ["31.75"]);
+    }
+    #[test]
+    fn hostile_options_on_a_layout_do_not_panic() {
+        let d = layout_of_every_kind(512_345.678, 4_087_654.321);
+        let bad = [
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            0.0,
+            -1.0,
+            1e308,
+            1e-308,
+        ];
+        for (i, &v) in bad.iter().enumerate() {
+            let opts = SvgOptions::default()
+                .with_model(1)
+                .with_layout_viewports(true)
+                .with_entity_refs(true)
+                .with_hatch_native_spacing(true)
+                .with_width_px(v)
+                .with_stroke_px(v)
+                .with_point_px(Some(v))
+                .with_cap_height_ratio(Some(v))
+                .with_origin(SvgOrigin::Explicit {
+                    x: v,
+                    y: bad.get(i + 1).copied().unwrap_or(v),
+                });
+            let s = render(&d, &opts);
+            assert!(s.starts_with("<svg ") && s.ends_with("</svg>\n"), "{s}");
+            assert_ids_resolve(&s);
+            let _ = render_bounded(&d, &opts, true);
+        }
+        // Every work budget and a range of byte budgets: complete output or an error.
+        let opts = SvgOptions::default()
+            .with_model(1)
+            .with_layout_viewports(true)
+            .with_entity_refs(true)
+            .with_origin(SvgOrigin::Auto);
+        for max_work in (0..400).step_by(7) {
+            let o = opts.clone().with_max_work(max_work);
+            let s = render(&d, &o);
+            assert_ids_resolve(&s);
+            if let Ok(b) = render_bounded(&d, &o, false) {
+                assert_eq!(b, s);
+                assert!(!b.contains("data-truncated"));
+            }
+        }
+        for max_output_bytes in (0..20_000).step_by(997) {
+            let o = opts.clone().with_max_output_bytes(max_output_bytes);
+            if let Ok(b) = render_bounded(&d, &o, false) {
+                assert!(b.len() <= max_output_bytes);
+            }
+            assert_ids_resolve(&render(&d, &o));
+        }
     }
 }
