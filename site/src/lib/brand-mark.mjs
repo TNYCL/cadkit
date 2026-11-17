@@ -31,7 +31,7 @@ const n = (v) => String(Math.round(v * 1000) / 1000);
 /**
  * Weights for each use, in grid units:
  * - "ui": 20-64 px inline use (header, footer, lockups, OG cards);
- * - "tile": the navy tile at 128 px and above (avatar, README icon, apple-touch icon);
+ * - "tile": the dark tile at 128 px and above (avatar, README icon, apple-touch icon);
  * - "icon": favicons (crisp at 16 px): heavier arc, centre point only.
  * @type {Record<'ui' | 'tile' | 'icon', Weight>}
  */

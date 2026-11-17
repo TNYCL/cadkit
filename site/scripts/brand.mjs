@@ -5,7 +5,7 @@
 //   public/brand/cadkit-mark-dark.svg    two-tone mark for dark backgrounds
 //   public/brand/cadkit-mark-mono.svg    single colour (black; recolour freely)
 //   public/brand/cadkit-lockup*.svg      mark + outlined "cadkit" wordmark (same three variants)
-//   public/brand/cadkit-tile.svg         navy tile master (avatar, favicon)
+//   public/brand/cadkit-tile.svg         night tile master (avatar, favicon)
 //   public/brand/cadkit-avatar-512.png   GitHub organisation avatar
 //   public/brand/cadkit-icon-256.png     README image
 //   public/brand/cadkit-favicon-32.png
@@ -26,7 +26,7 @@ const pub = join(root, 'public');
 const brand = join(pub, 'brand');
 
 const INK = { text: '#14171c', accent: '#1747b8' };
-const BLUEPRINT = { bg: '#0b1324', text: '#e8edf5', accent: '#5ce1e6' };
+const NIGHT = { bg: '#0a0c10', text: '#e6e9ee', accent: '#5ce1e6' };
 
 const svg = (w, h, body, title) =>
 	`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" role="img" aria-label="${title}"><title>${title}</title>${body}</svg>\n`;
@@ -54,26 +54,26 @@ function tile(size, { radius = 0, scale = 0.62 } = {}) {
 	const offset = (GRID - inner) / 2;
 	const k = scale;
 	const body =
-		`<rect width="${GRID}" height="${GRID}" rx="${radius}" fill="${BLUEPRINT.bg}"/>` +
-		`<g transform="translate(${offset + opticalOffsetX('tile') * k} ${offset}) scale(${k})">${markElements({ arc: BLUEPRINT.accent, grip: BLUEPRINT.accent, weight: 'tile' })}</g>`;
+		`<rect width="${GRID}" height="${GRID}" rx="${radius}" fill="${NIGHT.bg}"/>` +
+		`<g transform="translate(${offset + opticalOffsetX('tile') * k} ${offset}) scale(${k})">${markElements({ arc: NIGHT.accent, grip: NIGHT.accent, weight: 'tile' })}</g>`;
 	return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${GRID} ${GRID}" width="${size}" height="${size}">${body}</svg>\n`;
 }
 
 function favicon() {
-	// The tab icon keeps the navy tile so it reads on light and dark browser chrome alike. The
+	// The tab icon keeps the dark tile so it reads on light and dark browser chrome alike. The
 	// "icon" weight drops the centre-mark dashes, which would blur into a smudge at 16 px.
 	const body =
-		`<rect width="32" height="32" rx="6" fill="${BLUEPRINT.bg}"/>` +
-		`<g transform="translate(${3.2 + opticalOffsetX('icon') * 0.8} 3.2) scale(0.8)">${markElements({ arc: BLUEPRINT.accent, grip: BLUEPRINT.accent, weight: 'icon' })}</g>`;
+		`<rect width="32" height="32" rx="6" fill="${NIGHT.bg}"/>` +
+		`<g transform="translate(${3.2 + opticalOffsetX('icon') * 0.8} 3.2) scale(0.8)">${markElements({ arc: NIGHT.accent, grip: NIGHT.accent, weight: 'icon' })}</g>`;
 	return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">${body}</svg>\n`;
 }
 
 const svgs = {
 	[join(brand, 'cadkit-mark.svg')]: mark({ arc: INK.text, grip: INK.accent }),
-	[join(brand, 'cadkit-mark-dark.svg')]: mark({ arc: BLUEPRINT.text, grip: BLUEPRINT.accent }),
+	[join(brand, 'cadkit-mark-dark.svg')]: mark({ arc: NIGHT.text, grip: NIGHT.accent }),
 	[join(brand, 'cadkit-mark-mono.svg')]: mark({ arc: '#000000', grip: '#000000' }),
 	[join(brand, 'cadkit-lockup.svg')]: lockup({ arc: INK.text, grip: INK.accent }, INK.text),
-	[join(brand, 'cadkit-lockup-dark.svg')]: lockup({ arc: BLUEPRINT.text, grip: BLUEPRINT.accent }, BLUEPRINT.text),
+	[join(brand, 'cadkit-lockup-dark.svg')]: lockup({ arc: NIGHT.text, grip: NIGHT.accent }, NIGHT.text),
 	[join(brand, 'cadkit-lockup-mono.svg')]: lockup({ arc: '#000000', grip: '#000000' }, '#000000'),
 	[join(brand, 'cadkit-tile.svg')]: tile(512),
 	[join(pub, 'favicon.svg')]: favicon(),

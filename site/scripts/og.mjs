@@ -1,4 +1,4 @@
-// Open Graph card (1200 x 630) drawn as a drawing sheet: blueprint ground, grid, the page title
+// Open Graph card (1200 x 630) drawn as a drawing sheet: night ground, grid, the page title
 // and description, and a title block. All text is outlined with fontkit, so rendering needs no
 // installed fonts and is identical on every build machine.
 
@@ -12,15 +12,15 @@ const { Resvg } = require('@resvg/resvg-js');
 const W = 1200;
 const H = 630;
 const C = {
-	bg: '#0b1324',
-	minor: '#122037',
-	major: '#1b2a47',
-	border: '#22314f',
-	text: '#e8edf5',
-	muted: '#9aa8bf',
+	bg: '#0a0c10',
+	minor: '#101319',
+	major: '#191d25',
+	border: '#2d333e',
+	text: '#e6e9ee',
+	muted: '#99a2af',
 	accent: '#5ce1e6',
 	redline: '#ff7a66',
-	surface: '#101b31',
+	surface: '#0f1218',
 };
 
 const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);

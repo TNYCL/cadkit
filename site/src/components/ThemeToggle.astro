@@ -1,5 +1,5 @@
 ---
-// Light "paper" / dark "blueprint" switch. Stores the choice under Starlight's own key
+// Light "paper" / dark "night" switch. Stores the choice under Starlight's own key
 // ("starlight-theme"), so docs and hand-written pages share it; Starlight's inline
 // ThemeProvider applies it before first paint.
 interface Props {
@@ -36,7 +36,7 @@ const { withLabel = false } = Astro.props;
 			const apply = () => {
 				root.dataset.theme = next;
 			};
-			// Paper and blueprint cross-fade where the browser supports view transitions; reduced
+			// Paper and night cross-fade where the browser supports view transitions; reduced
 			// motion switches at once.
 			if (document.startViewTransition && !matchMedia('(prefers-reduced-motion: reduce)').matches)
 				document.startViewTransition(apply);

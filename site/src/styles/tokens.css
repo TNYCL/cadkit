@@ -1,5 +1,5 @@
 /*
- * cadkit design tokens: light "paper" and dark "blueprint".
+ * cadkit design tokens: light "paper" and dark "night".
  * This file is the single source of colour values; test/contrast.test.mjs parses it and
  * checks every text/background pair against WCAG 2.2 AA.
  * :root holds the dark theme because Starlight treats dark as its base and sets
@@ -7,22 +7,22 @@
  */
 
 :root {
-	--ck-bg: #0b1324;
-	--ck-surface: #101b31;
-	--ck-raised: #16233d;
-	--ck-border: #22314f;
-	--ck-border-strong: #33466b;
-	--ck-border-ui: #6a7fa6;
-	--ck-grid-minor: #132038;
-	--ck-grid-major: #1b2a47;
-	--ck-text: #e8edf5;
-	--ck-muted: #9aa8bf;
+	--ck-bg: #0a0c10;
+	--ck-surface: #0f1218;
+	--ck-raised: #151921;
+	--ck-border: #20252e;
+	--ck-border-strong: #2d333e;
+	--ck-border-ui: #5f6878;
+	--ck-grid-minor: #0e1116;
+	--ck-grid-major: #161a21;
+	--ck-text: #e6e9ee;
+	--ck-muted: #99a2af;
 	--ck-accent: #5ce1e6;
-	--ck-on-accent: #0b1324;
+	--ck-on-accent: #0a0c10;
 	--ck-redline: #ff7a66;
 	--ck-ok: #5bd69a;
 	--ck-partial: #e8b85c;
-	--ck-pending: #9aa8bf;
+	--ck-pending: #99a2af;
 	color-scheme: dark;
 }
 
