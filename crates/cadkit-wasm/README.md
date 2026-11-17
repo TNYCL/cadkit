@@ -16,46 +16,58 @@ npm install cadkit-wasm
 import init, { read } from "cadkit-wasm";
 
 await init();                                   // loads cadkit_wasm_bg.wasm next to the module
-const doc = read(new Uint8Array(await file.arrayBuffer()));
+const doc = read(await file.arrayBuffer());     // Uint8Array, ArrayBuffer, typed array or DataView
 console.log(doc.info());                        // { format, version, units, models, ... }
-const svg = doc.toSvg({ widthPx: 1200 });
+const svg = doc.toSvgBounded({ maxOutputBytes: 16 << 20 });
 doc.free();
 ```
 
 ## Node
 
-`cadkit-wasm/node` is a CommonJS build that is ready as soon as it is loaded:
+The package root resolves to the Node build under Node, ready on load; `init()` resolves at
+once, so code written for the browser runs unchanged.
 
 ```js
-const { read } = require("cadkit-wasm/node");   // or: import { read } from "cadkit-wasm/node"
-const fs = require("node:fs");
+import { read } from "cadkit-wasm";             // or: const { read } = require("cadkit-wasm");
+import { readFileSync } from "node:fs";
 
-const doc = read(fs.readFileSync("plan.dwg"));
-console.log(doc.layers());
+const doc = read(readFileSync("plan.dwg"));
+console.log(doc.stats());
 doc.free();
 ```
 
-The default entry also works in Node when it is given the module bytes:
-`await init({ module_or_path: fs.readFileSync(require.resolve("cadkit-wasm/cadkit_wasm_bg.wasm")) })`.
+## What it does
 
-Use `inspect` for header-only metadata, `convertUnits` and `explodeInserts` for in-place
-document operations, and `pickEntity` for geometric viewer selection. SVG output can be
-used in a web UI; the repository includes an SVG-based drag-and-drop viewer.
+- `read`, `inspect` (header only), `detect`, `readCityGml`, `stripDgnSeed`.
+- Reading parts of a document without converting all of it: `models`, `entity(model, path)`,
+  paged `entities`, `blocks`, `block`, `stats`, `bbox`, `viewports`; `toJSON` for everything.
+- Selection: `pick(model, x, y, { tolerance })` returns the hit's entity path and the model
+  entity that owns it (the insert for a block part), with capped metadata. `pickEntity` and
+  `pickEntityBounded` are deprecated: their `index` is a visiting order, not an entity index.
+- In-place operations: `convertUnits`, `explodeInserts`, `transform`, `retainLayers`,
+  `retainKinds`, `purgeUnused`; `clone` copies a document.
+- Export: `toSvg` / `toSvgBounded` (with a local origin for map coordinates and `data-e`
+  entity references for viewers), `toDxf` / `toDxfWithReport` (lists what DXF left out),
+  `toDgn` / `toDgnWithReport` (with `prepare` for documents from other formats) and
+  `prepareForDgn`, `toCityGml` / `toCityGmlReport`, `toCityGmlBuildings` (buildings with
+  wall, roof and ground surfaces from faces and closed polylines).
+- Renderer buffers: `surfaceMesh` (triangles, normals, colours and outlines) and `lineBuffer`
+  (segments) as typed arrays relative to an f64 origin, grouped by layer, with an item table
+  that leads every triangle and segment back to its entity, and a ray pick.
+- CityGML checks: `validate`, `geometryIssues`, and `preflightTkgm` / `preflightTkgmLocated`,
+  local structural checks of a TKGM subset that never establish acceptance.
 
-For untrusted inspection metadata, `pickEntityBounded` (added after 0.5.2)
-requires a complete JSON byte budget and caps metadata before copying it across
-the WASM boundary. It omits raw properties and reports shortened previews with
-`truncated`. Output or traversal exhaustion throws `limit_exceeded`; legacy
-`pickEntity` remains available with its full metadata shape. See the WASM guide
-for field limits and the method's argument order.
+Options are plain objects or JSON text; a wrong value throws `bad_argument` naming the option,
+and an unknown key is reported with `console.warn` (it becomes an error in the next minor
+release). Errors are `Error` objects with `kind` and, when known, `offset`, `limit`,
+`limitValue` and `needed`. Read limits default to values a 4 GiB wasm memory can hold
+(1,500,000 objects); `{ preset: "strict" }` tightens them for untrusted uploads. The wasm
+memory never shrinks: `memoryBytes()` tells a host when to recycle its worker. The TypeScript
+declarations cover every option and result, and the document model as a discriminated union.
 
-This npm package exposes the file/document APIs in the WASM guide. It does not export the
-standalone Rust `cadkit-geom`, `cadkit-scene` or `cadkit-gpu` APIs. DGN and CityGML output
-have explicit limits; CityGML generic export requires a CRS. See the
-[format matrix](https://github.com/TNYCL/cadkit#format-support).
-
-The API (options, errors, limits, DGN and CityGML export) is documented in
-[docs/wasm.md](https://github.com/TNYCL/cadkit/blob/main/docs/wasm.md).
+This npm package does not export the standalone Rust `cadkit-geom`, `cadkit-gpu` or
+`cadkit-scene` plan APIs; it builds the `cadkit-scene` buffers. See the [format matrix](https://github.com/TNYCL/cadkit#format-support) and
+the API reference in [docs/wasm.md](https://github.com/TNYCL/cadkit/blob/main/docs/wasm.md).
 
 "DWG", "DGN" and "DXF" name file formats only; cadkit is not affiliated with or certified by
 any CAD vendor.

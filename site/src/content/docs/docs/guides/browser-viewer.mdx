@@ -41,13 +41,19 @@ of the bare `cadkit-wasm` specifier, because module workers do not use the page'
 
 The SVG `viewBox` is in drawing units with Y pointing down, so a click maps to drawing
 coordinates through the inverse screen matrix of the `<svg>` element, with Y negated.
+Browsers keep SVG coordinates in single precision (about seven digits), so a drawing in map
+coordinates (x = 512,345) loses its small detail unless the coordinates are made relative to a
+nearby origin first and the origin is added back to every click.
 `pickEntityBounded(model, x, y, tolerance, options)` returns the closest visible entity within
 `tolerance` drawing units, or `null`. It measures exact distances to lines and circular arcs,
 samples other curves and uses bounding boxes for annotations and hatches. It is a selection
 aid, not CAD snapping. The result holds the index, id, layer, kind, colour, bounding box,
 distance and short previews of text and attributes, capped by `maxOutputBytes` (at most
-64 KiB); `truncated` says whether a preview was shortened. Layer and kind filters
-(`excludedLayers`, `excludedKinds`) let picking follow what the viewer shows.
+64 KiB); `truncated` says whether a preview was shortened. `index` counts the entities the
+pick visited (group children, and the entities of a block once per insert array cell), so it
+is a position in the model's entity list only in a drawing without groups and blocks; inside a
+block the result describes the block entity that was hit, not the block reference. Layer and
+kind filters (`excludedLayers`, `excludedKinds`) let picking follow what the viewer shows.
 
 ## Content Security Policy
 

@@ -44,6 +44,31 @@ export function fit(home: Box, w: number, h: number): View {
 	return { cx: home.x + home.w / 2, cy: home.y + home.h / 2, s: fitScale(home, w, h), home };
 }
 
+/** Parts of the stage covered by controls (CSS pixels); fitting keeps the drawing clear of them. */
+export interface Insets {
+	left: number;
+	top: number;
+	right: number;
+	bottom: number;
+}
+export const NO_INSETS: Insets = { left: 0, top: 0, right: 0, bottom: 0 };
+
+/**
+ * A view that fits `box` into the part of a w x h stage the insets leave free. `home` stays the
+ * drawing's own extents (the reference for the zoom range), so `box` can be a part of the drawing.
+ */
+export function fitBox(home: Box, box: Box, w: number, h: number, insets: Insets = NO_INSETS): View {
+	const fw = Math.max(1, w - insets.left - insets.right);
+	const fh = Math.max(1, h - insets.top - insets.bottom);
+	const s = fitScale(box, fw, fh);
+	return {
+		cx: box.x + box.w / 2 - (insets.left + fw / 2 - w / 2) * s,
+		cy: box.y + box.h / 2 - (insets.top + fh / 2 - h / 2) * s,
+		s,
+		home,
+	};
+}
+
 /** viewBox string for a w x h stage. */
 export function viewBoxOf(v: View, w: number, h: number): string {
 	const vw = Math.max(1, w) * v.s;
@@ -60,6 +85,40 @@ export function toSvg(v: View, w: number, h: number, px: number, py: number): { 
 export function toWorld(v: View, w: number, h: number, px: number, py: number): { x: number; y: number } {
 	const p = toSvg(v, w, h, px, py);
 	return { x: p.x, y: -p.y };
+}
+
+/** A local origin in SVG user units (Y down): absolute SVG coordinates = local + origin. */
+export interface Offset {
+	x: number;
+	y: number;
+}
+
+/**
+ * Stage pixel to drawing coordinates on a sheet drawn relative to `origin` (src/demo/origin.ts):
+ * the view works in the sheet's local units, the drawing in absolute ones.
+ */
+export function toDrawing(v: View, w: number, h: number, px: number, py: number, origin: Offset): { x: number; y: number } {
+	const p = toSvg(v, w, h, px, py);
+	return { x: p.x + origin.x, y: -(p.y + origin.y) };
+}
+
+/** Drawing extents (min and max corner, Y up) as a box in absolute SVG units (Y down). */
+export function svgBoxOf(min: readonly number[], max: readonly number[]): Box {
+	const [x0 = 0, y0 = 0] = min;
+	const [x1 = 0, y1 = 0] = max;
+	return { x: x0, y: -y1, w: x1 - x0, h: y1 - y0 };
+}
+
+/** A box in absolute SVG units moved onto a sheet drawn relative to `origin`. */
+export function toLocal(box: Box, origin: Offset): Box {
+	return { x: box.x - origin.x, y: box.y - origin.y, w: box.w, h: box.h };
+}
+
+/** The smallest box holding both. */
+export function unionBox(a: Box, b: Box): Box {
+	const x = Math.min(a.x, b.x);
+	const y = Math.min(a.y, b.y);
+	return { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y };
 }
 
 /** Pans by a pixel delta (content follows the pointer). */

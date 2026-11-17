@@ -38,6 +38,21 @@ pub struct WalkContext<'a> {
     pub block_color: Option<(u8, u8, u8)>,
     /// Layer name to color table shared by the walk, so color resolution needs no linear scan.
     layer_colors: Option<Rc<HashMap<&'a str, Color>>>,
+    /// Index of the entity in the list that holds it (model entities, group children or
+    /// block entities).
+    index: usize,
+    /// Indices of the containers above the entity, innermost first.
+    parents: Option<Rc<PathNode>>,
+    /// Number of path steps that lie in the model's own entity tree; `None` while the walk has
+    /// not entered a block definition.
+    tree_len: Option<usize>,
+}
+
+/// One container level of a walk path (a linked list, so sibling entities share their parents).
+#[derive(Debug)]
+struct PathNode {
+    index: usize,
+    parent: Option<Rc<PathNode>>,
 }
 
 impl<'a> WalkContext<'a> {
@@ -49,7 +64,48 @@ impl<'a> WalkContext<'a> {
             inherited_layer: None,
             block_color: None,
             layer_colors: None,
+            index: 0,
+            parents: None,
+            tree_len: None,
         }
+    }
+
+    /// Where the entity sits, as list indices from the model's entity list downwards.
+    ///
+    /// Each step selects an entry of the current list; the next list is the children of a
+    /// `Group`, or the entities of the block that an `Insert` (or a `Dimension` with a block)
+    /// refers to. [`Document::entity_at`] resolves such a path. Every cell of an insert array
+    /// has the same path. Outside a walk (`WalkContext::root()`) the path is `[0]`.
+    pub fn path(&self) -> Vec<usize> {
+        let mut out = vec![self.index];
+        let mut node = self.parents.as_deref();
+        while let Some(n) = node {
+            out.push(n.index);
+            node = n.parent.as_deref();
+        }
+        out.reverse();
+        out
+    }
+
+    /// Length of the leading part of [`Self::path`] that addresses an entity of the model
+    /// itself: the whole path for an entity in the model or its groups, and the path of the
+    /// outermost expanded `Insert` / `Dimension` for an entity drawn from a block definition.
+    pub fn model_path_len(&self) -> usize {
+        self.tree_len.unwrap_or(self.depth as usize + 1)
+    }
+
+    /// Context of the entities one container level below `self`'s entity.
+    fn descend(&self, into_block: bool) -> (Option<Rc<PathNode>>, Option<usize>) {
+        let parents = Some(Rc::new(PathNode {
+            index: self.index,
+            parent: self.parents.clone(),
+        }));
+        let tree_len = match self.tree_len {
+            Some(n) => Some(n),
+            None if into_block => Some(self.depth as usize + 1),
+            None => None,
+        };
+        (parents, tree_len)
     }
 
     /// Effective layer name of `e` in this context (default layer `"0"`).
@@ -259,11 +315,13 @@ impl<'a, F: FnMut(&'a Entity, &WalkContext<'a>) -> bool> Walker<'a, F> {
     }
 
     fn visit_list(&mut self, list: &'a [Entity], ctx: &WalkContext<'a>) {
-        for e in list {
+        let mut here = ctx.clone();
+        for (index, e) in list.iter().enumerate() {
             if self.truncated {
                 return;
             }
-            self.visit(e, ctx);
+            here.index = index;
+            self.visit(e, &here);
         }
     }
 
@@ -300,6 +358,7 @@ impl<'a, F: FnMut(&'a Entity, &WalkContext<'a>) -> bool> Walker<'a, F> {
                     Some(l) => Some(l),
                 };
                 let block_color = Some(self.color_of(e, ctx));
+                let (parents, tree_len) = ctx.descend(true);
                 self.stack.push(def.name.as_str());
                 'outer: for r in 0..(*rows).max(1) {
                     for c in 0..(*columns).max(1) {
@@ -325,6 +384,9 @@ impl<'a, F: FnMut(&'a Entity, &WalkContext<'a>) -> bool> Walker<'a, F> {
                             inherited_layer: child_layer,
                             block_color,
                             layer_colors: ctx.layer_colors.clone(),
+                            index: 0,
+                            parents: parents.clone(),
+                            tree_len,
                         };
                         self.visit_list(&def.entities, &child);
                     }
@@ -342,12 +404,16 @@ impl<'a, F: FnMut(&'a Entity, &WalkContext<'a>) -> bool> Walker<'a, F> {
                         None | Some("0") => ctx.inherited_layer,
                         Some(l) => Some(l),
                     };
+                    let (parents, tree_len) = ctx.descend(true);
                     let child = WalkContext {
                         transform: ctx.transform,
                         depth: ctx.depth + 1,
                         inherited_layer: child_layer,
                         block_color: Some(self.color_of(e, ctx)),
                         layer_colors: ctx.layer_colors.clone(),
+                        index: 0,
+                        parents,
+                        tree_len,
                     };
                     self.stack.push(def.name.as_str());
                     self.visit_list(&def.entities, &child);
@@ -357,8 +423,12 @@ impl<'a, F: FnMut(&'a Entity, &WalkContext<'a>) -> bool> Walker<'a, F> {
             },
             EntityKind::Group { children, .. } => {
                 if ctx.depth < self.opts.max_depth {
+                    let (parents, tree_len) = ctx.descend(false);
                     let child = WalkContext {
                         depth: ctx.depth + 1,
+                        index: 0,
+                        parents,
+                        tree_len,
                         ..ctx.clone()
                     };
                     self.visit_list(children, &child);
@@ -485,6 +555,33 @@ impl Document {
             truncated: w.truncated,
             work: w.spent,
         }
+    }
+
+    /// The entity a walk path leads to (see [`WalkContext::path`]), or `None` when the path
+    /// does not exist in `models[model_index]`.
+    ///
+    /// A path of one index is an entity of the model; longer paths step into the children of
+    /// a `Group` or into the block of an `Insert` / `Dimension`. A block that refers to itself
+    /// cannot make this loop: the path has a fixed length.
+    pub fn entity_at(&self, model_index: usize, path: &[usize]) -> Option<&Entity> {
+        let mut list: &[Entity] = &self.models.get(model_index)?.entities;
+        let mut found = None;
+        for (step, &index) in path.iter().enumerate() {
+            let e = list.get(index)?;
+            found = Some(e);
+            if step + 1 == path.len() {
+                break;
+            }
+            list = match &e.kind {
+                EntityKind::Group { children, .. } => children,
+                EntityKind::Insert { block, .. }
+                | EntityKind::Dimension {
+                    block: Some(block), ..
+                } => &self.blocks.iter().find(|b| &b.name == block)?.entities,
+                _ => return None,
+            };
+        }
+        found
     }
 
     /// Bounding box (model-space XYZ) of everything [`Document::walk`] visits in
@@ -1421,6 +1518,64 @@ mod tests {
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].0, Point3::new(5.0, 10.0, 0.0));
         assert_eq!(hits[0].1, 2);
+    }
+
+    #[test]
+    fn walk_paths_address_model_entities_and_block_parts() {
+        let inner = block(
+            "inner",
+            vec![line(0.0, 0.0, 1.0, 0.0), line(0.0, 1.0, 1.0, 1.0)],
+        );
+        let outer = block(
+            "outer",
+            vec![line(9.0, 9.0, 9.5, 9.0), insert("inner", 5.0, 0.0)],
+        );
+        let group = Entity::new(EntityKind::Group {
+            group_kind: crate::model::GroupKind::Other,
+            name: None,
+            origin: None,
+            children: vec![line(2.0, 2.0, 3.0, 2.0), insert("outer", 0.0, 10.0)],
+        });
+        let mut array = insert("inner", 0.0, 0.0);
+        if let EntityKind::Insert { columns, .. } = &mut array.kind {
+            *columns = 2;
+        }
+        let doc = doc_with(
+            vec![line(0.0, 0.0, 1.0, 1.0), group, array],
+            vec![inner, outer],
+        );
+        let mut seen = Vec::new();
+        doc.walk(0, 8, |e, ctx| {
+            let path = ctx.path();
+            // The path leads back to the entity that was reported.
+            assert!(std::ptr::eq(doc.entity_at(0, &path).unwrap(), e));
+            seen.push((path, ctx.model_path_len()));
+        });
+        assert_eq!(
+            seen,
+            vec![
+                (vec![0], 1),          // line in the model
+                (vec![1, 0], 2),       // line in the group
+                (vec![1, 1, 0], 2),    // line of "outer": the model entity is the insert [1, 1]
+                (vec![1, 1, 1, 0], 2), // lines of "inner" through the nested insert
+                (vec![1, 1, 1, 1], 2),
+                (vec![2, 0], 1), // two array cells share their paths
+                (vec![2, 1], 1),
+                (vec![2, 0], 1),
+                (vec![2, 1], 1),
+            ]
+        );
+        assert_eq!(WalkContext::root().path(), vec![0]);
+        assert_eq!(WalkContext::root().model_path_len(), 1);
+        // Paths that do not exist.
+        assert!(doc.entity_at(0, &[]).is_none());
+        assert!(doc.entity_at(0, &[9]).is_none());
+        assert!(doc.entity_at(0, &[0, 0]).is_none()); // a line has nothing below it
+        assert!(doc.entity_at(1, &[0]).is_none());
+        assert!(matches!(
+            doc.entity_at(0, &[1, 1]).map(|e| &e.kind),
+            Some(EntityKind::Insert { .. })
+        ));
     }
 
     #[test]

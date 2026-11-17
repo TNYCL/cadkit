@@ -64,9 +64,17 @@ The optional `cadkit-scene/document` feature provides `document::plan_document`:
 neutral document model becomes plan items, with blocks/arrays expanded, placement applied,
 XY projection, layer groups and resolved colors/lineweights. Non-circular curves are
 flattened. `DocumentPlanReport` records skipped entity kinds, flattened curves, dashes drawn
-solid and traversal truncation. The bridge produces plan items, not 3D meshes; a host
-constructs its `MeshScene` separately. `PlanItem::force_cpu` explicitly requests the host's
-CPU drawing path. See [host integration](CADKIT_INTEGRATION.md#scene-and-gpu-integration).
+solid and traversal truncation. `PlanItem::force_cpu` explicitly requests the host's
+CPU drawing path.
+
+The same feature provides flat buffers for renderers that are not built on the plan store:
+`document::surface_mesh` (triangles of polygons, faces, mesh faces, straight-edged solid
+hatches and, by option, closed planar polylines such as DGN shapes) and
+`document::line_buffer` (curves as segments). Positions are f32 offsets from an f64 origin,
+triangles and segments are grouped by layer, and an item table gives every face and curve
+the path of its entity (`WalkContext::path`, resolved by `Document::entity_at`).
+`SurfaceMesh::pick` finds the nearest face along a ray. `cadkit-wasm` exposes both as typed
+arrays. See [host integration](CADKIT_INTEGRATION.md#scene-and-gpu-integration).
 
 The curve and NURBS helpers in `cadkit-core` overlap with the standalone geometry layer;
 they remain separate APIs with their own contracts.
@@ -159,6 +167,13 @@ partial drawing. Existing SVG APIs retain their coarse body cap and truncation
 marker. A host still owns parser limits, worker lifetime and any markup added to
 the result; the SVG cap is not a total-process-memory cap.
 
+SVG output has opt-in options for viewers (`SvgOptions`): a local `origin` (coordinates are
+written relative to it and the root states it as `data-origin`; needed in browsers, which
+process SVG coordinates in 32-bit floats), `entity_refs` (`data-e` entity paths on every
+element), `point_px`, `cap_height_ratio` / `font_family`, `hatch_native_spacing` and
+`layout_viewports` (a paper layout drawn as clipped windows onto model space). With default
+options the output is unchanged.
+
 ## Bindings
 
 - **cadkit-cli**: `inspect`, `info`, `layers`, `blocks`, `dump`, `convert` (JSON, SVG, DXF,
@@ -170,10 +185,15 @@ the result; the SVG cap is not a total-process-memory cap.
   `doc.to_citygml()` / `doc.to_citygml_with_report()`, `doc.to_json()`,
   `CityGmlDocument.preflight_tkgm()`, `V8Seed` (parsed seed, `prepare_document`) and
   `cadkit.strip_dgn_seed(seed, **options) -> (bytes, dict)`; built with maturin, abi3 wheels.
-- **cadkit-wasm**: `read(Uint8Array) -> CadDocument`, `readCityGml(Uint8Array) -> CityGmlDocument`,
-  `toSvg`, `toDxf`, `toDgn`, `toCityGml` / `toCityGmlWithReport`, `preflightTkgm`,
-  `stripDgnSeed(seed, options?, readOptions?) -> { seed, report }`; plus a static
-  drag-and-drop viewer page in `crates/cadkit-wasm/www/`.
+- **cadkit-wasm**: `read(bytes) -> CadDocument`, `readCityGml(bytes) -> CityGmlDocument`,
+  `toSvg` / `toSvgBounded`, `toDxf`, `toDgn` / `toDgnWithReport`, `toCityGml` /
+  `toCityGmlReport` / `toCityGmlBuildings`, `preflightTkgm`,
+  `stripDgnSeed(seed, options?, readOptions?) -> { seed, report }`; entity access without the
+  whole document as JSON (`entity`, `entities`, `blocks`, `stats`, `bbox`, `pick`), document
+  operations (`transform`, `retainLayers`, `purgeUnused`, `clone`) and render buffers
+  (`surfaceMesh`, `lineBuffer`); every option goes through one strict parser and every
+  argument is validated (reference: `docs/wasm.md`); plus a static drag-and-drop viewer page
+  in `crates/cadkit-wasm/www/`.
 - **cadkit-capi**: opaque `cadkit_document*` (live-handle registry: double free returns
   `CADKIT_INVALID_HANDLE`), `cadkit_status` return codes, thread-local last-error message,
   `cadkit_document_info` struct + JSON/SVG/DXF/DGN/CityGML exporters, `cadkit_dgn_strip_seed`
@@ -196,5 +216,6 @@ entry point. C ABI layouts and the Python/WASM APIs were retained in 0.5; Rust c
 follow the constructor and non-exhaustive migration described above.
 
 The bindings expose file I/O and their documented document operations. They do not expose
-the standalone `cadkit-geom`, `cadkit-scene` or `cadkit-gpu` APIs; the browser viewer uses
-SVG output. Rust rendering integration is a separate path.
+the standalone `cadkit-geom` or `cadkit-gpu` APIs. `cadkit-wasm` exposes the document
+buffers of `cadkit-scene` (`surfaceMesh`, `lineBuffer`); the website's viewer draws the 2D
+sheet from SVG output. Rust rendering integration is a separate path.

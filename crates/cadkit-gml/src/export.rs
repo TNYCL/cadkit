@@ -16,6 +16,30 @@ pub struct ExportOptions {
     /// Resource limits enforced before writing and on the serialized XML output.
     #[serde(default)]
     pub limits: cadkit_core::Limits,
+    /// Write closed, straight (bulge- and width-free) polylines with at least three
+    /// distinct vertices as `gml:Polygon` surfaces when they are planar and simple.
+    /// Others stay `gml:LineString` and are reported. Default `false`: closure alone
+    /// does not assert an area, so the historical output is unchanged.
+    #[serde(default)]
+    pub closed_polylines_as_surfaces: bool,
+    /// Largest distance of a ring point from the face plane, as a fraction of the face's
+    /// bounding-box diagonal (default `1e-3`), for faces this crate turns into surfaces.
+    #[serde(default = "default_planarity_tolerance")]
+    pub planarity_tolerance: f64,
+    /// Ceiling for that distance in coordinate units (default `0.01`, the default
+    /// [`crate::ValidationOptions::planarity_tolerance`]), so accepted surfaces pass
+    /// default validation. Larger values need the same validation tolerance on read;
+    /// [`crate::write_document`] and [`crate::write_buildings`] validate with it.
+    #[serde(default = "default_max_planarity_deviation")]
+    pub max_planarity_deviation: f64,
+}
+
+fn default_planarity_tolerance() -> f64 {
+    crate::surface::DEFAULT_PLANARITY_TOLERANCE
+}
+
+fn default_max_planarity_deviation() -> f64 {
+    crate::surface::DEFAULT_MAX_PLANARITY_DEVIATION
 }
 
 impl ExportOptions {
@@ -26,6 +50,9 @@ impl ExportOptions {
             srs_name: srs_name.into(),
             lod,
             limits: cadkit_core::Limits::default(),
+            closed_polylines_as_surfaces: false,
+            planarity_tolerance: default_planarity_tolerance(),
+            max_planarity_deviation: default_max_planarity_deviation(),
         }
     }
 
@@ -49,6 +76,34 @@ impl ExportOptions {
         self.limits = limits;
         self
     }
+
+    /// Sets [`Self::closed_polylines_as_surfaces`].
+    #[must_use]
+    pub fn with_closed_polylines_as_surfaces(mut self, enabled: bool) -> Self {
+        self.closed_polylines_as_surfaces = enabled;
+        self
+    }
+
+    /// Sets [`Self::planarity_tolerance`] (fraction of the face's bounding-box diagonal).
+    #[must_use]
+    pub fn with_planarity_tolerance(mut self, relative: f64) -> Self {
+        self.planarity_tolerance = relative;
+        self
+    }
+
+    /// Sets [`Self::max_planarity_deviation`] (coordinate units).
+    #[must_use]
+    pub fn with_max_planarity_deviation(mut self, deviation: f64) -> Self {
+        self.max_planarity_deviation = deviation;
+        self
+    }
+
+    pub(crate) fn planarity(&self) -> crate::surface::Planarity {
+        crate::surface::Planarity {
+            relative: self.planarity_tolerance,
+            absolute: self.max_planarity_deviation,
+        }
+    }
 }
 
 /// Handling of geometry without a supported, exact GML representation.
@@ -66,7 +121,10 @@ pub enum UnsupportedGeometry {
 /// A source entity whose geometry is not present in the output.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExportIssue {
-    /// Stable diagnostic code, currently `gml.metadata_only`.
+    /// Stable diagnostic code: `gml.metadata_only`, or with
+    /// [`ExportOptions::closed_polylines_as_surfaces`] a `gml.face_*` reason
+    /// (`gml.face_not_planar`, `gml.face_degenerate`, `gml.face_self_intersecting`,
+    /// `gml.face_invalid`) for a closed polyline written as a line string instead.
     pub code: String,
     /// Zero-based source model index.
     pub model: usize,
@@ -85,7 +143,8 @@ pub struct ExportReport {
     pub geometry_entities: u64,
     /// Entities retained only in `cadkit.entity` metadata.
     pub metadata_only_entities: u64,
-    /// One diagnostic for each metadata-only entity, in source traversal order.
+    /// One diagnostic for each metadata-only entity, in source traversal order, followed
+    /// per top-level entity by closed polylines that could not become surfaces.
     pub issues: Vec<ExportIssue>,
 }
 
@@ -93,6 +152,11 @@ struct Exporter {
     unsupported: UnsupportedGeometry,
     report: ExportReport,
     max_depth: u32,
+    surfaces: Option<crate::surface::Planarity>,
+    work: u64,
+    /// Surface diagnostics kept apart from metadata-only issues: they do not make the
+    /// object's geometry partial.
+    pending: Vec<ExportIssue>,
 }
 
 impl Exporter {
@@ -125,6 +189,8 @@ impl Exporter {
             } else {
                 Ok(multi)
             }
+        } else if let Some(polygon) = self.polyline_surface(e, model, path)? {
+            Ok(polygon)
         } else {
             geometry(&e.kind)
         };
@@ -144,6 +210,49 @@ impl Exporter {
                 Ok(None)
             }
             Err(e) => Err(e),
+        }
+    }
+}
+
+impl Exporter {
+    /// The `gml:Polygon` of a closed, straight, planar polyline when surfaces are enabled.
+    fn polyline_surface(
+        &mut self,
+        e: &Entity,
+        model: usize,
+        path: &[usize],
+    ) -> Result<Option<Element>> {
+        let (
+            Some(planarity),
+            EntityKind::Polyline {
+                vertices, closed, ..
+            },
+        ) = (self.surfaces, &e.kind)
+        else {
+            return Ok(None);
+        };
+        // Open, curved or wide polylines keep their existing line-string handling.
+        let Some(Ok(ring)) = crate::surface::polyline_ring(vertices, *closed) else {
+            return Ok(None);
+        };
+        match crate::surface::prepare(ring, vec![], planarity, &mut self.work)? {
+            Ok(surface) => Ok(Some(
+                Polygon {
+                    id: None,
+                    exterior: surface.exterior,
+                    interiors: vec![],
+                }
+                .to_element(),
+            )),
+            Err(reject) => {
+                self.pending.push(ExportIssue {
+                    code: reject.code().into(),
+                    model,
+                    path: path.to_vec(),
+                    entity_type: e.kind.type_name().into(),
+                });
+                Ok(None)
+            }
         }
     }
 }
@@ -189,7 +298,8 @@ fn geometry(kind: &EntityKind) -> Result<Element> {
                 points.push(first);
             }
             // Closure alone does not assert a planar surface. CAD paths may cross
-            // themselves or leave the plane; only explicit Polygon/Face means area.
+            // themselves or leave the plane; only explicit Polygon/Face means area,
+            // unless the caller opts in with `closed_polylines_as_surfaces`.
             let mut e = Element::new(GML, "gml:LineString");
             for p in points {
                 e.push(point_element(p));
@@ -288,11 +398,20 @@ pub fn from_document_with_report(
         ));
     }
     cadkit_core::export::validate_limits(source, &options.limits)?;
+    if options.closed_polylines_as_surfaces {
+        options.planarity().check()?;
+    }
     let mut doc = CityGmlDocument::new();
     let mut exporter = Exporter {
         unsupported,
         report: ExportReport::default(),
         max_depth: options.limits.max_depth,
+        surfaces: options
+            .closed_polylines_as_surfaces
+            .then(|| options.planarity()),
+        // The writer validates with the default geometry budget; spend no more here.
+        work: crate::ValidationOptions::default().max_geometry_work,
+        pending: vec![],
     };
     let mut next = 0u64;
     for (model_index, model) in source.models.iter().enumerate() {
@@ -379,6 +498,7 @@ pub fn from_document_with_report(
                     &Value::Text(text),
                 )?);
             }
+            exporter.report.issues.append(&mut exporter.pending);
             if let Some(mut g) = geometry {
                 let mut property =
                     Element::new(GENERICS, &format!("gen:lod{}Geometry", options.lod));

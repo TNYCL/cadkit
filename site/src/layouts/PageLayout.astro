@@ -34,6 +34,8 @@ interface Props {
 	lead?: string;
 	/** Include the page in the site search index. Default true. */
 	pagefind?: boolean;
+	/** Application page (the demo): a compact one-line header so the content starts near the top. */
+	app?: boolean;
 }
 
 const {
@@ -49,13 +51,14 @@ const {
 	eyebrow,
 	lead = description,
 	pagefind = true,
+	app = false,
 } = Astro.props;
 
 Astro.locals.cadkitPage = { custom: true, breadcrumbs, ogImage, jsonLd, noAnalytics, noindex, ogType };
 ---
 
 <StarlightPage frontmatter={{ title, description, template: 'splash', pagefind }} hasSidebar={false}>
-	<div class="ck-page" id="_top" tabindex="-1">
+	<div class:list={['ck-page', app && 'ck-page--app']} id="_top" tabindex="-1">
 		{
 			(breadcrumbs || header) && (
 				<header class="ck-page-header ck-container">
@@ -92,5 +95,28 @@ Astro.locals.cadkitPage = { custom: true, breadcrumbs, ogImage, jsonLd, noAnalyt
 	}
 	.ck-page-header .ck-lead {
 		margin: var(--ck-space-4) 0 0;
+	}
+	/* Application pages: breadcrumbs, then the title and the lead on one line. */
+	.ck-page--app .ck-page-header {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: var(--ck-space-1) var(--ck-space-4);
+		max-width: none;
+		padding-top: var(--ck-space-4);
+		padding-bottom: var(--ck-space-3);
+	}
+	.ck-page--app .ck-page-header :global(nav) {
+		flex-basis: 100%;
+	}
+	.ck-page--app .ck-page-header h1 {
+		margin: 0;
+		font-size: var(--sl-text-2xl);
+		line-height: 1.2;
+	}
+	.ck-page--app .ck-page-header .ck-lead {
+		margin: 0;
+		max-width: none;
+		font-size: var(--sl-text-sm);
 	}
 </style>

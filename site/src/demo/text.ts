@@ -66,6 +66,43 @@ export function explainError(kind: string): Explained {
 	return ERRORS[kind] ?? ERRORS.internal!;
 }
 
+const KNOWN_EXTENSIONS: Record<string, string> = { dwg: 'DWG', dxf: 'DXF', dgn: 'DGN', gml: 'CityGML', xml: 'CityGML' };
+
+/**
+ * Extra sentence for an "unknown format" error on a file whose name says it is a drawing: the
+ * header was not recognised, which for a .dwg, .dxf, .dgn or .gml file usually means it is cut
+ * short or damaged. "" for other names.
+ */
+export function extensionHint(name: string): string {
+	const ext = /\.([a-z0-9]+)$/i.exec(name)?.[1]?.toLowerCase() ?? '';
+	const format = KNOWN_EXTENSIONS[ext];
+	return format ? `The name ends in .${ext}, but the file does not start like a ${format} file. It may be incomplete or damaged.` : '';
+}
+
+/**
+ * cadkit's error messages start with the error kind in words ("limit exceeded: more than 10
+ * entities"). Next to the kind itself that is a repeat: this returns the part after it.
+ */
+export function cleanMessage(kind: string, message: string): string {
+	const words = kind.replace(/_/g, ' ').toLowerCase();
+	let text = message;
+	while (words && text.toLowerCase().startsWith(words + ': ')) text = text.slice(words.length + 2);
+	return text;
+}
+
+/** "MULTILEADER" from "dwg.MULTILEADER"; names without a format prefix are returned as they are. */
+export function sourceTypeName(name: string): string {
+	return name.replace(/^[a-z0-9_]+\./, '');
+}
+
+/** Milliseconds for a timing readout: "0.4 ms", "12 ms", "1.24 s". */
+export function formatMs(ms: number): string {
+	if (!Number.isFinite(ms)) return '-';
+	if (ms < 10) return `${ms.toFixed(1)} ms`;
+	if (ms < 1000) return `${Math.round(ms)} ms`;
+	return `${(ms / 1000).toFixed(2)} s`;
+}
+
 const FORMAT_NAMES: Record<string, string> = {
 	dwg: 'DWG',
 	dxf: 'DXF',
@@ -96,7 +133,6 @@ export function versionLabel(format: string, version: string): string {
 	return name ? `${version} (${name})` : version || 'unknown';
 }
 
-/** Unit names as cadkit reports them (cadkit_core::Unit::as_str) and their symbols. */
 /** "DXF AC1032 (2018)", "DGN V8", "CityGML 2.0": the format name with its version, without repeats. */
 export function formatWithVersion(format: string, version: string): string {
 	const name = formatName(format);
@@ -104,6 +140,7 @@ export function formatWithVersion(format: string, version: string): string {
 	return `${name} ${versionLabel(format, version)}`;
 }
 
+/** Unit names as cadkit reports them (cadkit_core::Unit::as_str) and their symbols. */
 const UNIT_SYMBOLS: Record<string, string> = {
 	meter: 'm',
 	millimeter: 'mm',

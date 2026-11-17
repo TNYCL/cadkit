@@ -43,22 +43,32 @@ pub(super) fn justification_code(props: &Props, h: HAlign, v: VAlign) -> Result<
     Ok((code, fx, fy))
 }
 
-pub(super) fn length(e: &Entity, value: &str, char_width: f64, fx: f64) -> Result<f64> {
-    let length = match e.props.get("dgn.text_length") {
-        Some(Value::Float(v)) => *v,
-        Some(Value::Int(v)) => *v as f64,
+/// Baseline advance of a text in drawing units and whether it is the estimate taken for
+/// center/right text (`estimate`, [`super::WriteOptions::estimate_text_length`]): the
+/// measured `dgn.text_length`, else `characters × char_width`, the reader's estimate, which
+/// left text always uses since its anchor does not depend on the length.
+pub(super) fn length(
+    e: &Entity,
+    value: &str,
+    char_width: f64,
+    fx: f64,
+    estimate: bool,
+) -> Result<(f64, bool)> {
+    let (length, estimated) = match e.props.get("dgn.text_length") {
+        Some(Value::Float(v)) => (*v, false),
+        Some(Value::Int(v)) => (*v as f64, false),
         Some(_) => return Err(Error::invalid(0, "DGN text length must be numeric")),
-        None if fx != 0.0 => {
+        None if fx != 0.0 && !estimate => {
             return Err(Error::Unsupported(
                 "center/right DGN text needs measured dgn.text_length in drawing units".into(),
             ));
         }
-        None => value.chars().count() as f64 * char_width,
+        None => (value.chars().count() as f64 * char_width, fx != 0.0),
     };
     if !length.is_finite() || length < 0.0 || (length == 0.0 && !value.is_empty()) {
         return Err(Error::invalid(0, "invalid DGN text length"));
     }
-    Ok(length)
+    Ok((length, estimated))
 }
 
 /// Range of a text-like record (type 17 text, type 37 tag): the box enclosing the

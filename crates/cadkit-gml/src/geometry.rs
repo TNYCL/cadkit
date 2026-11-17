@@ -3,7 +3,7 @@
 use crate::{
     CityGmlDocument, ValidationOptions,
     native::{Element, GML, XLINK},
-    validate::{elements, polygon, validate},
+    validate::{elements, elements_with_parents, owner_ids, polygon, validate},
 };
 use cadkit_core::LimitKind;
 use cadkit_core::{Error, Point3, Result};
@@ -21,6 +21,29 @@ pub struct GeometryIssue {
     pub message: String,
 }
 
+/// A [`GeometryIssue`] with the `gml:id`s that locate it in the document. Unlike
+/// [`GeometryIssue`], it carries source identifiers, which may encode client data:
+/// keep such reports with the file's owner.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct LocatedGeometryIssue {
+    /// Byte offset in the source XML input, or zero for programmatically built elements.
+    pub offset: u64,
+    /// Stable machine-readable diagnostic code, as in [`GeometryIssue::code`].
+    pub code: String,
+    /// Human-readable description of the issue.
+    pub message: String,
+    /// Zero-based index of the `gml:Polygon` or `gml:Solid` in the bounded element
+    /// traversal (the numbering of [`crate::tkgm::ProfileIssue::element`]).
+    pub element: usize,
+    /// `gml:id` of that polygon or solid, when it has one.
+    pub id: Option<String>,
+    /// `gml:id` of the nearest enclosing city object (for example a `bldg:WallSurface`).
+    pub object_id: Option<String>,
+    /// `gml:id` of the enclosing `bldg:Building`.
+    pub building_id: Option<String>,
+}
+
 /// Collects all polygon and solid-shell geometry issues after structural validation.
 /// Shell edge matching welds vertices within `options.tolerance` and does not test inter-solid volumetric intersections.
 pub fn geometry_issues(
@@ -34,20 +57,55 @@ pub fn geometry_issues(
             ..options.clone()
         },
     )?;
-    inspect(&elements(doc, &options.limits)?, options)
+    Ok(inspect(&elements(doc, &options.limits)?, options)?
+        .into_iter()
+        .map(|(_, issue)| issue)
+        .collect())
 }
 
+/// [`geometry_issues`] with the element index and the `gml:id`s of the polygon or solid,
+/// its enclosing city object and building, in the same order.
+pub fn located_geometry_issues(
+    doc: &CityGmlDocument,
+    options: &ValidationOptions,
+) -> Result<Vec<LocatedGeometryIssue>> {
+    validate(
+        doc,
+        &ValidationOptions {
+            geometry: false,
+            ..options.clone()
+        },
+    )?;
+    let (nodes, parents) = elements_with_parents(doc, &options.limits)?;
+    Ok(inspect(&nodes, options)?
+        .into_iter()
+        .map(|(element, issue)| {
+            let (id, object_id, building_id) = owner_ids(&nodes, &parents, element);
+            LocatedGeometryIssue {
+                offset: issue.offset,
+                code: issue.code,
+                message: issue.message,
+                element,
+                id: id.map(str::to_owned),
+                object_id: object_id.map(str::to_owned),
+                building_id: building_id.map(str::to_owned),
+            }
+        })
+        .collect())
+}
+
+/// Geometry issues with the index of the polygon or solid they belong to in `nodes`.
 pub(crate) fn inspect(
     nodes: &[(&Element, usize)],
     options: &ValidationOptions,
-) -> Result<Vec<GeometryIssue>> {
+) -> Result<Vec<(usize, GeometryIssue)>> {
     let mut issues = vec![];
     let mut work = options.max_geometry_work;
     let ids: HashMap<_, _> = nodes
         .iter()
         .filter_map(|&(e, d)| e.attribute(GML, "id").map(|id| (id, (e, d))))
         .collect();
-    for &(e, dim) in nodes {
+    for (index, &(e, dim)) in nodes.iter().enumerate() {
         if e.name.is(GML, "Polygon") {
             let p = polygon(e, dim, &options.limits)?;
             let checked = cadkit_core::polygon::validate(
@@ -58,11 +116,14 @@ pub(crate) fn inspect(
                 &mut work,
             );
             match checked {
-                Err(Error::Invalid { message, .. }) => issues.push(GeometryIssue {
-                    offset: e.offset,
-                    code: "gml.polygon_geometry".into(),
-                    message,
-                }),
+                Err(Error::Invalid { message, .. }) => issues.push((
+                    index,
+                    GeometryIssue {
+                        offset: e.offset,
+                        code: "gml.polygon_geometry".into(),
+                        message,
+                    },
+                )),
                 Err(other) => return Err(other),
                 Ok(()) => {
                     if let Some(n) = cadkit_core::polygon::normal(&p.exterior)
@@ -71,11 +132,14 @@ pub(crate) fn inspect(
                             .filter_map(|r| cadkit_core::polygon::normal(r))
                             .any(|h| n.x * h.x + n.y * h.y + n.z * h.z >= 0.0)
                     {
-                        issues.push(GeometryIssue {
-                            offset: e.offset,
-                            code: "gml.ring_orientation".into(),
-                            message: "interior ring orientation must oppose exterior".into(),
-                        });
+                        issues.push((
+                            index,
+                            GeometryIssue {
+                                offset: e.offset,
+                                code: "gml.ring_orientation".into(),
+                                message: "interior ring orientation must oppose exterior".into(),
+                            },
+                        ));
                     }
                 }
             }
@@ -89,34 +153,40 @@ pub(crate) fn inspect(
                 let outer = boundary.name.is(GML, "exterior");
                 exterior += usize::from(outer);
                 if let Some(message) = shell(boundary, dim, outer, &ids, options, &mut work)? {
-                    issues.push(GeometryIssue {
-                        offset: boundary.offset,
-                        code: "gml.solid_shell".into(),
-                        message,
-                    });
+                    issues.push((
+                        index,
+                        GeometryIssue {
+                            offset: boundary.offset,
+                            code: "gml.solid_shell".into(),
+                            message,
+                        },
+                    ));
                 }
             }
             if exterior != 1 {
-                issues.push(GeometryIssue {
-                    offset: e.offset,
-                    code: "gml.solid_shell".into(),
-                    message: "Solid requires exactly one exterior shell".into(),
-                });
+                issues.push((
+                    index,
+                    GeometryIssue {
+                        offset: e.offset,
+                        code: "gml.solid_shell".into(),
+                        message: "Solid requires exactly one exterior shell".into(),
+                    },
+                ));
             }
         }
     }
     Ok(issues)
 }
 
-struct VertexWelder {
+pub(crate) struct VertexWelder {
     tol: f64,
     tol2: f64,
-    points: Vec<Point3>,
+    pub(crate) points: Vec<Point3>,
     grid: HashMap<(i64, i64, i64), Vec<u32>>,
 }
 
 impl VertexWelder {
-    fn new(tolerance: f64) -> Self {
+    pub(crate) fn new(tolerance: f64) -> Self {
         let tol = if tolerance.is_finite() && tolerance > 0.0 {
             tolerance
         } else {
@@ -131,6 +201,13 @@ impl VertexWelder {
     }
 
     fn cell(&self, p: Point3) -> (i64, i64, i64) {
+        if self.tol == 0.0 {
+            // Exact matching needs no neighbourhood, and coordinate / 1e-12 leaves the
+            // i64 range above 9.2e6 (UTM northings, Web Mercator), where clamping would
+            // put a whole axis into one cell. Key on the bits; + 0.0 maps -0.0 to 0.0.
+            let key = |v: f64| (v + 0.0).to_bits() as i64;
+            return (key(p.x), key(p.y), key(p.z));
+        }
         let step = self.tol.max(1e-12);
         let q = |v: f64| {
             (v / step)
@@ -140,7 +217,9 @@ impl VertexWelder {
         (q(p.x), q(p.y), q(p.z))
     }
 
-    fn intern(&mut self, p: Point3, work: &mut u64) -> Result<u32> {
+    /// Index of the first stored point within the tolerance of `p`, storing `p` when
+    /// there is none. Every compared candidate costs one unit of `work`.
+    pub(crate) fn intern(&mut self, p: Point3, work: &mut u64) -> Result<u32> {
         let (cx, cy, cz) = self.cell(p);
         for dx in -1..=1 {
             for dy in -1..=1 {

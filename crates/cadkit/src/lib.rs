@@ -26,7 +26,7 @@ use std::io::Write;
 use std::path::Path;
 
 #[cfg(feature = "svg")]
-pub use cadkit_core::svg::SvgOptions;
+pub use cadkit_core::svg::{SvgOptions, SvgOrigin};
 pub use cadkit_core::*;
 #[cfg(feature = "dgn-read")]
 pub use cadkit_dgn as dgn;
@@ -387,7 +387,12 @@ pub fn write_dxf_bytes_to(
     Ok(())
 }
 
-/// Writes a single-model neutral document to DGN V8 using raw seed bytes.
+/// Writes one model of a neutral document to DGN V8 using raw seed bytes.
+///
+/// A document with one design model and paper layouts (every DXF and DWG) writes its design
+/// model; [`dgn::WriteOptions::model_index`] selects another. [`dgn::write_v8_report`] also
+/// returns which models were left out. Documents that did not come from the seed's own file
+/// usually need [`dgn::V8Seed::prepare_document`] first.
 #[cfg(feature = "dgn")]
 pub fn to_dgn(doc: &Document, seed: &[u8], options: &dgn::WriteOptions) -> Result<Vec<u8>> {
     dgn::write_v8(doc, seed, options)
@@ -407,7 +412,8 @@ pub fn strip_dgn_seed(
     dgn::strip_seed_v8(seed, options, read)
 }
 
-/// Writes a single-model neutral document to DGN V8 using a pre-parsed [`dgn::V8Seed`].
+/// Writes one model of a neutral document to DGN V8 using a pre-parsed [`dgn::V8Seed`]
+/// (see [`to_dgn`] for which model).
 #[cfg(feature = "dgn")]
 pub fn to_dgn_with_seed(
     doc: &Document,
@@ -417,7 +423,8 @@ pub fn to_dgn_with_seed(
     dgn::write_v8_with_seed(doc, seed, options)
 }
 
-/// Writes a single-model neutral document to DGN V8 into `writer` using raw seed bytes.
+/// Writes one model of a neutral document to DGN V8 into `writer` using raw seed bytes
+/// (see [`to_dgn`] for which model).
 #[cfg(feature = "dgn")]
 pub fn write_dgn_to(
     doc: &Document,

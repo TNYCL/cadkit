@@ -2,8 +2,25 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as V from '../src/demo/view.ts';
-import { explainError, formatBytes, formatWithVersion, plural, unitName, unitSymbol, versionLabel } from '../src/demo/text.ts';
-import { MAX_FILE_BYTES, MAX_PICK_BYTES } from '../src/demo/protocol.ts';
+import { cleanMessage, explainError, extensionHint, formatBytes, formatMs, formatWithVersion, plural, sourceTypeName, unitName, unitSymbol, versionLabel } from '../src/demo/text.ts';
+import {
+	DXF_CODEPAGES,
+	DXF_VERSIONS,
+	LEGACY_DXF_VERSIONS,
+	MAX_ENTITY_JSON_BYTES,
+	MAX_FILE_BYTES,
+	MAX_HIGHLIGHT_BYTES,
+	MAX_PICK_BYTES,
+	MAX_SVG_BYTES,
+	TARGET_UNITS,
+	TKGM_PROFILES,
+} from '../src/demo/protocol.ts';
+import { createRequire } from 'node:module';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+const load = createRequire(import.meta.url);
+const site = fileURLToPath(new URL('..', import.meta.url));
 
 const close = (a, b, eps = 1e-9) => assert.ok(Math.abs(a - b) <= eps * Math.max(1, Math.abs(a), Math.abs(b)), `${a} != ${b}`);
 
@@ -21,6 +38,28 @@ test('fit centres the drawing and keeps the margin', () => {
 	const [x, y, w, h] = V.viewBoxOf(v, 800, 600).split(' ').map(Number);
 	assert.ok(x <= home.x && y <= home.y && x + w >= home.x + home.w && y + h >= home.y + home.h);
 	close(w / h, 800 / 600);
+});
+
+test('fitBox keeps the drawing clear of the controls and can start on a part of it', () => {
+	const home = { x: 0, y: -9, w: 12, h: 9 };
+	// No insets: the same view as fit().
+	assert.deepEqual(V.fitBox(home, home, 800, 600), V.fit(home, 800, 600));
+	// A tool column on the right and a note on top: the drawing is centred in what is left.
+	const insets = { left: 0, top: 60, right: 100, bottom: 0 };
+	const v = V.fitBox(home, home, 800, 600, insets);
+	const [x, y, w, h] = V.viewBoxOf(v, 800, 600).split(' ').map(Number);
+	const px = (wx) => ((wx - x) / w) * 800;
+	const py = (wy) => ((wy - y) / h) * 600;
+	assert.ok(px(home.x) >= 0 && px(home.x + home.w) <= 700 + 1e-9);
+	assert.ok(py(home.y) >= 60 - 1e-9 && py(home.y + home.h) <= 600);
+	close(px(home.x + home.w / 2), 350);
+	close(py(home.y + home.h / 2), 330);
+	// A part of the drawing: that part fills the stage, the zoom range still follows the whole.
+	const part = V.fitBox(home, { x: 2, y: -4, w: 3, h: 2 }, 800, 600);
+	assert.equal(part.home, home);
+	assert.ok(part.s < V.fit(home, 800, 600).s);
+	close(part.cx, 3.5);
+	close(part.cy, -3);
 });
 
 test('world coordinates flip Y and follow pan', () => {
@@ -48,6 +87,21 @@ test('zoomAt keeps the point under the cursor and clamps the range', () => {
 	let out = v;
 	for (let i = 0; i < 200; i++) out = V.zoomAt(out, 200, 100, 0.1);
 	close(out.s, V.fitScale(v.home, 200, 100) * V.MAX_ZOOM_OUT);
+});
+
+test('a sheet drawn relative to a local origin converts back to drawing coordinates', () => {
+	const home = { x: 0, y: 0, w: 16, h: 9 };
+	const v = V.fit(home, 1600, 900);
+	const origin = { x: 512340, y: -4087670 };
+	// The centre of the stage is the centre of the local box, plus the origin, Y flipped.
+	const p = V.toDrawing(v, 1600, 900, 800, 450, origin);
+	assert.ok(Math.abs(p.x - 512348) < 1e-9 && Math.abs(p.y - 4087665.5) < 1e-9);
+	assert.deepEqual(V.toDrawing(v, 1600, 900, 800, 450, { x: 0, y: 0 }), V.toWorld(v, 1600, 900, 800, 450));
+	// Drawing extents to a local box and back.
+	const box = V.svgBoxOf([512341, 4087661, 0], [512343, 4087665, 0]);
+	assert.deepEqual(box, { x: 512341, y: -4087665, w: 2, h: 4 });
+	assert.deepEqual(V.toLocal(box, origin), { x: 1, y: 5, w: 2, h: 4 });
+	assert.deepEqual(V.unionBox({ x: 0, y: 0, w: 1, h: 1 }, { x: -2, y: 0.5, w: 1, h: 3 }), { x: -2, y: 0, w: 3, h: 3.5 });
 });
 
 test('coordinate readout precision follows the scale', () => {
@@ -84,7 +138,54 @@ test('format, version, unit and size labels', () => {
 	assert.equal(plural(1200, 'layer'), '1,200 layers');
 });
 
+test('error details and small labels', () => {
+	assert.equal(cleanMessage('limit_exceeded', 'limit exceeded: more than 10 entities'), 'more than 10 entities');
+	assert.equal(cleanMessage('unsupported', 'unsupported: unsupported: UTF-8 DXF output requires R2007 or newer'), 'UTF-8 DXF output requires R2007 or newer');
+	assert.equal(cleanMessage('invalid', 'invalid data at offset 12: page map'), 'invalid data at offset 12: page map');
+	assert.equal(cleanMessage('', 'anything'), 'anything');
+	assert.match(extensionHint('site.DGN'), /ends in \.dgn.*DGN file/);
+	assert.match(extensionHint('model.gml'), /CityGML/);
+	assert.equal(extensionHint('notes.txt'), '');
+	assert.equal(extensionHint('README'), '');
+	assert.equal(sourceTypeName('dwg.MULTILEADER'), 'MULTILEADER');
+	assert.equal(sourceTypeName('type_36'), 'type_36');
+	assert.equal(formatMs(0.42), '0.4 ms');
+	assert.equal(formatMs(12.4), '12 ms');
+	assert.equal(formatMs(1240), '1.24 s');
+	assert.equal(formatMs(NaN), '-');
+});
+
 test('limits stay within what cadkit-wasm accepts', () => {
 	assert.ok(MAX_PICK_BYTES > 0 && MAX_PICK_BYTES <= 65536);
 	assert.ok(MAX_FILE_BYTES <= 512 * 1024 * 1024);
+	assert.ok(MAX_HIGHLIGHT_BYTES <= MAX_SVG_BYTES);
+	assert.ok(MAX_ENTITY_JSON_BYTES >= 16 * 1024);
+});
+
+test('the export and conversion choices are ones cadkit-wasm accepts', () => {
+	const { read, readCityGml } = load('cadkit-wasm/node');
+	const doc = read(new Uint8Array(readFileSync(site + 'public/samples/cadkit-sample-plan.dxf')));
+	try {
+		for (const version of DXF_VERSIONS) {
+			const legacy = LEGACY_DXF_VERSIONS.includes(version);
+			assert.ok(doc.toDxfBytes(version, null).byteLength > 1000, version);
+			for (const cp of DXF_CODEPAGES.filter(Boolean)) {
+				// Code pages are for the versions that predate UTF-8 DXF; newer ones refuse them.
+				if (legacy) assert.ok(doc.toDxfBytes(version, cp).byteLength > 1000, `${version} ${cp}`);
+				else assert.throws(() => doc.toDxfBytes(version, cp), (e) => e.kind === 'unsupported', `${version} ${cp}`);
+			}
+		}
+		// Converting changes the document, so walk the units on one copy and end where it began.
+		for (const unit of [...TARGET_UNITS, 'meter']) assert.ok(doc.convertUnits(unit) > 0, unit);
+		assert.equal(doc.info().units, 'meter');
+	} finally {
+		doc.free();
+	}
+	const city = readCityGml(new Uint8Array(readFileSync(site + 'public/samples/cadkit-sample-buildings.gml')));
+	try {
+		for (const profile of TKGM_PROFILES) assert.equal(city.preflightTkgm(profile).acceptance_verified, false, profile);
+		assert.throws(() => city.preflightTkgm('nope'));
+	} finally {
+		city.free();
+	}
 });

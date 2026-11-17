@@ -356,7 +356,10 @@ pub(crate) fn decode_bytes(b: &[u8], is_3d: bool, enc: TextDecoder, limits: &Lim
         _ => Ok(ElementData::Unknown),
     };
     let (mut data, problem) = match result {
-        Ok(data) => (data, None),
+        Ok(data) => {
+            let problem = short_vertex_list(b, &data);
+            (data, problem)
+        }
         Err(p) => (ElementData::Unknown, Some(p)),
     };
     // V7 stores no text length. For unrotated text whose range starts at the origin (the
@@ -377,6 +380,21 @@ pub(crate) fn decode_bytes(b: &[u8], is_3d: bool, enc: TextDecoder, limits: &Lim
         linkages,
         problem,
     }
+}
+
+/// The shortfall of a vertex list cut to the points its record stores (`V7::points`): the
+/// element keeps them, and the mapper reports the problem as for an undecoded body.
+fn short_vertex_list(b: &[u8], data: &ElementData) -> Option<String> {
+    let stored = match data {
+        ElementData::LineString { points }
+        | ElementData::Shape { points }
+        | ElementData::Curve { points }
+        | ElementData::BSplinePoles { points }
+        | ElementData::PointString { points, .. } => points.len(),
+        _ => return None,
+    };
+    let declared = usize::from(le::u16_at(b, 36)?);
+    (stored < declared).then(|| format!("{declared} points declared, {stored} stored"))
 }
 
 fn short() -> String {
@@ -453,8 +471,13 @@ impl V7<'_> {
         if count as u64 > u64::from(self.limits.max_vertices) {
             return Err(format!("{count} points exceed the vertex limit"));
         }
-        // Like GDAL, keep the points that fit when the record is short.
+        // Like GDAL, keep the points that fit when the record is short, but not fewer than the
+        // type needs: a shape cut to no or one vertex is no shape (GDAL's own guard,
+        // `new_count < 0`, lets both through). `decode_bytes` records the shortfall.
         let fit = self.b.len().saturating_sub(38) / self.psize();
+        if fit < min {
+            return Err(format!("{count} points declared, {fit} stored"));
+        }
         (0..count.min(fit))
             .map(|i| self.ipt(38 + i * self.psize()))
             .collect()
@@ -755,6 +778,55 @@ pub(crate) mod tests {
         assert!(sniff(&[0x08, 0x05, 0x17, 0x00]));
         assert!(!sniff(&[0x08, 0x09, 0xFE]));
         assert!(!sniff(b"PK\x03\x04"));
+    }
+
+    #[test]
+    fn short_vertex_lists_keep_what_fits_and_say_so() {
+        // Types 4, 6, 11: u16 vertex count at 36, 2D points (2 x i32, middle-endian) from 38.
+        let shape = |declared: u16, stored: &[i32]| {
+            let mut body = disp(0, 0, 0);
+            body.extend_from_slice(&declared.to_le_bytes());
+            for v in stored {
+                body.extend_from_slice(&mid(*v));
+            }
+            body
+        };
+        let lim = Limits::default();
+        // Three vertices declared, none or one stored: fewer than a shape needs.
+        for t in [4u8, 6, 11] {
+            for stored in [&[][..], &[1, 2]] {
+                let e = decode(&rec(record(t, 1, &shape(3, stored))), false, enc(), &lim);
+                assert_eq!(e.data, ElementData::Unknown, "type {t}");
+                assert!(e.problem.is_some(), "type {t}");
+            }
+        }
+        // Three declared, two stored: kept like GDAL, with the shortfall recorded.
+        let e = decode(
+            &rec(record(6, 1, &shape(3, &[1, 2, 3, 4]))),
+            false,
+            enc(),
+            &lim,
+        );
+        assert_eq!(
+            e.data,
+            ElementData::Shape {
+                points: vec![[1.0, 2.0, 0.0], [3.0, 4.0, 0.0]]
+            }
+        );
+        assert_eq!(e.problem.as_deref(), Some("3 points declared, 2 stored"));
+        // A complete record has no problem.
+        let e = decode(
+            &rec(record(6, 1, &shape(2, &[1, 2, 3, 4]))),
+            false,
+            enc(),
+            &lim,
+        );
+        assert_eq!(e.problem, None);
+        // One vertex declared: a V7 shape, line string or curve needs two.
+        for t in [4u8, 6, 11] {
+            let e = decode(&rec(record(t, 1, &shape(1, &[1, 2]))), false, enc(), &lim);
+            assert_eq!(e.data, ElementData::Unknown, "type {t}");
+        }
     }
 
     #[test]

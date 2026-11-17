@@ -546,10 +546,7 @@ mod tests {
             "public/safe/TreeTextNodeLabelsWithTags.dgn",
             "public/safe/Water_distribution_mains.dgn",
         ] {
-            let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../../corpus")
-                .join(rel);
-            if let Ok(seed) = std::fs::read(path) {
+            if let Ok(seed) = std::fs::read(crate::fuzz_tests::corpus_root().join(rel)) {
                 assert_build_matches_rewrite(&seed);
             }
         }

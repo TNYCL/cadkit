@@ -280,6 +280,7 @@ name = "cadkit-wasm"
 version = "0.5.4"
 dependencies = [
  "cadkit",
+ "cadkit-scene",
  "js-sys",
  "serde",
  "serde_json",

@@ -23,12 +23,13 @@ use crate::{
     native::v8::{self, AuxRecord, ModelHeader, PageHeader, V8Model},
 };
 use cadkit_core::{
-    Attribute, Document, Entity, EntityKind, Error, GroupKind, LimitKind, Limits, Point3,
-    ReadOptions, Result, Value, Vec3,
+    Attribute, Document, Entity, EntityKind, Error, GroupKind, LimitKind, Limits, Model, ModelKind,
+    Point3, ReadOptions, Result, Value, Vec3, Warning,
 };
 use encode::*;
 use flate2::{Compression, write::ZlibEncoder};
 use std::{
+    borrow::Cow,
     collections::{BTreeMap, BTreeSet},
     io::Write,
 };
@@ -62,6 +63,33 @@ pub struct WriteOptions {
     /// graphic as a root. Undecoded record bodies are not searched for ids (FORMAT_NOTES,
     /// "Seed stripping").
     pub preserve_seed_controls: bool,
+    /// Index into [`Document::models`] of the model to write. `None` (the default) takes the
+    /// only model of the document, or, when the document has exactly one design model
+    /// ([`ModelKind::Model`]) and every other model is a paper layout
+    /// ([`ModelKind::Layout`], as DXF and DWG documents have), that design model. Models
+    /// that are not written are listed by [`write_v8_report`] as `dgn.model_not_written`
+    /// warnings. The chosen model must be a design model (a document whose only model is a
+    /// layout fails). The DGN reader maps every model of a file, sheet models included, to
+    /// [`ModelKind::Model`], so a DGN document with more than one model needs an index.
+    pub model_index: Option<usize>,
+    /// How a source model whose 2D/3D dimension differs from the seed's is written.
+    /// [`DimensionPolicy::Strict`] (the default) fails; [`DimensionPolicy::Promote2dTo3d`]
+    /// writes a 2D model into a 3D seed with the Z it has (0 for 2D geometry) and a 3D model
+    /// into a 2D seed only when every Z is 0; [`DimensionPolicy::ProjectToSeed`] also
+    /// projects 3D geometry onto `z = 0` for a 2D seed, as [`V8Seed::prepare_document`] does:
+    /// points lose their Z and tilted normals become `+Z`, so a tilted circle, arc or text
+    /// is written in the XY plane at its own size, not as its projection.
+    pub dimension_policy: DimensionPolicy,
+    /// Center/right text without `dgn.text_length` is written with the estimated length
+    /// `characters × character width` (height × width factor, drawing units) instead of
+    /// failing. It is the estimate the reader and left text use, and cadkit reads the text
+    /// back with the same anchor. An application that measures its glyphs places the text
+    /// from the stored origin instead: MicroStation's measured lengths are 0.6–0.9 of the
+    /// estimate (FORMAT_NOTES, "Mapping decisions"), so center text appears shifted back
+    /// along its baseline by 0.05–0.2 and right text by 0.1–0.4 of the estimated length.
+    /// [`write_v8_report`] counts these texts (`dgn.text_length_estimated`). Defaults to
+    /// false.
+    pub estimate_text_length: bool,
 }
 impl Default for WriteOptions {
     fn default() -> Self {
@@ -73,6 +101,9 @@ impl Default for WriteOptions {
             planarity_tolerance: 0.01,
             preserve_seed_rasters: true,
             preserve_seed_controls: true,
+            model_index: None,
+            dimension_policy: DimensionPolicy::Strict,
+            estimate_text_length: false,
         }
     }
 }
@@ -133,6 +164,44 @@ impl WriteOptions {
         self.preserve_seed_controls = preserve;
         self
     }
+
+    /// Selects the source model by its index in [`Document::models`]; `None` chooses as
+    /// described at [`WriteOptions::model_index`].
+    #[must_use]
+    pub fn with_model_index(mut self, index: Option<usize>) -> Self {
+        self.model_index = index;
+        self
+    }
+
+    /// Sets how a 2D/3D dimension mismatch between source model and seed is handled.
+    #[must_use]
+    pub fn with_dimension_policy(mut self, policy: DimensionPolicy) -> Self {
+        self.dimension_policy = policy;
+        self
+    }
+
+    /// Sets whether center/right text without `dgn.text_length` gets the estimated length.
+    #[must_use]
+    pub fn with_estimate_text_length(mut self, estimate: bool) -> Self {
+        self.estimate_text_length = estimate;
+        self
+    }
+}
+
+/// A written DGN V8 file and what the writer reports about it ([`write_v8_report`]).
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct WriteReport {
+    /// The DGN V8 file, the bytes [`write_v8`] returns for the same input.
+    pub bytes: Vec<u8>,
+    /// Index into [`Document::models`] of the model that was written.
+    pub model_index: usize,
+    /// What was left out or approximated, with stable codes: `dgn.model_not_written` (one
+    /// per model not written; `object` = its index), `dgn.model_dimension_changed` (the
+    /// model was written into a seed of the other dimension under
+    /// [`WriteOptions::dimension_policy`]), `dgn.text_length_estimated` (count of texts
+    /// written with [`WriteOptions::estimate_text_length`]).
+    pub warnings: Vec<Warning>,
 }
 
 /// Repacks a DGN V8 file with a valid CFB directory without altering stream contents.
@@ -216,17 +285,124 @@ fn validate_doc_and_options(doc: &Document, options: &WriteOptions) -> Result<()
             "DGN planarity tolerance must be finite and positive",
         ));
     }
-    if doc.models.len() != 1 {
-        return Err(Error::Unsupported(
-            "DGN writer requires exactly one source model".into(),
-        ));
-    }
+    select_source(doc, options)?;
     Ok(())
 }
 
-/// Writes the single design model of a neutral document into a matching DGN V8 seed.
-/// Source units and 2D/3D dimension must match the seed's master units and dimension; Z coordinates and attributes are never silently dropped.
+/// Index of the model to write and a `dgn.model_not_written` warning for every other one.
+fn select_source(doc: &Document, options: &WriteOptions) -> Result<(usize, Vec<Warning>)> {
+    let index = match options.model_index {
+        Some(index) if index >= doc.models.len() => {
+            return Err(Error::invalid(
+                0,
+                format!(
+                    "model index {index} out of bounds ({} models)",
+                    doc.models.len()
+                ),
+            ));
+        }
+        Some(index) => index,
+        None if doc.models.len() == 1 => 0,
+        None => {
+            let mut design = doc
+                .models
+                .iter()
+                .enumerate()
+                .filter(|(_, m)| m.kind != ModelKind::Layout);
+            match (design.next(), design.next()) {
+                (Some((index, m)), None) if m.kind == ModelKind::Model => index,
+                _ => {
+                    return Err(Error::Unsupported(
+                        "DGN writer requires exactly one source model; choose one with \
+                         WriteOptions::model_index"
+                            .into(),
+                    ));
+                }
+            }
+        }
+    };
+    let warnings = doc
+        .models
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != index)
+        .map(|(i, m)| {
+            let kind = match m.kind {
+                ModelKind::Model => "design model",
+                ModelKind::Layout => "layout",
+                ModelKind::Sheet => "sheet model",
+                _ => "model",
+            };
+            let mut w = Warning::new(
+                "dgn.model_not_written",
+                format!(
+                    "{kind} {i} ({:?}, {} top-level entities) was not written",
+                    m.name,
+                    m.entities.len()
+                ),
+            );
+            w.object = Some(i as u64);
+            w
+        })
+        .collect();
+    Ok((index, warnings))
+}
+
+/// The source model as it is written into a seed of dimension `seed_3d`, under `policy`;
+/// borrowed unless 3D geometry has to be projected for a 2D seed.
+fn reconcile_dimension<'a>(
+    source: &'a Model,
+    seed_3d: bool,
+    policy: DimensionPolicy,
+    warnings: &mut Vec<Warning>,
+) -> Result<Cow<'a, Model>> {
+    if source.is_3d == seed_3d {
+        return Ok(Cow::Borrowed(source));
+    }
+    let projected = match (source.is_3d, policy) {
+        (_, DimensionPolicy::Strict) => {
+            return Err(Error::invalid(0, "source and seed model dimensions differ"));
+        }
+        // The writer stores every coordinate with the seed's dimension; 2D geometry keeps Z.
+        (false, _) => Cow::Borrowed(source),
+        (true, DimensionPolicy::Promote2dTo3d) => {
+            if source
+                .entities
+                .iter()
+                .any(seed_prepare::entity_has_nonzero_z)
+            {
+                return Err(Error::Unsupported(
+                    "3D model contains nonzero Z coordinates; use DimensionPolicy::ProjectToSeed to flatten".into(),
+                ));
+            }
+            Cow::Owned(seed_prepare::projected_2d(source))
+        }
+        (true, DimensionPolicy::ProjectToSeed) => Cow::Owned(seed_prepare::projected_2d(source)),
+    };
+    warnings.push(Warning::new(
+        "dgn.model_dimension_changed",
+        if seed_3d {
+            "2D source model written into a 3D seed"
+        } else {
+            "3D source model written into a 2D seed at z = 0"
+        },
+    ));
+    Ok(projected)
+}
+
+/// Writes one design model of a neutral document into a matching DGN V8 seed: the model
+/// [`WriteOptions::model_index`] names or selects (by default the only model, or the only
+/// design model beside paper layouts). Source units must match the seed's master units and
+/// the 2D/3D dimension the seed's, unless [`WriteOptions::dimension_policy`] allows the
+/// difference; Z coordinates and attributes are never silently dropped. The models left out
+/// are reported by [`write_v8_report`].
 pub fn write_v8(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<Vec<u8>> {
+    write_v8_report(doc, seed, options).map(|r| r.bytes)
+}
+
+/// [`write_v8`] with its [`WriteReport`]: the bytes, the model written and warnings about
+/// the models left out and the approximations made.
+pub fn write_v8_report(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<WriteReport> {
     validate_doc_and_options(doc, options)?;
     let read = {
         let mut new_options = ReadOptions::default()
@@ -236,17 +412,28 @@ pub fn write_v8(doc: &Document, seed: &[u8], options: &WriteOptions) -> Result<V
         new_options
     };
     let parsed_seed = V8Seed::parse(seed, &read)?;
-    write_v8_with_seed(doc, &parsed_seed, options)
+    write_v8_with_seed_report(doc, &parsed_seed, options)
 }
 
-/// Writes the single design model of `doc` into a pre-parsed [`V8Seed`], avoiding repeated
-/// CFB and zlib decompression of the seed when exporting multiple documents.
+/// Writes one design model of `doc` (chosen as by [`write_v8`]) into a pre-parsed
+/// [`V8Seed`], avoiding repeated CFB and zlib decompression of the seed when exporting
+/// multiple documents.
 pub fn write_v8_with_seed(
     doc: &Document,
     seed: &V8Seed,
     options: &WriteOptions,
 ) -> Result<Vec<u8>> {
+    write_v8_with_seed_report(doc, seed, options).map(|r| r.bytes)
+}
+
+/// [`write_v8_with_seed`] with its [`WriteReport`].
+pub fn write_v8_with_seed_report(
+    doc: &Document,
+    seed: &V8Seed,
+    options: &WriteOptions,
+) -> Result<WriteReport> {
     validate_doc_and_options(doc, options)?;
+    let (model_index, mut warnings) = select_source(doc, options)?;
     if seed.bytes.len() as u64 > options.limits.max_input_bytes {
         return Err(Error::limit(
             LimitKind::InputBytes,
@@ -267,16 +454,19 @@ pub fn write_v8_with_seed(
         .ok_or_else(|| Error::invalid(0, "missing seed model header"))?;
     let source = doc
         .models
-        .first()
+        .get(model_index)
         .ok_or_else(|| Error::invalid(0, "missing source model"))?;
-    if source.kind != cadkit_core::ModelKind::Model {
+    if source.kind != ModelKind::Model {
         return Err(Error::Unsupported(
             "DGN writer accepts design models only".into(),
         ));
     }
-    if source.is_3d != header.is_3d {
-        return Err(Error::invalid(0, "source and seed model dimensions differ"));
-    }
+    let source = reconcile_dimension(
+        source,
+        header.is_3d,
+        options.dimension_policy,
+        &mut warnings,
+    )?;
     if let (Some(source), Some(target)) = (doc.units.meters_per_unit(), header.master.meters())
         && (!source.is_finite() || (source - target).abs() > target.abs() * 1e-12)
     {
@@ -296,7 +486,7 @@ pub fn write_v8_with_seed(
         effective_options.timestamp_ms = seed.seed_timestamp_ms;
     }
     let options = &effective_options;
-    let rasters = raster::Preserved::prepare(doc, &seed.bytes, model, &read, options)?;
+    let rasters = raster::Preserved::prepare(&source.entities, &seed.bytes, model, &read, options)?;
     let mut tables = Tables::new(&native.named_pages, max_id, &read)?;
     tables.observe_model_fonts(
         model
@@ -320,6 +510,7 @@ pub fn write_v8_with_seed(
         work: 0,
         vertices: 0,
         bytes: rasters.bytes,
+        estimated_texts: 0,
     };
     for layer in &doc.layers {
         state
@@ -328,6 +519,16 @@ pub fn write_v8_with_seed(
     }
     for entity in &source.entities {
         state.entity(entity, 0, false)?;
+    }
+    if state.estimated_texts > 0 {
+        warnings.push(Warning::new(
+            "dgn.text_length_estimated",
+            format!(
+                "{} center/right texts written with the estimated length (characters x \
+                 character width)",
+                state.estimated_texts
+            ),
+        ));
     }
     state.records.append(&mut state.tags);
     let new_controls = std::mem::take(&mut state.new_controls);
@@ -462,7 +663,11 @@ pub fn write_v8_with_seed(
     let mut h = seed.header_prefix.to_vec();
     h.extend(compressed(&data)?);
     replacements.insert("Dgn~H".into(), Some(h));
-    container::rewrite(&seed.bytes, &replacements, &read)
+    Ok(WriteReport {
+        bytes: container::rewrite(&seed.bytes, &replacements, &read)?,
+        model_index,
+        warnings,
+    })
 }
 
 #[cfg(test)]
@@ -564,6 +769,8 @@ struct State<'a> {
     work: u64,
     vertices: u64,
     bytes: u64,
+    /// Center/right texts written with the estimated length.
+    estimated_texts: u64,
 }
 impl State<'_> {
     #[allow(clippy::too_many_arguments)]
@@ -743,6 +950,28 @@ impl State<'_> {
         let flags = if component { 0x4000_0000 } else { 0 };
         let mut links = vec![];
         let mut b = match &e.kind {
+            // A shape with a single vertex, which the reader maps to a point (FORMAT_NOTES,
+            // "Degenerate shapes and null tag targets"), goes back as the record it was, so
+            // a file written back into itself keeps its element types; any other point is
+            // the zero-length line DGN draws as a point.
+            EntityKind::Point { position }
+                if matches!(e.props.get("dgn.type"), Some(Value::Int(6))) =>
+            {
+                let p = coordinate(*position, self.model)?;
+                let mut b = self.header(
+                    6 | flags,
+                    0x70 + psize,
+                    id,
+                    level,
+                    self.options.timestamp_ms,
+                    e,
+                    three,
+                )?;
+                u32_at(&mut b, 0x68, 1)?;
+                point(&mut b, 0x70, p, three)?;
+                range(&mut b, &[p])?;
+                b
+            }
             EntityKind::Point { position } => {
                 let p = coordinate(*position, self.model)?;
                 let mut b = self.header(
@@ -997,7 +1226,14 @@ impl State<'_> {
                 }
                 let font = self.tables.font(e, style.as_deref())?;
                 let (justification, fx, fy) = text::justification(e, *halign, *valign)?;
-                let length = text::length(e, value, *height * *width_factor, fx)?;
+                let (length, estimated) = text::length(
+                    e,
+                    value,
+                    *height * *width_factor,
+                    fx,
+                    self.options.estimate_text_length,
+                )?;
+                self.estimated_texts += u64::from(estimated);
                 let (x, y, n) = cadkit_core::geom_ops::arbitrary_axes(*normal);
                 let a = x.scaled(angle.cos()).plus(y.scaled(angle.sin()));
                 let c = x.scaled(-angle.sin()).plus(y.scaled(angle.cos()));

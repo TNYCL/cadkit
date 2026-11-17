@@ -65,7 +65,19 @@ pub(crate) fn parse(bytes: &[u8], options: &ReadOptions) -> Result<CityGmlDocume
                 "XML text bytes".into(),
             ));
         }
-        if !matches!(event, Event::End(_) | Event::Eof) {
+        // Count the nodes of the tree being built, as the writer's preflight does: one
+        // text node holds every adjacent text, CDATA and entity-reference event (the
+        // writer escapes each quote of a JSON attribute as its own reference).
+        let new_node = match &event {
+            Event::Start(_) | Event::Empty(_) => true,
+            Event::Text(_) | Event::CData(_) | Event::GeneralRef(_) => !matches!(
+                stack.last().and_then(|parent| parent.children.last()),
+                Some(Node::Text(_))
+            ),
+            Event::Comment(_) => !stack.is_empty(),
+            _ => false,
+        };
+        if new_node {
             nodes = nodes
                 .checked_add(1)
                 .ok_or_else(|| Error::limit(LimitKind::Objects, "XML nodes".into()))?;

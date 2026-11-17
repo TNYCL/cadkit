@@ -678,6 +678,74 @@ mod tests {
         );
     }
 
+    /// The two corpus records behind `dgn.decode_failed.type_6` and `dgn.tag_target_missing`:
+    /// a one-vertex 3D shape, and a tag whose target dependency (app `0x2710`, root type 9,
+    /// 56 bytes) holds the all-ones id, a target that is absent rather than unresolved.
+    #[test]
+    fn one_vertex_shapes_are_points_and_null_tag_targets_stay_standalone() {
+        let mut shape = header(5, 10, 0x0e00, 3);
+        body_range(&mut shape, [1005, 2000, 3000], [1, 1, 1]);
+        shape.extend(&1u32.to_le_bytes());
+        shape.extend(&[0u8; 4]);
+        shape.extend(f64s(&[1005.0, 2000.0, 3000.0]));
+        let mut tag = header(5, 11, 0x0e00, 0);
+        tag.resize(0x140 - 0x0c, 0);
+        tag[0xd0 - 0x0c..0xd4 - 0x0c].copy_from_slice(&[1, 0, 1, 0]);
+        tag[0x138 - 0x0c..0x13c - 0x0c].copy_from_slice(&4u32.to_le_bytes());
+        tag.extend_from_slice(b"101\0");
+        let mut links = dependency(0x2717, 2, 20);
+        // 0x1b words follow the first: app 0x2710, value 1, copy option 2, root type 9,
+        // one root; the root's first half is `01 00 00 00 00 00 01 00` in every corpus tag,
+        // its second half the target id, here all ones; zero padding to 56 bytes.
+        let mut target = vec![0x1b, 0x10, 0xd0, 0x56, 0x10, 0x27, 1, 0, 2, 9, 1, 0];
+        target.extend_from_slice(&[1, 0, 0, 0, 0, 0, 1, 0]);
+        target.extend_from_slice(&u64::MAX.to_le_bytes());
+        target.resize(56, 0);
+        links.extend(target);
+        let graphic = page(&[element(6, &shape, &[]), element(37, &tag, &links)]);
+        let mut h = vec![0u8; 0x14];
+        h.extend_from_slice(&zlib::compress(&[0u8; 64]));
+        let bytes = build(&[
+            ("Dgn~H", h),
+            (
+                "Dgn-Md/#000000/Dgn~Mh",
+                model_header_stream(true, 1000.0, "M"),
+            ),
+            ("Dgn-Md/#000000/Dgn^G/$1", graphic),
+        ]);
+        let doc = crate::read(&bytes, &ReadOptions::default()).unwrap();
+        let codes: Vec<&str> = doc.warnings.iter().map(|w| w.code.as_str()).collect();
+        assert!(
+            !codes.iter().any(|c| c.starts_with("dgn.decode_failed")),
+            "{codes:?}"
+        );
+        assert!(codes.contains(&"dgn.tag_target_missing"), "{codes:?}");
+        let entities = &doc.models[0].entities;
+        assert_eq!(entities.len(), 2);
+        let EntityKind::Point { position } = entities[0].kind else {
+            panic!("{:?}", entities[0].kind)
+        };
+        assert!((position.x - 1.0).abs() < 1e-9 && (position.y - 2.0).abs() < 1e-9);
+        assert_eq!(
+            entities[0].props.get("dgn.type"),
+            Some(&cadkit_core::Value::Int(6))
+        );
+        assert!(entities[0].attributes.is_empty());
+        assert!(matches!(
+            &entities[1].kind,
+            EntityKind::Unknown { type_name } if type_name == "dgn.type_37"
+        ));
+        assert_eq!(entities[1].attributes.len(), 1);
+    }
+
+    /// Writes the range of a display header body (from `0x0c`): low corner and extent, UOR.
+    fn body_range(body: &mut [u8], low: [i64; 3], extent: [i64; 3]) {
+        for (i, v) in low.into_iter().chain(extent).enumerate() {
+            let o = 0x38 - 0x0c + 8 * i;
+            body[o..o + 8].copy_from_slice(&v.to_le_bytes());
+        }
+    }
+
     #[test]
     fn repeated_ids_do_not_amplify_xattributes() {
         // 40 lines that all claim element id 10, and 200 XAttribute records for id 10.

@@ -8,6 +8,22 @@
 //! widths follow the lineweight. What this bridge does not draw is counted in
 //! [`DocumentPlanReport`], never dropped silently: text, hatches and fills, points, images,
 //! viewports, unknown records and linetype dash patterns (drawn solid).
+//!
+//! The same traversal feeds two flat-buffer builders for renderers that draw a whole model
+//! at once (see [`crate::buffers`] for the memory layout):
+//!
+//! - [`surface_mesh`]: polygons, faces, mesh faces, solid straight-edged hatches and
+//!   (optionally) closed planar polylines triangulated into a [`crate::SurfaceMesh`], with
+//!   duplicate faces dropped, triangles grouped by layer and each triangle leading back to
+//!   its entity; face outlines and wires as segments.
+//! - [`line_buffer`]: every curve as 2D or 3D segments in a [`crate::LineBuffer`].
+
+mod collect;
+mod lines;
+mod surfaces;
+
+pub use lines::{LineOptions, line_buffer};
+pub use surfaces::{PolylineSurfaces, SurfaceOptions, surface_mesh};
 
 use std::collections::BTreeMap;
 

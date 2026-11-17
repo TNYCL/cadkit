@@ -123,7 +123,9 @@ pub(crate) fn decode_with(raw: &RawElement, enc: TextDecoder, limits: &Limits) -
         4 => d.points(2).map(|points| ElementData::LineString { points }),
         // Type 5 is "group data"; only the one in level slot 1 is a color table (as in V7).
         5 if header.level == 1 => d.color_table(),
-        6 => d.points(2).map(|points| ElementData::Shape { points }),
+        // A shape may hold a single vertex: 92 such records in 28 private files (68 words,
+        // no linkages, a 1 UOR range around the vertex), read as a point by the mapper.
+        6 => d.points(1).map(|points| ElementData::Shape { points }),
         7 => d.text_node().map(ElementData::TextNode),
         11 => d.points(2).map(|points| ElementData::Curve { points }),
         12 | 14 | 18 | 19 => le::u32_at(d.b, 0x68)
@@ -673,6 +675,45 @@ pub(crate) mod tests {
         };
         assert_eq!(points.len(), 5);
         assert_eq!(points[2], [1.0, 1.0, 0.0]);
+    }
+
+    #[test]
+    fn decodes_a_one_vertex_3d_shape() {
+        // The degenerate shape of the private corpus, 0x88 bytes = 68 words, no linkages:
+        //   0x00  type word 6, 0x04 words 68, 0x08 attribute words 68
+        //   0x0c  display header (level, id, properties 0x0E00 = 3D | 0x0400 | 0x0200)
+        //   0x38  range low, 0x50 extent (1 UOR in every axis, rounded outwards)
+        //   0x68  u32 vertex count 1, 0x6c 4 zero bytes
+        //   0x70  one 3D vertex (3 x f64 UOR)
+        let mut body = header(7, 0x42, 0x0e00, 2);
+        for (o, v) in [(0x38, 1000i64), (0x40, 2000), (0x48, 3000)] {
+            body[o - 0x0c..o - 0x0c + 8].copy_from_slice(&v.to_le_bytes());
+        }
+        for o in [0x50, 0x58, 0x60] {
+            body[o - 0x0c..o - 0x0c + 8].copy_from_slice(&1i64.to_le_bytes());
+        }
+        body.extend(&1u32.to_le_bytes());
+        body.extend(&[0u8; 4]);
+        body.extend(f64s(&[1000.0, 2000.0, 3000.0]));
+        let bytes = element(6, &body, &[]);
+        assert_eq!(bytes.len(), 0x88);
+        let r = raw(bytes);
+        assert_eq!((r.words, r.attr_words), (68, 68));
+        let e = decode(&r, enc(), &lim());
+        assert_eq!(e.problem, None);
+        assert_eq!(
+            e.data,
+            ElementData::Shape {
+                points: vec![[1000.0, 2000.0, 3000.0]]
+            }
+        );
+        // A shape without any vertex is still not decodable.
+        let mut body = header(7, 0x43, 0x0e00, 2);
+        body.extend(&0u32.to_le_bytes());
+        body.extend(&[0u8; 4]);
+        let e = decode(&raw(element(6, &body, &[])), enc(), &lim());
+        assert_eq!(e.data, ElementData::Unknown);
+        assert!(e.problem.is_some());
     }
 
     #[test]

@@ -1,34 +1,10 @@
-// Run: node --test crates/cadkit-wasm/tests/node_test.mjs   (after `python build.py`)
+// Run: node --test crates/cadkit-wasm/tests/*_test.mjs   (after `python crates/cadkit-wasm/build.py`)
+// The corpus tests read corpus/public of this checkout or the directory in CADKIT_CORPUS.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createRequire } from "node:module";
-import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
-
-const here = path.dirname(fileURLToPath(import.meta.url));
-const pkgDir = path.join(here, "..", "pkg-node");
-if (!existsSync(path.join(pkgDir, "cadkit_wasm.js"))) {
-  throw new Error("pkg-node/ missing: run `python crates/cadkit-wasm/build.py` first");
-}
-const wasm = createRequire(import.meta.url)(path.join(pkgDir, "cadkit_wasm.js"));
-const KINDS = ["unknown_format", "unsupported", "invalid", "truncated", "limit_exceeded"];
-
-const DXF = [
-  "0", "SECTION", "2", "HEADER", "9", "$ACADVER", "1", "AC1015", "9", "$INSUNITS", "70", "4", "0", "ENDSEC",
-  "0", "SECTION", "2", "TABLES", "0", "TABLE", "2", "LAYER", "70", "1",
-  "0", "LAYER", "2", "WALLS", "70", "0", "62", "1", "6", "CONTINUOUS", "0", "ENDTAB", "0", "ENDSEC",
-  "0", "SECTION", "2", "ENTITIES",
-  "0", "LINE", "8", "WALLS", "10", "0.0", "20", "0.0", "30", "0.0", "11", "10.0", "21", "5.0", "31", "0.0",
-  "0", "CIRCLE", "8", "WALLS", "10", "5.0", "20", "5.0", "30", "0.0", "40", "2.0",
-  "0", "ENDSEC", "0", "EOF", "",
-].join("\n");
-
-/** Returns the thrown error, or undefined. */
-function thrown(fn) {
-  try { fn(); } catch (e) { return e; }
-  return undefined;
-}
+import { wasm, thrown, DXF, READER_KINDS as KINDS, corpusDir, walkFiles, here } from "./helpers.mjs";
 
 test("bounded SVG includes UTF-8 markup, rejects excess and remains usable", () => {
   const doc = wasm.read(new TextEncoder().encode(DXF));
@@ -169,17 +145,9 @@ function assertSvg(svg) {
   assert.deepEqual(stack, [], "unclosed elements");
 }
 
-function* walk(dir) {
-  for (const n of readdirSync(dir)) {
-    const p = path.join(dir, n);
-    if (statSync(p).isDirectory()) yield* walk(p);
-    else yield p;
-  }
-}
-
-const corpus = path.join(here, "..", "..", "..", "corpus", "public");
-if (existsSync(corpus)) {
-  for (const file of walk(corpus)) {
+const corpus = corpusDir();
+if (corpus) {
+  for (const file of walkFiles(corpus)) {
     if (!/\.(dwg|dgn|dxf)$/i.test(file)) continue;
     test(`corpus ${path.relative(corpus, file)}`, (t) => {
       const bytes = new Uint8Array(readFileSync(file));
@@ -214,7 +182,7 @@ test("CityGML native and new geometry exports", () => {
     assert.equal(profile.workflow, "city_model_tender_architectural");
     assert.equal(profile.acceptance_verified, false);
     assert.ok(profile.issues.some(i => i.code === "tkgm.missing_building"));
-    assert.equal(thrown(() => native.preflightTkgm("unknown"))?.kind, "invalid");
+    assert.equal(thrown(() => native.preflightTkgm("unknown"))?.kind, "bad_argument");
     assert.equal(wasm.detect(native.toGml()), "city_gml");
     const copy = wasm.CityGmlDocument.fromJsonString(native.toJsonString());
     try {
@@ -270,7 +238,7 @@ test("CityGML export diagnostics require explicit metadata handling", () => {
 });
 
 test("DGN export from neutral JSON", (t) => {
-  const seedPath = path.join(here, "../../../corpus/public/gdal/test_dgnv8.dgn");
+  const seedPath = path.join(corpus ?? "", "gdal/test_dgnv8.dgn");
   if (!existsSync(seedPath)) return t.skip("public seed missing");
   const seed = readFileSync(seedPath);
   const seedDoc = wasm.read(seed);
@@ -298,11 +266,11 @@ test("DGN export from neutral JSON", (t) => {
 });
 
 test("stripDgnSeed returns a seed and its report", (t) => {
-  const seedPath = path.join(here, "../../../corpus/public/gdal/test_dgnv8.dgn");
+  const seedPath = path.join(corpus ?? "", "gdal/test_dgnv8.dgn");
   if (!existsSync(seedPath)) return t.skip("public seed missing");
   const seed = readFileSync(seedPath);
   assert.equal(thrown(() => wasm.stripDgnSeed(new TextEncoder().encode("garbage")))?.kind !== undefined, true);
-  assert.equal(thrown(() => wasm.stripDgnSeed(seed, { modelName: "" }))?.kind, "invalid");
+  assert.equal(thrown(() => wasm.stripDgnSeed(seed, { modelName: "" }))?.kind, "bad_argument");
   assert.equal(thrown(() => wasm.stripDgnSeed(seed, 42))?.kind, "bad_argument");
   const result = wasm.stripDgnSeed(seed, { modelName: "Model", timestampMs: 1.7e12 });
   assert.ok(result.seed instanceof Uint8Array);

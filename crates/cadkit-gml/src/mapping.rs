@@ -33,6 +33,12 @@ impl ImportOptions {
     }
 }
 
+/// CityGML city objects (buildings, their parts and boundary surfaces, generic objects,
+/// groups) as opposed to geometry and property elements.
+pub(crate) fn is_city_object(e: &Element) -> bool {
+    object(e)
+}
+
 fn object(e: &Element) -> bool {
     (e.name.namespace == BUILDING
         && matches!(

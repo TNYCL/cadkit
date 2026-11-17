@@ -7,6 +7,9 @@ use cadkit_gml::{native::*, *};
 mod export_cases;
 #[path = "support/tkgm_cases.rs"]
 mod tkgm_cases;
+#[path = "support/xsd.rs"]
+mod xsd;
+use xsd::validate_xsd_if_cached;
 
 fn ring(a: f64, b: f64) -> Vec<Point3> {
     vec![
@@ -340,52 +343,6 @@ fn solid_shell_closure_and_orientation() {
     let issues = geometry_issues(&build(shell), &ValidationOptions::default()).unwrap();
     assert_eq!(issues.len(), 1);
     assert_eq!(issues[0].code, "gml.solid_shell");
-}
-
-fn validate_xsd_if_cached(bytes: &[u8]) {
-    use std::io::Write;
-    // Optional local Python/lxml validator: stdin is XML and exit status is the
-    // only diagnostic, so private values cannot escape through schema errors.
-    if let Some(script) = std::env::var_os("CADKIT_XSD_VALIDATOR_SCRIPT") {
-        let mut child = std::process::Command::new("python")
-            .arg(script)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .unwrap();
-        child.stdin.take().unwrap().write_all(bytes).unwrap();
-        assert!(
-            child.wait().unwrap().success(),
-            "official CityGML XSD validation failed"
-        );
-        return;
-    }
-    let cache = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../corpus/public/citygml-schemas");
-    if !cache.join("profile.xsd").exists() {
-        assert!(
-            std::env::var_os("CADKIT_REQUIRE_GML_XSD").is_none(),
-            "required official CityGML schema cache is missing; run scripts/validate-citygml.py --fetch"
-        );
-        return;
-    }
-    let mut child = std::process::Command::new("xmllint")
-        .args(["--nonet", "--noout", "--schema"])
-        .arg(cache.join("profile.xsd"))
-        .arg("-")
-        .env("XML_CATALOG_FILES", cache.join("catalog.xml"))
-        .stdin(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .unwrap();
-    child.stdin.take().unwrap().write_all(bytes).unwrap();
-    let output = child.wait_with_output().unwrap();
-    // Report only the exit status so XSD error messages cannot leak private values.
-    assert!(
-        output.status.success(),
-        "official CityGML XSD validation failed"
-    );
 }
 
 #[test]

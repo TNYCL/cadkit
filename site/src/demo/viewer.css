@@ -1,15 +1,23 @@
 /* /demo/ viewer. Global (the viewer builds its panels with JavaScript), every rule scoped under
-   .ck-viewer or .ck-demo-notes. Colours come from the site tokens; the drawing sheet has its own two
-   fixed backgrounds that match the colours the SVG is rendered for. */
+   .ck-viewer, .ck-demo, .ck-demo-code or .ck-demo-notes. Colours come from the site tokens; the
+   drawing sheet has its own two backgrounds (src/demo/colors.ts sets --ck-sheet-bg from them). */
 
 .ck-demo {
-	margin-top: calc(-1 * var(--ck-space-2));
+	width: 100%;
+	padding-inline: var(--ck-space-4);
+}
+@media (min-width: 50rem) {
+	.ck-demo {
+		padding-inline: var(--ck-space-8);
+	}
 }
 
 .ck-viewer {
 	--ck-sheet-bg: #ffffff;
 	--ck-sheet-ink: #1747b8;
-	--ck-sheet-grid: #ecebe4;
+	--ck-sheet-hl: #f76707;
+	--ck-sheet-frame: #7a8496;
+	--ck-sheet-note: #5a6170;
 	position: relative;
 	display: flex;
 	flex-direction: column;
@@ -17,9 +25,16 @@
 	background: var(--ck-surface);
 }
 .ck-viewer[data-sheet='dark'] {
-	--ck-sheet-bg: #0b1324;
+	--ck-sheet-bg: #101419;
 	--ck-sheet-ink: #5ce1e6;
-	--ck-sheet-grid: #132038;
+	--ck-sheet-hl: #ffa94d;
+	--ck-sheet-frame: #8b98ad;
+	--ck-sheet-note: #9aa8bf;
+}
+.ck-viewer:fullscreen {
+	width: 100vw;
+	height: 100vh;
+	border: 0;
 }
 
 .ck-viewer .ck-mono {
@@ -28,6 +43,9 @@
 .ck-viewer .ck-muted {
 	color: var(--ck-muted);
 }
+.ck-viewer [hidden] {
+	display: none !important;
+}
 
 /* ---- File bar ---- */
 .ck-vbar {
@@ -35,12 +53,12 @@
 	flex-wrap: wrap;
 	align-items: center;
 	gap: var(--ck-space-2) var(--ck-space-3);
-	padding: var(--ck-space-3);
+	padding: var(--ck-space-2) var(--ck-space-3);
 	border-bottom: 1px solid var(--ck-border);
 }
-.ck-vbar select,
-.ck-viewer .ck-model select {
-	min-height: 2.75rem;
+.ck-viewer select {
+	min-height: 2.5rem;
+	max-width: 100%;
 	padding: 0 2rem 0 var(--ck-space-3);
 	border: 1px solid var(--ck-border);
 	border-radius: var(--ck-radius);
@@ -51,6 +69,14 @@
 	font: inherit;
 	font-size: var(--sl-text-sm);
 	appearance: none;
+}
+.ck-viewer select:disabled,
+.ck-viewer input:disabled {
+	color: var(--ck-muted);
+	opacity: 0.7;
+}
+.ck-vbar .ck-btn {
+	min-height: 2.5rem;
 }
 .ck-vbar-file {
 	display: flex;
@@ -87,12 +113,28 @@
 	width: 0.875rem;
 	height: 0.875rem;
 }
+.ck-vbar-panel {
+	border: 1px solid var(--ck-border);
+	height: 2.5rem;
+	min-width: 2.5rem;
+}
 
-/* ---- Main area ---- */
+/* ---- Main area: the drawing takes what the window leaves, the panel sits beside it ---- */
 .ck-vmain {
 	display: grid;
-	grid-template-columns: minmax(0, 1fr) 22rem;
-	height: clamp(30rem, calc(100svh - 13rem), 54rem);
+	grid-template-columns: minmax(0, 1fr) 24rem;
+	height: clamp(28rem, calc(100svh - 15.75rem), 110rem);
+}
+.ck-viewer[data-panel='closed'] .ck-vmain {
+	grid-template-columns: minmax(0, 1fr);
+}
+.ck-viewer[data-panel='closed'] .ck-panel {
+	display: none;
+}
+.ck-viewer:fullscreen .ck-vmain {
+	flex: 1;
+	height: auto;
+	min-height: 0;
 }
 
 .ck-stage-wrap {
@@ -105,9 +147,13 @@
 	position: absolute;
 	inset: 0;
 	cursor: crosshair;
-	touch-action: auto;
+	/* A finger scrolls the page until the visitor opts in (or uses two fingers). */
+	touch-action: pan-y;
 	user-select: none;
 	-webkit-user-select: none;
+}
+.ck-viewer[data-mode='3d'] .ck-stage {
+	cursor: grab;
 }
 .ck-viewer[data-drag] .ck-stage {
 	cursor: grabbing;
@@ -121,12 +167,16 @@
 	border-radius: 0;
 }
 .ck-canvas,
-.ck-canvas > svg {
+.ck-canvas > svg,
+.ck-gl {
 	position: absolute;
 	inset: 0;
 	width: 100%;
 	height: 100%;
 	display: block;
+}
+.ck-viewer[data-mode='3d'] .ck-canvas {
+	visibility: hidden;
 }
 .ck-canvas-note {
 	position: absolute;
@@ -134,29 +184,66 @@
 	max-width: 30rem;
 	margin: 0 auto;
 	text-align: center;
-	color: var(--ck-muted);
+	color: var(--ck-sheet-note);
 	font-size: var(--sl-text-sm);
 }
-.ck-viewer[data-sheet='dark'] .ck-canvas-note {
-	color: #9aa8bf;
+
+/* Drawing content the page styles itself. */
+.ck-canvas .ck-pt {
+	stroke-width: 4px;
+	stroke-linecap: round;
 }
-.ck-viewer[data-sheet='light'] .ck-canvas-note {
-	color: #5a6170;
+.ck-canvas .ck-vp-frame {
+	fill: none;
+	stroke: var(--ck-sheet-frame);
+	stroke-width: 1px;
 }
-/* 3D top views (data-faces set by viewer.ts): stacked faces get translucent fills; their
-   outlines keep the layer colour. Text is never dimmed. */
+/* 3D models seen from above (data-faces set by sheet2d.ts): stacked faces get translucent fills;
+   their outlines keep the layer colour. Text is never dimmed. */
 .ck-canvas > svg[data-faces='translucent'] :not(text, tspan)[fill]:not([fill='none']) {
 	fill-opacity: 0.12;
 }
-.ck-viewer[data-sheet='dark'] .ck-canvas > svg[data-faces='translucent'] :not(text, tspan)[fill]:not([fill='none']) {
-	fill-opacity: 0.1;
+.ck-canvas .ck-hl,
+.ck-canvas .ck-selrect,
+.ck-canvas .ck-measure {
+	pointer-events: none;
+}
+/* The selected entity, drawn again by the engine on its own. */
+.ck-canvas .ck-hl * {
+	stroke: var(--ck-sheet-hl) !important;
+	stroke-width: 3px !important;
+	stroke-dasharray: none !important;
+	vector-effect: non-scaling-stroke;
+}
+.ck-canvas .ck-hl [fill]:not([fill='none']) {
+	fill: var(--ck-sheet-hl) !important;
+	fill-opacity: 0.28 !important;
+}
+.ck-canvas .ck-hl :is(text, tspan) {
+	stroke: none !important;
+	fill-opacity: 1 !important;
+}
+.ck-canvas .ck-hl .ck-pt {
+	stroke-width: 10px !important;
 }
 .ck-selrect {
+	fill: color-mix(in srgb, var(--ck-sheet-hl) 12%, transparent);
+	stroke: var(--ck-sheet-hl);
+	stroke-width: 2px;
+	stroke-dasharray: 5 3;
+}
+.ck-m-line {
 	fill: color-mix(in srgb, var(--ck-sheet-ink) 10%, transparent);
 	stroke: var(--ck-sheet-ink);
-	stroke-width: 1.5px;
-	stroke-dasharray: 4 3;
-	pointer-events: none;
+	stroke-width: 2px;
+	stroke-dasharray: 7 4;
+	stroke-linejoin: round;
+}
+.ck-m-pt {
+	fill: none;
+	stroke: var(--ck-sheet-ink);
+	stroke-width: 8px;
+	stroke-linecap: round;
 }
 
 /* Crosshair for keyboard picking. */
@@ -177,7 +264,7 @@
 	opacity: 1;
 }
 
-/* View tools and readout over the sheet. */
+/* View tools and readouts over the sheet. */
 .ck-stage-tools {
 	position: absolute;
 	top: var(--ck-space-3);
@@ -216,13 +303,16 @@
 }
 .ck-ibtn[aria-pressed='true'] {
 	color: var(--ck-accent);
-}
-.ck-ibtn[hidden] {
-	display: none;
+	box-shadow: inset 2px 0 0 var(--ck-accent);
 }
 .ck-ibtn svg {
 	width: 1rem;
 	height: 1rem;
+}
+.ck-ibtn--text {
+	font-family: var(--__sl-font-mono);
+	font-size: var(--sl-text-xs);
+	letter-spacing: 0.04em;
 }
 .ck-ibtn:focus-visible {
 	outline-offset: -3px;
@@ -239,23 +329,67 @@
 	}
 }
 
-.ck-readout {
+.ck-readout,
+.ck-mbox,
+.ck-notice,
+.ck-selchip {
 	position: absolute;
-	left: var(--ck-space-3);
-	bottom: var(--ck-space-3);
 	margin: 0;
-	padding: var(--ck-space-1) var(--ck-space-2);
 	border: 1px solid var(--ck-border);
 	background: var(--ck-surface);
-	font-family: var(--__sl-font-mono);
+	color: var(--ck-text);
 	font-size: var(--sl-text-xs);
+}
+.ck-readout {
+	left: var(--ck-space-3);
+	bottom: var(--ck-space-3);
+	padding: var(--ck-space-1) var(--ck-space-2);
+	font-family: var(--__sl-font-mono);
 	font-variant-numeric: tabular-nums;
 	white-space: pre;
-	color: var(--ck-text);
 	pointer-events: none;
 }
 .ck-readout:empty,
 .ck-viewer[data-state='empty'] .ck-readout {
+	display: none;
+}
+.ck-mbox {
+	left: var(--ck-space-3);
+	bottom: calc(var(--ck-space-3) + 2.25rem);
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--ck-space-1) var(--ck-space-4);
+	max-width: calc(100% - 2 * var(--ck-space-3));
+	padding: var(--ck-space-2) var(--ck-space-3);
+	border-left: 3px solid var(--ck-sheet-ink);
+}
+.ck-mbox p {
+	margin: 0;
+	font-family: var(--__sl-font-mono);
+	font-variant-numeric: tabular-nums;
+	white-space: pre-wrap;
+}
+.ck-mbox div {
+	display: flex;
+	gap: var(--ck-space-3);
+}
+.ck-notice {
+	top: var(--ck-space-3);
+	left: var(--ck-space-3);
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: var(--ck-space-1) var(--ck-space-3);
+	max-width: min(40rem, calc(100% - 5.5rem));
+	padding: var(--ck-space-2) var(--ck-space-3);
+	border-left: 3px solid var(--ck-partial);
+}
+.ck-notice p {
+	margin: 0;
+	flex: 1 1 14rem;
+}
+.ck-selchip {
 	display: none;
 }
 
@@ -267,9 +401,6 @@
 	align-items: center;
 	justify-content: center;
 	padding: var(--ck-space-4);
-}
-.ck-overlay[hidden] {
-	display: none;
 }
 .ck-viewer:not([data-state='empty']) .ck-empty {
 	display: none;
@@ -289,7 +420,7 @@
 	overflow: auto;
 }
 .ck-empty-inner {
-	max-width: 34rem;
+	max-width: 38rem;
 	padding: var(--ck-space-6);
 	border: 1px dashed color-mix(in srgb, var(--ck-muted) 70%, transparent);
 	background: var(--ck-surface);
@@ -419,6 +550,7 @@
 
 .ck-alert {
 	position: absolute;
+	z-index: 2;
 	top: var(--ck-space-3);
 	left: var(--ck-space-3);
 	right: calc(2.75rem + var(--ck-space-6));
@@ -429,9 +561,6 @@
 	background: var(--ck-surface);
 	font-size: var(--sl-text-sm);
 	box-shadow: var(--sl-shadow-lg);
-}
-.ck-alert[hidden] {
-	display: none;
 }
 .ck-viewer[data-state='empty'] .ck-alert {
 	right: var(--ck-space-3);
@@ -453,15 +582,55 @@
 
 /* ---- Side panel ---- */
 .ck-panel {
+	display: flex;
+	flex-direction: column;
 	min-width: 0;
-	overflow: auto;
+	min-height: 0;
 	border-left: 1px solid var(--ck-border);
 	background: var(--ck-surface);
 	font-size: var(--sl-text-sm);
+}
+.ck-tabs,
+.ck-code-tasks {
+	display: flex;
+	flex: none;
+	overflow-x: auto;
+	border-bottom: 1px solid var(--ck-border);
+	scrollbar-width: thin;
+}
+.ck-tab {
+	flex: 1 0 auto;
+	min-height: 2.75rem;
+	padding: 0 var(--ck-space-2);
+	border: 0;
+	border-bottom: 2px solid transparent;
+	margin-bottom: -1px;
+	background: none;
+	color: var(--ck-muted);
+	font-family: var(--__sl-font-mono);
+	font-size: var(--sl-text-xs);
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	cursor: pointer;
+}
+.ck-tab:hover {
+	color: var(--ck-text);
+}
+.ck-tab[aria-selected='true'] {
+	border-bottom-color: var(--ck-accent);
+	color: var(--ck-accent);
+}
+.ck-tab:focus-visible {
+	outline-offset: -3px;
+}
+.ck-tabpanel {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
 	overscroll-behavior: contain;
 }
-.ck-panel-handle {
-	display: none;
+.ck-tabpanel:focus-visible {
+	outline-offset: -3px;
 }
 .ck-psec {
 	padding: var(--ck-space-4);
@@ -496,10 +665,17 @@
 	font-family: var(--__sl-font-mono);
 	color: var(--ck-muted);
 	letter-spacing: 0;
+	text-transform: none;
 }
 .ck-hint {
 	margin: 0;
 	color: var(--ck-muted);
+}
+.ck-small {
+	font-size: var(--sl-text-xs);
+}
+.ck-psec .ck-small {
+	margin-top: var(--ck-space-3);
 }
 .ck-summary {
 	margin: 0 0 var(--ck-space-3);
@@ -533,6 +709,16 @@
 	grid-template-columns: 6.5rem minmax(0, 1fr);
 	gap: var(--ck-space-2);
 }
+.ck-dl--props > div {
+	grid-template-columns: minmax(0, 1fr);
+	gap: 0;
+	padding-bottom: var(--ck-space-1);
+}
+.ck-dl--props dt,
+.ck-dl--props dd {
+	font-family: var(--__sl-font-mono);
+	font-size: var(--sl-text-xs);
+}
 .ck-dl dt {
 	color: var(--ck-muted);
 }
@@ -540,9 +726,7 @@
 	margin: 0;
 	overflow-wrap: anywhere;
 }
-.ck-dl code,
-.ck-kinds code,
-.ck-warn code {
+.ck-viewer :is(.ck-dl, .ck-kinds, .ck-warn, .ck-chips, .ck-result, .ck-hint, .ck-selchip) code {
 	font-size: 0.875em;
 	background: none;
 	padding: 0;
@@ -553,24 +737,53 @@
 	flex-wrap: wrap;
 	gap: 0 var(--ck-space-3);
 }
+.ck-chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--ck-space-1) var(--ck-space-2);
+	margin: var(--ck-space-3) 0 0;
+	padding: 0;
+	list-style: none;
+}
+.ck-chips li {
+	padding: 0 var(--ck-space-2);
+	border: 1px solid var(--ck-border);
+	background: var(--ck-bg);
+	font-size: var(--sl-text-xs);
+}
 .ck-model {
 	display: grid;
 	gap: var(--ck-space-1);
 	margin-bottom: var(--ck-space-3);
 }
-.ck-model[hidden] {
-	display: none;
-}
-.ck-model label {
+.ck-model label,
+.ck-row label,
+.ck-exp-opts label > span {
 	color: var(--ck-muted);
 }
 
+.ck-input {
+	min-height: 2.25rem;
+	padding: 0 var(--ck-space-2);
+	border: 1px solid var(--ck-border);
+	border-radius: var(--ck-radius);
+	background: var(--ck-bg);
+	color: var(--ck-text);
+	font: inherit;
+	font-size: var(--sl-text-sm);
+}
+#ck-layer-filter {
+	width: 100%;
+	margin-bottom: var(--ck-space-2);
+}
+.ck-input--num {
+	width: 7rem;
+	font-variant-numeric: tabular-nums;
+}
 .ck-layers {
 	margin: 0;
 	padding: 0;
 	list-style: none;
-	max-height: 16rem;
-	overflow: auto;
 }
 .ck-layers li {
 	display: flex;
@@ -620,6 +833,25 @@
 	font-size: var(--sl-text-2xs);
 	color: var(--ck-muted);
 }
+.ck-layers-more {
+	margin-top: var(--ck-space-2);
+}
+.ck-check {
+	display: flex;
+	align-items: center;
+	gap: var(--ck-space-2);
+	min-height: 2rem;
+	margin: 0 0 var(--ck-space-2);
+}
+.ck-check input {
+	width: 1rem;
+	height: 1rem;
+	margin: 0;
+	accent-color: var(--ck-accent);
+}
+.ck-check label {
+	cursor: pointer;
+}
 
 .ck-warn {
 	border-top: 1px solid var(--ck-border);
@@ -628,11 +860,14 @@
 .ck-warn:first-child {
 	margin-top: var(--ck-space-2);
 }
+.ck-warn summary,
+.ck-json summary {
+	cursor: pointer;
+}
 .ck-warn summary {
 	display: flex;
 	gap: var(--ck-space-2);
 	align-items: baseline;
-	cursor: pointer;
 	overflow-wrap: anywhere;
 }
 .ck-warn summary .ck-count {
@@ -645,6 +880,32 @@
 	color: var(--ck-muted);
 	font-size: var(--sl-text-xs);
 }
+.ck-json summary {
+	font-family: var(--__sl-font-mono);
+	font-size: var(--sl-text-xs);
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--ck-muted);
+}
+.ck-json-actions {
+	display: flex;
+	gap: var(--ck-space-3);
+	align-items: baseline;
+	margin: var(--ck-space-2) 0;
+}
+.ck-pre {
+	max-height: 22rem;
+	margin: 0;
+	padding: var(--ck-space-3);
+	overflow: auto;
+	border: 1px solid var(--ck-border);
+	background: var(--ck-bg);
+	font-family: var(--__sl-font-mono);
+	font-size: var(--sl-text-xs);
+	line-height: 1.5;
+	white-space: pre;
+	tab-size: 2;
+}
 
 .ck-exports {
 	display: grid;
@@ -655,7 +916,7 @@
 }
 .ck-exports li {
 	display: grid;
-	grid-template-columns: 4.5rem minmax(0, 1fr);
+	grid-template-columns: 5.25rem minmax(0, 1fr);
 	align-items: center;
 	gap: var(--ck-space-3);
 	color: var(--ck-muted);
@@ -666,11 +927,128 @@
 	min-height: 2.5rem;
 	padding: 0;
 }
-.ck-exports .ck-btn:disabled {
+.ck-exp-opts {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--ck-space-2);
+}
+.ck-exp-opts label {
+	display: grid;
+	gap: 2px;
+	min-width: 0;
+}
+.ck-exp-opts select {
+	min-height: 2.25rem;
+	font-size: var(--sl-text-xs);
+}
+.ck-viewer .ck-btn:disabled {
 	border-color: var(--ck-border);
 	color: var(--ck-muted);
 	background: none;
 	cursor: default;
+}
+.ck-viewer .ck-btn[aria-busy='true'] {
+	opacity: 0.6;
+	cursor: progress;
+}
+.ck-btn--small {
+	min-height: 2.25rem;
+	padding: 0 var(--ck-space-3);
+}
+.ck-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--ck-space-2);
+	margin-top: var(--ck-space-3);
+}
+.ck-row input[type='range'] {
+	flex: 1 1 6rem;
+	min-width: 0;
+	accent-color: var(--ck-accent);
+}
+.ck-row output {
+	display: inline-block;
+	min-width: 2.5rem;
+	color: var(--ck-text);
+	font-variant-numeric: tabular-nums;
+}
+
+/* The outcome of an action, inside the panel. */
+.ck-result {
+	margin-top: var(--ck-space-3);
+	padding: var(--ck-space-2) var(--ck-space-3);
+	border: 1px solid var(--ck-border);
+	border-left: 3px solid var(--ck-ok);
+	background: var(--ck-bg);
+	overflow-wrap: anywhere;
+}
+.ck-result--err {
+	border-left-color: var(--ck-redline);
+}
+.ck-result > * {
+	margin: 0;
+}
+.ck-result > * + * {
+	margin-top: var(--ck-space-2);
+}
+.ck-rt {
+	display: table;
+	width: 100%;
+	border-collapse: collapse;
+	font-size: var(--sl-text-xs);
+	font-variant-numeric: tabular-nums;
+}
+.ck-rt :is(th, td) {
+	padding: 2px var(--ck-space-2) 2px 0;
+	border: 0;
+	border-bottom: 1px solid var(--ck-border);
+	background: none;
+	text-align: left;
+	font-weight: 400;
+	vertical-align: baseline;
+}
+.ck-rt thead th {
+	color: var(--ck-muted);
+}
+.ck-rt .ck-ok {
+	color: var(--ck-ok);
+}
+.ck-rt .ck-diff {
+	color: var(--ck-partial);
+}
+.ck-sev {
+	color: var(--ck-muted);
+}
+
+.ck-calls {
+	display: grid;
+	gap: var(--ck-space-2);
+	margin: var(--ck-space-3) 0 0;
+	padding: 0;
+	list-style: none;
+}
+.ck-calls li {
+	display: grid;
+	gap: 2px;
+	padding-bottom: var(--ck-space-2);
+	border-bottom: 1px solid var(--ck-border);
+}
+.ck-viewer .ck-call {
+	padding: 0;
+	border: 0;
+	background: none;
+	font-size: var(--sl-text-xs);
+	overflow-wrap: anywhere;
+}
+.ck-call-meta {
+	color: var(--ck-muted);
+	font-size: var(--sl-text-xs);
+}
+.ck-call-ms {
+	color: var(--ck-text);
+	font-family: var(--__sl-font-mono);
+	font-variant-numeric: tabular-nums;
 }
 
 /* ---- Status bar ---- */
@@ -696,6 +1074,39 @@
 .ck-noscript {
 	padding: var(--ck-space-4);
 	border: 1px solid var(--ck-border);
+}
+
+/* ---- Code examples under the viewer ---- */
+.ck-demo-code {
+	padding-top: var(--ck-space-12);
+}
+.ck-demo-code h2 {
+	margin: 0 0 var(--ck-space-2);
+}
+.ck-demo-code .ck-lead {
+	margin: 0 0 var(--ck-space-4);
+	font-size: var(--sl-text-base);
+}
+.ck-code-tasks {
+	margin-bottom: var(--ck-space-4);
+}
+.ck-code-tasks .ck-tab {
+	flex: 0 0 auto;
+	padding: 0 var(--ck-space-4);
+}
+.ck-code-task[hidden] {
+	display: none;
+}
+.ck-code-task > p {
+	margin: 0 0 var(--ck-space-3);
+	color: var(--ck-muted);
+	font-size: var(--sl-text-sm);
+}
+.ck-code-task + .ck-code-task {
+	margin-top: var(--ck-space-8);
+}
+.ck-code-task > .expressive-code {
+	margin-top: var(--ck-space-3);
 }
 
 /* ---- Notes under the viewer ---- */
@@ -741,36 +1152,85 @@
 	text-align: center;
 }
 
-/* ---- Narrow screens: stacked; the details panel becomes a sheet under the drawing ---- */
+/* ---- Touch screens: larger targets ---- */
+@media (any-pointer: coarse) {
+	.ck-btn--small,
+	.ck-input,
+	.ck-exp-opts select {
+		min-height: 2.75rem;
+	}
+	.ck-link-btn {
+		min-height: 2.25rem;
+	}
+	.ck-layers li,
+	.ck-check {
+		min-height: 2.75rem;
+	}
+}
+
+/* ---- Narrow screens: stacked; the details panel sits under the drawing ---- */
 @media (max-width: 56rem) {
 	.ck-vmain {
 		grid-template-columns: minmax(0, 1fr);
 		height: auto;
 	}
 	.ck-stage-wrap {
-		height: min(68svh, 34rem);
+		height: min(62svh, 34rem);
 		min-height: 20rem;
 	}
+	.ck-viewer:fullscreen .ck-vmain {
+		display: flex;
+		flex-direction: column;
+	}
+	.ck-viewer:fullscreen .ck-stage-wrap {
+		flex: 1;
+		height: auto;
+	}
+	.ck-viewer:fullscreen .ck-panel {
+		max-height: 45vh;
+	}
 	.ck-panel {
-		position: relative;
 		border-left: 0;
 		border-top: 1px solid var(--ck-border);
-		box-shadow: 0 -6px 16px color-mix(in srgb, #000 10%, transparent);
 	}
-	.ck-panel-handle {
-		display: block;
-		width: 2.5rem;
-		height: 4px;
-		margin: var(--ck-space-2) auto 0;
-		border-radius: 2px;
-		background: var(--ck-border);
+	.ck-tabpanel {
+		overflow: visible;
 	}
-	.ck-layers {
-		max-height: none;
+	.ck-viewer:fullscreen .ck-tabpanel {
+		overflow: auto;
 	}
 	.ck-vbar-privacy {
 		order: 5;
 		flex-basis: 100%;
+	}
+	.ck-vbar-panel {
+		display: none;
+	}
+	.ck-notice {
+		max-width: calc(100% - 5.5rem);
+	}
+	/* What was picked, on the drawing itself: the panel is below the fold here. */
+	.ck-selchip {
+		right: var(--ck-space-3);
+		bottom: var(--ck-space-3);
+		display: flex;
+		align-items: baseline;
+		gap: var(--ck-space-3);
+		max-width: calc(100% - 2 * var(--ck-space-3));
+		padding: var(--ck-space-2) var(--ck-space-3);
+		border-left: 3px solid var(--ck-sheet-hl);
+	}
+	.ck-selchip p {
+		margin: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.ck-readout {
+		display: none;
+	}
+	.ck-mbox {
+		bottom: var(--ck-space-3);
 	}
 	.ck-demo-notes {
 		grid-template-columns: minmax(0, 1fr);

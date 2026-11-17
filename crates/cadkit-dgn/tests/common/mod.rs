@@ -5,20 +5,24 @@ use std::path::PathBuf;
 
 use cadkit_core::{Entity, EntityKind, Point3, Value};
 
+/// The corpus directory: `CADKIT_CORPUS_DIR` when set (a checkout in a git worktree
+/// shares the main checkout's corpus that way), else `corpus/` at the workspace root.
+pub fn corpus_root() -> PathBuf {
+    std::env::var_os("CADKIT_CORPUS_DIR").map_or_else(
+        || PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../corpus"),
+        PathBuf::from,
+    )
+}
+
 /// Bytes of `corpus/<rel>`, or `None` when the file is not present (tests then skip).
 pub fn corpus(rel: &str) -> Option<Vec<u8>> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../corpus")
-        .join(rel);
-    std::fs::read(path).ok()
+    std::fs::read(corpus_root().join(rel)).ok()
 }
 
 /// Every `.dgn` file under `corpus/private/<sub>` (empty when the directory is absent).
 /// Files are discovered, never named, so no private identifier appears in the sources.
 pub fn private_files(sub: &str) -> Vec<Vec<u8>> {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../corpus/private")
-        .join(sub);
+    let dir = corpus_root().join("private").join(sub);
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
@@ -36,7 +40,7 @@ pub fn private_files(sub: &str) -> Vec<Vec<u8>> {
 /// Every `.dgn` file anywhere under `corpus/private`, sorted (empty when it is absent).
 /// Paths are only opened, never printed or asserted on.
 pub fn private_dgn_paths() -> Vec<PathBuf> {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../corpus/private");
+    let root = corpus_root().join("private");
     let mut out = Vec::new();
     let mut todo = vec![(root, 0u32)];
     while let Some((dir, depth)) = todo.pop() {

@@ -250,7 +250,7 @@ store 3 doubles and a quaternion `(w, x, y, z)`. All coordinates are UOR doubles
 | Type | Layout | Evidence |
 |---|---|---|
 | 3 line | `0x68` start, then end | oracle: 4 lines, 2 zero-length lines reported as POINT |
-| 4, 6, 11, 21 | `0x68` u32 count, `0x6C` pad, `0x70` points | oracle; shape outlines repeat the first point |
+| 4, 6, 11, 21 | `0x68` u32 count, `0x6C` pad, `0x70` points | oracle; shape outlines repeat the first point; a shape may hold one vertex (see "Degenerate shapes and null tag targets") |
 | 22 point string | as 4, then `count × 4` doubles (orientation quaternions) | oracle MULTIPOINT |
 | 15 ellipse | `0x68` primary axis, `0x70` secondary; 2D: `0x78` rotation, `0x80` center; 3D: `0x78` quaternion, `0x98` center | oracle (stroked points on the curve within 1e-6) |
 | 16 arc | `0x68` start, `0x70` sweep (signed radians), `0x78` primary, `0x80` secondary; 2D: `0x88` rotation, `0x90` center; 3D: `0x88` quaternion, `0xA8` center | oracle incl. negative sweep in a complex shape |
@@ -347,6 +347,57 @@ files) with the layout below; offsets from the element start.
 | after the value | 10 bytes, then the linkages at a 2-byte boundary: set dependency (24 bytes), target dependency (56 bytes, root type 9) |
 
 Hidden tags written by MicroStation (TreeText) leave the range empty.
+
+### Degenerate shapes and null tag targets
+
+Two record patterns of the private corpus (567 V8 files) that are well formed but look
+broken. Own structural counts; offsets from the element start.
+
+**One-vertex shapes.** 92 type 6 records in 28 files store a vertex count of 1; the other
+1,051,503 shapes store at least 2. All 92 are alike:
+
+| Offset | Content |
+|---|---|
+| `0x04` / `0x08` | u32 68 / u32 68: 0x88 bytes, no linkages |
+| `0x28` | property word `0x0E00` (3D) in 91, `0x0A00` in 1 |
+| `0x38` / `0x50` | range: low corner and an extent of 1 UOR in every axis (the vertex's box rounded outwards) |
+| `0x68` / `0x6C` | u32 1 / 4 zero bytes |
+| `0x70` | one 3D vertex, inside the range |
+
+None is a complex component or a tag target; 61 carry a graphic group, all a nonzero
+level. The decoder required 2 vertices and kept them as `Unknown` (`dgn.type_6`, warning
+`dgn.decode_failed.type_6`); after 0.5.4 a V8 shape needs 1 vertex and a one-vertex shape
+maps to a `Point` (`dgn.type` = 6), as a zero-length line (type 3) does. A shape without a
+vertex still fails. Line strings (4) and curves (11) keep their minimum of 2, and V7 shapes
+too: no one-vertex record of these occurs in the corpora. Neither reference reads such a
+shape: GDAL dgnlib (V7, `dgnread.cpp`) rejects every vertex list with a count below 2, and
+ezdgn requires 3 vertices for a V8 shape. A point read this way is the vertex itself, the
+only geometry the record has; a closed outline of one vertex encloses nothing.
+
+The writer writes such a `Point` (one whose `dgn.type` is 6) back as a type 6 record with
+one vertex (`0x70` + one point, range of the vertex rounded outwards); every other point is
+a zero-length line. Written back into itself (`clear_seed_model`), every private file the
+writer accepts keeps the type histogram of its graphic pages (corpus test
+`private_write_back_keeps_element_types`); writing the one-vertex shapes as lines had turned
+the 92 into type 3 records.
+
+A V7 vertex list (types 4, 6, 11, 21, 22) whose record is shorter than its declared count
+keeps the points that fit, as GDAL does, and records the shortfall
+(`dgn.decode_problem` "n points declared, k stored", warning `dgn.decode_failed.type_n`);
+when fewer points fit than the type needs (2 for 4, 6, 11; 1 for 21, 22) the element is
+`Unknown`. Before, such a record became a polyline or spline without vertices, or a point.
+
+**Null tag targets.** Every type 37 tag of the corpus carries one target dependency
+(`0x2710`, value 1, copy option 2, root type 9, 56 bytes). 267,154 roots name a shape and 8
+a complex shape of the same model. The other 111 (in 21 files) store the root
+`01 00 00 00 00 00 01 00` + `ff ff ff ff ff ff ff ff`: the first half as in every other
+tag, the id all ones, which no element has (no graphic or control record of any model of
+the file, under any width of the id). These tags are not attached to anything: the
+reader keeps them standalone (`Unknown` `dgn.type_37` with the tag as its attribute) and
+reports `dgn.tag_target_missing`, which is right for them. No tag has a target that the
+association lookup misses (elements inside cells and complex chains, other models). The
+corpus test `private_shapes_decode_and_standalone_tags_have_null_targets` checks both
+counts per file.
 
 ### Raster attachments
 
@@ -873,10 +924,12 @@ the observation each needs.
 ## Seed-based V8 writer
 
 `write_v8(Document, seed, WriteOptions)` constructs new model graphics in a
-single-model seed. Source dimension and known master units must match the seed.
-A 2D plan reaches a 3D seed through `V8Seed::prepare_document`
-(`DimensionPolicy::Promote2dTo3d`, the default; acceptance kit file 09); `write_v8` itself
-never changes the seed dimension or drops Z. Nonempty seeds require `clear_seed_model=true` explicitly.
+single-model seed from one model of the document (see "Source model" below). Known master
+units must match the seed, and so must the dimension unless
+`WriteOptions::dimension_policy` allows the difference. A 2D plan reaches a 3D seed through
+`V8Seed::prepare_document` (`DimensionPolicy::Promote2dTo3d`, the default; acceptance kit
+file 09) or through `dimension_policy`; `write_v8` never drops a nonzero Z unless
+`DimensionPolicy::ProjectToSeed` asks for it. Nonempty seeds require `clear_seed_model=true` explicitly.
 `repack_v8` reconstructs the CFB container without changing stream contents.
 Neither API edits the input buffer or file.
 
@@ -1132,6 +1185,53 @@ not general lossless Document-to-DGN roundtripping.
 `0x130`). Unchanged seed records keep their bytes and time. When both are 0 the records are
 written with time 0, which `check_structure` reports as `dgn.record_time`; every graphic
 and control record of the public and private corpus has a positive time.
+
+### Source model, dimension and text length
+
+Every DXF and DWG document holds model space and its paper layouts (often empty), and a
+DGN document one model per design or sheet model, while the writer fills the one model of
+its seed. Since the release after 0.5.4 (`WriteOptions` additions, all off by default
+except the model choice):
+
+| Option | Behaviour |
+|---|---|
+| `model_index: Option<usize>` | `None`: the only model, or the only `ModelKind::Model` of a document whose other models are all `ModelKind::Layout`; any other document (two design models, a sheet model beside the design model, two or more layouts only, no model) fails with "DGN writer requires exactly one source model; choose one with WriteOptions::model_index", and a document whose only model is a layout with "DGN writer accepts design models only". The DGN reader maps every model of a file, sheet models included, to `ModelKind::Model` (the model header's type word is kept in `dgn.model_type_word`), so a DGN document with several models always needs an index. `Some(i)`: model `i`, which must be a design model ("DGN writer accepts design models only"); out of range: "model index i out of bounds (n models)". Before, every document with more than one model failed. |
+| `dimension_policy` | `Strict` (default): "source and seed model dimensions differ" as before. `Promote2dTo3d`: a 2D model goes into a 3D seed with the Z it has (0 for 2D geometry: no coordinate changes), a 3D model into a 2D seed only when every Z is 0. `ProjectToSeed`: as `Promote2dTo3d`, and 3D geometry is projected onto `z = 0` for a 2D seed (the projection `prepare_document` uses: every Z set to 0 and tilted normals to `+Z`, so a tilted circle, arc or text keeps its size in the XY plane instead of becoming its projection). |
+| `estimate_text_length` | center/right text without `dgn.text_length` is written with `characters × character width` (height × width factor), the estimate the reader and left text already use, stored at `0x80`; it reads back with the same anchor. MicroStation's measured lengths are 0.6–0.9 of this estimate ("Mapping decisions"); an application that measures its glyphs places the text from the stored origin `anchor − fx·estimate` and draws its anchor `fx·(estimate − measured)` back along the baseline: 0.05–0.2 of the estimated length for center text, 0.1–0.4 for right text. |
+
+`write_v8_report` / `write_v8_with_seed_report` return the bytes `write_v8` returns
+together with the index of the model written and warnings: `dgn.model_not_written` per model
+left out (`object` = its index; the message names kind, name and top-level entity count),
+`dgn.model_dimension_changed`, and `dgn.text_length_estimated` with the number of texts.
+`write_v8` and `write_v8_with_seed` keep their signature and return only the bytes.
+
+`prepare_document` also clears the id of every `Image` (groups included) of a document read
+from any format but DGN V8 (DWG, DXF, DGN V7, CityGML, and formats added later): such an id is a handle of the source file, not a seed
+element id, and made the writer look for a seed attachment to preserve ("adding/removing
+seed rasters requires rewriting their native control graph"); the images become new
+attachments. Documents read from DGN V8 and documents of unknown origin keep their ids. The
+writer preserves a seed attachment only when the document holds every image of the seed,
+each unchanged (same id, kind, symbology and props): a document read from the seed's own
+file writes back with its rasters; one read from another DGN V8 file with rasters still
+fails with the error above (its ids name elements of that file, which cannot be told apart
+from the seed's), and clearing the ids of its images, as for other formats, makes them new
+attachments.
+
+Public samples (40 DXF/DWG files of `corpus/public/acadsharp` and `corpus/public/tika`,
+read with cadkit and written into `strip_seed_v8(test_dgnv8.dgn)`, a 3D seed in metres):
+
+| Path | Result |
+|---|---|
+| `write_v8`, defaults (before) | 0 of 40: "DGN writer requires exactly one source model" |
+| `write_v8`, defaults | 0 of 40, past the model choice: the 26 2D files (every DWG) fail with "source and seed model dimensions differ", the 14 3D files (every DXF) with "source and seed units differ; convert coordinates explicitly" (12) or "resolve ByBlock color before DGN export" (2 R12 files) |
+| + `Promote2dTo3d` (+ `estimate_text_length`: no change) | 0 of 40: "source and seed units differ ..." (37), ByBlock (2), the raster error above (1) |
+| + `Document::convert_units` to the seed unit by the caller | 2 of 40 (4 and 0 entities); the others fail on content `write_v8` does not convert: "DGN lineweight needs an explicit entity/layer dgn.weight index; millimeter mapping is display-dependent" (11), "DGN V8 writer: mtext requires explicit conversion" (4), "DGN V8 writer: insert requires explicit conversion" (1), "RGB color is absent from seed palette; provide dgn.color_index explicitly" (1), "resolve ByBlock color before DGN export" (2), and "adding/removing seed rasters requires rewriting their native control graph" (19, every acadsharp sample from R14 on) |
+| `prepare_document` then `write_v8_with_seed` (before: 21 of 40, 19 raster errors) | 40 of 40; read back, every file has as many top-level entities as the prepared model (125 for each acadsharp R14+ sample, 2,143 for R12, 0 to 6,995 for tika) |
+
+Private corpus, every file read and written back into itself (`clear_seed_model`): 556 of
+567 write (528 when "Level colors" was recorded; the 28 more are the files with one-vertex
+shapes, which were `Unknown` before), 11 fail with "nonzero Z cannot be written into a 2D
+seed". No private file holds more than one model.
 
 ### Structural report
 

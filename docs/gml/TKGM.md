@@ -84,7 +84,9 @@ single-valued fields, missing geometry properties, wrong storey parent/member
 targets, missing explicit 3D TUREF envelope, and four fixed independent-section
 codes stated in the guide. It also flags generic conversion metadata where GML
 geometry is absent. Diagnostics contain only public field names and traversal
-indices. Output is capped at min(max_objects, 10,000) findings and marks truncation.
+indices; `tkgm::preflight_located` additionally fills each finding's `id` (the
+element's `gml:id`) and `building_id` (the enclosing `bldg:Building`), which are
+author-chosen identifiers and may encode client data. Output is capped at min(max_objects, 10,000) findings and marks truncation.
 
 An empty finding list means only that these local checks found no issue. The
 report always has `acceptance_verified: false`. It does not implement the entire
@@ -102,6 +104,28 @@ Similarly, the `buildingHeight` table requests a string, while the official
 downloadable examples use a double. Its presence is checked and
 `building_height_type_ambiguity` is reported as unchecked. Receiver clarification
 is required before forcing either representation on an application.
+
+## Buildings generated from CAD faces
+
+`write_buildings` (see [CityGML notes](FORMAT_NOTES.md)) produces geometry, not a
+delivery: buildings with thematic boundary surfaces, a building envelope and a
+root 3D envelope in the CRS the caller names. With a TUREF CRS
+(`EPSG:5253`..`5259`) the tender preflight no longer reports
+`tkgm.missing_building`, `tkgm.missing_envelope` or `tkgm.missing_class`. Per
+building it still reports, by design:
+
+- `tkgm.missing_property` for `gml:name`, `storeysAboveGround`,
+  `storeysBelowGround`, `lod0FootPrint`, `lod0RoofEdge`, `lod1Solid`,
+  `lod2TerrainIntersection`, and `lod2MultiSurface` when every face was classified
+  (the building's own multi-surface holds only unclassified faces);
+- `tkgm.building_class` (`MimariBina` is a statement about the object);
+- `tkgm.missing_attribute` for 13 identification fields (the year-dependent MAKS
+  fields excepted) and `buildingHeight`.
+
+None of these can be derived from faces honestly: names, storey counts and every
+MAKS / TAKBIS / tender identifier come from the consuming application, and the LoD 0
+and LoD 1 representations, the terrain intersection and storeys need a model the CAD
+faces do not contain. Storeys and independent sections are not created.
 
 ## Acceptance
 

@@ -13,18 +13,23 @@ use crate::cfb::tests::build;
 use crate::cfb::{CompoundFile, EntryKind};
 use crate::{le, zlib};
 
-fn corpus(rel: &str) -> Option<Vec<u8>> {
-    std::fs::read(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../corpus")
-            .join(rel),
+/// The corpus directory: `CADKIT_CORPUS_DIR` when set (a checkout in a git worktree
+/// shares the main checkout's corpus that way), else `corpus/` at the workspace root, as
+/// for the integration tests (`tests/common`).
+pub(crate) fn corpus_root() -> PathBuf {
+    std::env::var_os("CADKIT_CORPUS_DIR").map_or_else(
+        || PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../corpus"),
+        PathBuf::from,
     )
-    .ok()
+}
+
+fn corpus(rel: &str) -> Option<Vec<u8>> {
+    std::fs::read(corpus_root().join(rel)).ok()
 }
 
 /// Every V8 (compound file) DGN under `corpus/private/dgn`.
 fn private_v8() -> Vec<Vec<u8>> {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../corpus/private/dgn");
+    let dir = corpus_root().join("private/dgn");
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };

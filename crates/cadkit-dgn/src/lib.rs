@@ -15,7 +15,8 @@ pub mod writer;
 #[cfg(feature = "write")]
 pub use writer::{
     DimensionPolicy, SeedPrepareOptions, StripSeedOptions, StripSeedReport, StrippedSeed, V8Seed,
-    WriteOptions, repack_v8, seed_has_raster_template, strip_seed_v8, write_v8, write_v8_with_seed,
+    WriteOptions, WriteReport, repack_v8, seed_has_raster_template, strip_seed_v8, write_v8,
+    write_v8_report, write_v8_with_seed, write_v8_with_seed_report,
 };
 pub mod palette;
 pub mod symbology;
