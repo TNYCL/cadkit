@@ -96,19 +96,17 @@ impl Collected {
         }
         Some(out)
     }
+}
 
-    /// Lowest and highest corner of all points.
-    pub fn bounds(&self) -> Option<([f64; 3], [f64; 3])> {
-        let first = self.points.first()?;
-        let mut lo = [first.x, first.y, first.z];
-        let mut hi = lo;
-        for p in &self.points {
-            for ((l, h), v) in lo.iter_mut().zip(hi.iter_mut()).zip([p.x, p.y, p.z]) {
-                *l = l.min(v);
-                *h = h.max(v);
-            }
+/// Grows the box `bounds` (lowest and highest corner, `None` while empty) by `points`.
+pub(super) fn extend_bounds(bounds: &mut Option<([f64; 3], [f64; 3])>, points: &[Point3]) {
+    for p in points {
+        let v = [p.x, p.y, p.z];
+        let (lo, hi) = bounds.get_or_insert((v, v));
+        for ((l, h), v) in lo.iter_mut().zip(hi.iter_mut()).zip(v) {
+            *l = l.min(v);
+            *h = h.max(v);
         }
-        Some((lo, hi))
     }
 }
 

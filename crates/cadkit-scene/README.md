@@ -51,7 +51,7 @@ For renderers that draw a whole model at once, the same feature builds flat buff
   triangulated by ear clipping, with f32 positions relative to an f64 origin, per-vertex
   normals and colors, triangles grouped by layer, an item table that leads every triangle
   back to its entity's walk path, face outlines and wires as segments, and
-  `SurfaceMesh::pick` for ray picking with hidden layers. Faces with the same corners are
+  `SurfaceMesh::pick` for ray picking with hidden layers. Faces with the same rings are
   drawn once (the more deeply nested one wins).
 - `document::line_buffer` returns a `LineBuffer`: every curve as 2D or 3D segments with the
   same origin, colors, layer ranges and item table, for canvas renderers.

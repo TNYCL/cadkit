@@ -150,7 +150,8 @@ pub struct SurfaceReport {
     pub segments: usize,
     /// Entities drawn as wire geometry.
     pub wires: usize,
-    /// Faces left out because another face has the same set of corners.
+    /// Faces left out because another face has the same rings (see
+    /// `document::surface_mesh`).
     pub duplicates: usize,
     /// Faces and wires without area or length, or with non-finite coordinates.
     pub degenerate: usize,
@@ -378,6 +379,55 @@ mod tests {
         assert_eq!(mesh.pick([0.25, 0.5, 5.], [0., 0., 1.], &[]), None);
         assert_eq!(mesh.pick([0.25, 0.5, 5.], [1., 0., 0.], &[]), None);
         assert_eq!(mesh.pick([f64::NAN, 0., 0.], down, &[]), None);
+    }
+
+    #[test]
+    fn parallel_rays_degenerate_triangles_and_edges() {
+        // A unit right triangle at z = 0, and above it a "triangle" whose corners are
+        // collinear (a zero-area face, as a sliver from a collinear run could give).
+        let mesh = SurfaceMesh {
+            positions: vec![
+                0., 0., 0., 1., 0., 0., 0., 1., 0., 0., 0., 1., 1., 0., 1., 2., 0., 1.,
+            ],
+            indices: vec![0, 1, 2, 3, 4, 5],
+            triangle_items: vec![0, 1],
+            layers: vec![LayerRange {
+                name: "0".into(),
+                first_triangle: 0,
+                triangle_count: 2,
+                ..LayerRange::default()
+            }],
+            ..SurfaceMesh::default()
+        };
+        let down = [0., 0., -1.];
+        // Straight through the line of the zero-area triangle: only the real face is hit.
+        let hit = mesh.pick([0.5, 0., 5.], down, &[]).unwrap();
+        assert_eq!((hit.triangle, hit.item), (0, 0));
+        assert!((hit.distance - 5.).abs() < 1e-12);
+        // In the plane of the face, crossing it: parallel, no hit.
+        assert_eq!(mesh.pick([-1., 0.25, 0.], [1., 0., 0.], &[]), None);
+        // Starting on the face: the hit at distance 0 does not count.
+        assert_eq!(mesh.pick([0.25, 0.25, 0.], down, &[]), None);
+        // Edges and corners belong to the face.
+        for at in [[0.5, 0.5], [0., 0.], [1., 0.], [0., 0.5]] {
+            assert!(
+                mesh.pick([at[0], at[1], 1.5], down, &[]).is_some(),
+                "{at:?}"
+            );
+        }
+        assert_eq!(mesh.pick([0.51, 0.51, 1.5], down, &[]), None);
+        // The distance is the ray parameter: half the length for a direction twice as long.
+        let hit = mesh.pick([0.25, 0.25, 4.], [0., 0., -2.], &[]).unwrap();
+        assert!((hit.distance - 2.).abs() < 1e-12);
+        // A grazing ray (1e-9 rad off the plane) still hits a large face.
+        let mut big = mesh.clone();
+        big.positions.iter_mut().for_each(|v| *v *= 1000.);
+        let hit = big.pick([-10., 5., 1e-5], [1., 0., -1e-8], &[]).unwrap();
+        assert!((hit.distance - 1000.).abs() < 1e-3, "{}", hit.distance);
+        // Hidden layer indices that do not exist are ignored.
+        assert!(mesh.pick([0.25, 0.25, 1.], down, &[7, u32::MAX]).is_some());
+        // The zero direction hits nothing.
+        assert_eq!(mesh.pick([0.25, 0.25, 1.], [0.; 3], &[]), None);
     }
 
     #[test]

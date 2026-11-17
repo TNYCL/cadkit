@@ -212,6 +212,9 @@ fn bridge(
             continue;
         };
         let p = at(index);
+        if !locally_inside(&outline, k, m, at) {
+            continue;
+        }
         let loops = || std::iter::once(outline.as_slice()).chain(pending.iter().map(Vec::as_slice));
         // The bridge must not cross an edge, run through a corner or cut through a hole.
         if loops().any(|l| edges(l, at).any(|(a, b)| segments_cross(m, p, a, b))) {
@@ -240,6 +243,30 @@ fn bridge(
     joined.extend(head.last().copied());
     joined.extend_from_slice(tail);
     Some(joined)
+}
+
+/// The direction from outline vertex `k` towards `m` lies within the polygon's angle at that
+/// vertex. A vertex that already carries a bridge occurs once per angle between its bridges;
+/// joining a hole to the wrong occurrence makes two bridges cross there, and ear clipping of
+/// such a loop cuts triangles outside the polygon.
+fn locally_inside(outline: &[u32], k: usize, m: [f64; 2], at: &impl Fn(u32) -> [f64; 2]) -> bool {
+    let n = outline.len();
+    if n == 0 {
+        return false;
+    }
+    let (Some(&u), Some(&p), Some(&w)) = (
+        outline.get((k + n - 1) % n),
+        outline.get(k),
+        outline.get((k + 1) % n),
+    ) else {
+        return false;
+    };
+    let (u, p, w) = (at(u), at(p), at(w));
+    if cross(u, p, w) > 0. {
+        cross(p, w, m) >= 0. && cross(u, p, m) >= 0.
+    } else {
+        cross(p, w, m) >= 0. || cross(u, p, m) >= 0.
+    }
 }
 
 /// Ear clipping of one counter-clockwise loop of point indices (bridges included).
@@ -427,6 +454,31 @@ mod tests {
     }
 
     #[test]
+    fn holes_bridged_to_the_same_corner() {
+        // Both holes see the top right corner first. The one further right is joined first;
+        // the other one must be joined to the copy of the corner whose angle faces it, or the
+        // two bridges cross and triangles come out overlapping the holes.
+        let outer = [[0., 0.], [20., 0.], [20., 20.], [0., 20.]];
+        let square = |x: f64, y: f64| {
+            [
+                [x - 0.5, y - 0.5],
+                [x + 0.5, y - 0.5],
+                [x + 0.5, y + 0.5],
+                [x - 0.5, y + 0.5],
+            ]
+        };
+        let (left, low) = (square(14.1, 18.96), square(18.96, 14.1));
+        let rings: [&[[f64; 2]]; 3] = [&outer, &left, &low];
+        let t = run(&rings);
+        assert!(
+            (area(&rings, &t) - 398.).abs() < 1e-9,
+            "{}",
+            area(&rings, &t)
+        );
+        assert_eq!(t.len(), 4 + 4 + 4 + 2);
+    }
+
+    #[test]
     fn degenerate_input_terminates() {
         assert!(run(&[]).is_empty());
         assert!(run(&[&[[0., 0.], [1., 1.]]]).is_empty());
@@ -480,5 +532,348 @@ mod tests {
         let square = [[0., 0.], [1., 0.], [1., 1.], [0., 1.]];
         assert!(triangulate(&[&square], &mut work).is_some());
         assert!(work < 10_000);
+    }
+
+    /// Deterministic xorshift64* generator, so failures can be replayed.
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 >> 12;
+            self.0 ^= self.0 << 25;
+            self.0 ^= self.0 >> 27;
+            self.0.wrapping_mul(0x2545_f491_4f6c_dd1d)
+        }
+
+        /// Uniform in [0, 1).
+        fn unit(&mut self) -> f64 {
+            (self.next() >> 11) as f64 / (1u64 << 53) as f64
+        }
+
+        fn below(&mut self, n: usize) -> usize {
+            (self.next() % n as u64) as usize
+        }
+    }
+
+    fn signed_area(ring: &[[f64; 2]]) -> f64 {
+        let n = ring.len();
+        (0..n)
+            .map(|i| {
+                let (a, b) = (ring[i], ring[(i + 1) % n]);
+                a[0] * b[1] - b[0] * a[1]
+            })
+            .sum::<f64>()
+            / 2.
+    }
+
+    fn contains(ring: &[[f64; 2]], q: [f64; 2]) -> bool {
+        let lp: Vec<u32> = (0..ring.len() as u32).collect();
+        inside(&lp, q, &|i| ring[i as usize])
+    }
+
+    /// A ring is simple: no two edges cross or overlap, no point repeats.
+    fn simple(ring: &[[f64; 2]]) -> bool {
+        let n = ring.len();
+        for i in 0..n {
+            for j in i + 1..n {
+                if ring[i] == ring[j] {
+                    return false;
+                }
+            }
+        }
+        for i in 0..n {
+            let (a, b) = (ring[i], ring[(i + 1) % n]);
+            for j in i + 1..n {
+                let (c, d) = (ring[j], ring[(j + 1) % n]);
+                if segments_cross(a, b, c, d)
+                    || on_segment(a, b, c)
+                    || on_segment(a, b, d)
+                    || on_segment(c, d, a)
+                    || on_segment(c, d, b)
+                {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// Star-shaped ring around (cx, cy): sorted angles, random radii in [r/4, r].
+    fn star(rng: &mut Rng, n: usize, [cx, cy]: [f64; 2], r: f64) -> Vec<[f64; 2]> {
+        let mut angles: Vec<f64> = (0..n).map(|_| rng.unit() * std::f64::consts::TAU).collect();
+        angles.sort_by(f64::total_cmp);
+        angles
+            .into_iter()
+            .map(|a| {
+                let radius = r * (0.25 + 0.75 * rng.unit());
+                [cx + radius * a.cos(), cy + radius * a.sin()]
+            })
+            .collect()
+    }
+
+    /// A random simple ring through grid points, untangled by 2-opt moves; None when the
+    /// moves do not converge or the result is not simple (collinear overlaps).
+    fn untangled(rng: &mut Rng, n: usize) -> Option<Vec<[f64; 2]>> {
+        let mut ring: Vec<[f64; 2]> = (0..n)
+            .map(|_| [rng.below(24) as f64, rng.below(24) as f64])
+            .collect();
+        for _ in 0..10_000 {
+            let mut changed = false;
+            'scan: for i in 0..n {
+                for j in i + 2..n {
+                    if i == 0 && j == n - 1 {
+                        continue;
+                    }
+                    let (a, b) = (ring[i], ring[i + 1]);
+                    let (c, d) = (ring[j], ring[(j + 1) % n]);
+                    if segments_cross(a, b, c, d) {
+                        ring[i + 1..=j].reverse();
+                        changed = true;
+                        break 'scan;
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        simple(&ring).then_some(ring)
+    }
+
+    /// Whether the interiors of two counter-clockwise triangles overlap (separating axes,
+    /// with a tolerance so triangles sharing an edge or a corner do not count).
+    fn overlap(t: [[f64; 2]; 3], u: [[f64; 2]; 3], eps: f64) -> bool {
+        for (tri, other) in [(t, u), (u, t)] {
+            for k in 0..3 {
+                let (a, b) = (tri[k], tri[(k + 1) % 3]);
+                // Every point of 'other' on the outer side of edge ab separates them.
+                let len = (b[0] - a[0]).hypot(b[1] - a[1]);
+                if other.iter().all(|&p| cross(a, b, p) <= eps * len) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// Triangulates and checks: every triangle counter-clockwise, inside the outline and
+    /// outside every hole, no two overlapping, and the area equal to the polygon's.
+    fn check(rings: &[&[[f64; 2]]], label: &str) {
+        check_result(rings, &run(rings), label);
+    }
+
+    fn check_result(rings: &[&[[f64; 2]]], triangles: &[[u32; 3]], label: &str) {
+        let points: Vec<[f64; 2]> = rings.iter().flat_map(|r| r.iter().copied()).collect();
+        let size = points
+            .iter()
+            .flat_map(|p| p.iter())
+            .fold(0f64, |m, v| m.max(v.abs()))
+            .max(1.);
+        let eps = 1e-9 * size;
+        let expected = signed_area(rings[0]).abs()
+            - rings[1..].iter().map(|h| signed_area(h).abs()).sum::<f64>();
+        let got = area(rings, triangles);
+        assert!(
+            (got - expected).abs() <= 1e-9 * size * size,
+            "{label}: area {got} instead of {expected}, rings {rings:?}"
+        );
+        let corners: Vec<[[f64; 2]; 3]> = triangles
+            .iter()
+            .map(|t| t.map(|i| points[i as usize]))
+            .collect();
+        for c in &corners {
+            // A sliver along a collinear run (its middle point rounded off the line) has its
+            // centroid on the boundary, where the inside test may fall either way.
+            if cross(c[0], c[1], c[2]) <= eps * size {
+                continue;
+            }
+            let centroid = [
+                (c[0][0] + c[1][0] + c[2][0]) / 3.,
+                (c[0][1] + c[1][1] + c[2][1]) / 3.,
+            ];
+            assert!(
+                contains(rings[0], centroid) && !rings[1..].iter().any(|h| contains(h, centroid)),
+                "{label}: triangle {c:?} lies outside, rings {rings:?}"
+            );
+        }
+        for (i, t) in corners.iter().enumerate() {
+            for u in &corners[i + 1..] {
+                assert!(
+                    !overlap(*t, *u, eps),
+                    "{label}: triangles {t:?} and {u:?} overlap, rings {rings:?}"
+                );
+            }
+        }
+    }
+
+    /// Distance from q to segment ab.
+    fn distance(a: [f64; 2], b: [f64; 2], q: [f64; 2]) -> f64 {
+        let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+        let t = (((q[0] - a[0]) * dx + (q[1] - a[1]) * dy) / (dx * dx + dy * dy)).clamp(0., 1.);
+        (a[0] + t * dx - q[0]).hypot(a[1] + t * dy - q[1])
+    }
+
+    /// Adds collinear midpoints and repeated points to a ring, and reverses it at random.
+    fn roughen(rng: &mut Rng, ring: &[[f64; 2]]) -> Vec<[f64; 2]> {
+        let mut out = Vec::new();
+        for (i, &p) in ring.iter().enumerate() {
+            out.push(p);
+            if rng.below(4) == 0 {
+                out.push(p);
+            }
+            if rng.below(4) == 0 {
+                let q = ring[(i + 1) % ring.len()];
+                out.push([(p[0] + q[0]) / 2., (p[1] + q[1]) / 2.]);
+            }
+        }
+        if rng.below(2) == 0 {
+            out.reverse();
+        }
+        if rng.below(3) == 0 {
+            out.push(out[0]);
+        }
+        out
+    }
+
+    #[test]
+    fn random_simple_polygons_are_covered_exactly() {
+        let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
+        let mut checked = 0;
+        for case in 0..3000 {
+            let outline = if case % 2 == 0 {
+                let n = 3 + rng.below(40);
+                let mut ring = star(&mut rng, n, [0., 0.], 10.);
+                if case % 4 == 0 {
+                    // On a grid: collinear runs and exact degeneracies.
+                    for p in &mut ring {
+                        *p = [p[0].round(), p[1].round()];
+                    }
+                }
+                ring
+            } else {
+                let n = 4 + rng.below(16);
+                match untangled(&mut rng, n) {
+                    Some(ring) => ring,
+                    None => continue,
+                }
+            };
+            if !simple(&outline) || signed_area(&outline) == 0. {
+                continue;
+            }
+            // Up to three holes, each a small star well inside the outline and clear of
+            // the others.
+            let mut holes: Vec<Vec<[f64; 2]>> = Vec::new();
+            let mut placed: Vec<([f64; 2], f64)> = Vec::new();
+            let (lo, hi) = outline
+                .iter()
+                .fold(([f64::MAX; 2], [f64::MIN; 2]), |(lo, hi), p| {
+                    (
+                        [lo[0].min(p[0]), lo[1].min(p[1])],
+                        [hi[0].max(p[0]), hi[1].max(p[1])],
+                    )
+                });
+            for _ in 0..rng.below(4) {
+                let c = [
+                    lo[0] + rng.unit() * (hi[0] - lo[0]),
+                    lo[1] + rng.unit() * (hi[1] - lo[1]),
+                ];
+                if !contains(&outline, c) {
+                    continue;
+                }
+                let clear = (0..outline.len())
+                    .map(|i| distance(outline[i], outline[(i + 1) % outline.len()], c))
+                    .fold(f64::MAX, f64::min);
+                let r = 0.8
+                    * placed.iter().fold(clear, |m, (o, r)| {
+                        m.min((o[0] - c[0]).hypot(o[1] - c[1]) - r)
+                    });
+                if r < 0.05 {
+                    continue;
+                }
+                let n = 3 + rng.below(8);
+                // A gap of more than half a turn between two angles can make a star cross
+                // itself.
+                let hole = star(&mut rng, n, c, r);
+                if simple(&hole) {
+                    placed.push((c, r));
+                    holes.push(hole);
+                }
+            }
+            let roughened: Vec<Vec<[f64; 2]>> = std::iter::once(&outline)
+                .chain(&holes)
+                .map(|r| {
+                    if case % 3 == 0 {
+                        roughen(&mut rng, r)
+                    } else {
+                        r.clone()
+                    }
+                })
+                .collect();
+            let rings: Vec<&[[f64; 2]]> = roughened.iter().map(Vec::as_slice).collect();
+            check(&rings, &format!("case {case}"));
+            checked += 1;
+        }
+        // About a third of the cases are discarded (untangling that did not give a simple ring).
+        assert!(checked > 2000, "{checked}");
+    }
+
+    #[test]
+    fn self_intersecting_rings_terminate_with_valid_indices() {
+        let mut rng = Rng(0x0123_4567_89ab_cdef);
+        for _ in 0..2000 {
+            let n = 3 + rng.below(30);
+            let rings: Vec<Vec<[f64; 2]>> = (0..1 + rng.below(3))
+                .map(|_| {
+                    (0..n)
+                        .map(|_| [rng.below(10) as f64, rng.below(10) as f64])
+                        .collect()
+                })
+                .collect();
+            let slices: Vec<&[[f64; 2]]> = rings.iter().map(Vec::as_slice).collect();
+            let total: usize = rings.iter().map(Vec::len).sum();
+            let mut work = WORK;
+            let t = triangulate(&slices, &mut work).unwrap();
+            // Each bridge adds two corners to the loop that is clipped.
+            assert!(t.len() <= total + 2 * rings.len());
+            assert!(t.iter().flatten().all(|&i| (i as usize) < total));
+            // Every triangle still winds counter-clockwise.
+            area(&slices, &t);
+        }
+    }
+
+    /// Work used by a 4,000-vertex star with random radii (many reflex corners) and a
+    /// 4,000-vertex comb, against the default budget of the surface builder (2e8).
+    #[test]
+    fn large_polygons_fit_the_default_budget() {
+        let mut rng = Rng(42);
+        let star = star(&mut rng, 4000, [0., 0.], 100.);
+        let mut comb = vec![[0., 0.]];
+        for i in 0..1000 {
+            let x = f64::from(i);
+            comb.extend([[x + 0.25, 1.], [x + 0.5, 0.1], [x + 0.75, 1.]]);
+        }
+        comb.extend([[1000., 0.], [1000., -1.], [0., -1.]]);
+        // A plate with 200 holes in a row: one bridge per hole.
+        let plate = [[-1., -2.], [1001., -2.], [1001., 2.], [-1., 2.]];
+        let holes: Vec<Vec<[f64; 2]>> = (0..200)
+            .map(|i| {
+                let x = f64::from(i) * 5.;
+                vec![[x, -1.5], [x + 1., -1.5], [x + 1., -1.], [x, -1.]]
+            })
+            .collect();
+        let mut with_holes: Vec<&[[f64; 2]]> = vec![&plate];
+        with_holes.extend(holes.iter().map(Vec::as_slice));
+        for (name, rings) in [
+            ("star", vec![star.as_slice()]),
+            ("comb", vec![comb.as_slice()]),
+            ("plate with 200 holes", with_holes),
+        ] {
+            let mut work = 200_000_000;
+            let t = triangulate(&rings, &mut work).expect(name);
+            let used = 200_000_000 - work;
+            println!("{name}: {} triangles, {used} work units", t.len());
+            assert!(used < 50_000_000, "{name}: {used}");
+            check_result(&rings, &t, name);
+        }
     }
 }

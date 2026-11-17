@@ -4,7 +4,7 @@
 use cadkit_core::Document;
 use cadkit_core::ops::WalkOptions;
 
-use super::collect::{self, Encoder, Ring, Segments, Settings};
+use super::collect::{self, Encoder, Ring, Segments, Settings, extend_bounds};
 use super::surfaces::{check, range, relative};
 use crate::SceneError;
 use crate::buffers::{LineBuffer, LineReport};
@@ -146,11 +146,6 @@ pub fn line_buffer(doc: &Document, options: &LineOptions) -> Result<LineBuffer, 
         truncated: collected.truncated,
         ..LineReport::default()
     };
-    let (mut lo, mut hi) = collected.bounds().unwrap_or_default();
-    if !options.three_d {
-        lo[2] = 0.;
-        hi[2] = 0.;
-    }
     let mut origin = collected.median().unwrap_or_default();
     if !options.three_d {
         origin[2] = 0.;
@@ -184,10 +179,10 @@ pub fn line_buffer(doc: &Document, options: &LineOptions) -> Result<LineBuffer, 
     let mut buffer = LineBuffer {
         origin,
         components: if options.three_d { 3 } else { 2 },
-        min: relative(lo, origin),
-        max: relative(hi, origin),
         ..LineBuffer::default()
     };
+    // The box covers what was drawn, not what the budget left out.
+    let mut bounds = None;
     let mut buckets: Vec<Vec<usize>> = vec![Vec::new(); collected.layers.len()];
     for (index, item) in collected.items.iter().enumerate() {
         if fits.get(index) == Some(&true)
@@ -217,12 +212,23 @@ pub fn line_buffer(doc: &Document, options: &LineOptions) -> Result<LineBuffer, 
                 report.degenerate += 1;
                 continue;
             }
+            for ring in collected.rings_of(item) {
+                extend_bounds(&mut bounds, collected.points_of(ring));
+            }
             collect::push_item(&mut buffer.items, &collected, item);
             report.drawn += 1;
         }
         buffer
             .layers
             .push(range(name, 0, 0, first, segments.items.len()));
+    }
+    if let Some((mut lo, mut hi)) = bounds {
+        if !options.three_d {
+            lo[2] = 0.;
+            hi[2] = 0.;
+        }
+        buffer.min = relative(lo, origin);
+        buffer.max = relative(hi, origin);
     }
     report.segments = segments.items.len();
     buffer.segments = segments.positions;

@@ -8,7 +8,9 @@ use std::ops::Range;
 use cadkit_core::ops::WalkOptions;
 use cadkit_core::{Document, Point3};
 
-use super::collect::{self, Collected, Encoder, Ring, Segments, Settings, drop_axis, project};
+use super::collect::{
+    self, Collected, Encoder, Item, Ring, Segments, Settings, drop_axis, extend_bounds, project,
+};
 use crate::SceneError;
 use crate::buffers::{LayerRange, SurfaceMesh, SurfaceReport};
 use crate::triangulate::triangulate;
@@ -59,7 +61,8 @@ pub struct SurfaceOptions {
     /// white sheet) and missing colors. `None` keeps them black. Default `[201, 204, 210]`.
     pub neutral_color: Option<[u8; 3]>,
     /// Background segment colors are contrasted against, as in the SVG export
-    /// (`cadkit_core::svg::with_contrast`). `None` (default) keeps colors as resolved.
+    /// (`cadkit_core::svg::with_contrast`). Face outlines start from their face's color
+    /// (after [`Self::neutral_color`]). `None` (default) keeps colors as resolved.
     pub line_background: Option<[u8; 3]>,
     /// Most triangles. Default 2,000,000; at most 2^28.
     pub max_triangles: usize,
@@ -209,15 +212,6 @@ pub(super) fn check(
     Ok(())
 }
 
-/// Center of the box `lo`..`hi`, the origin of the buffers.
-pub(super) fn center(lo: [f64; 3], hi: [f64; 3]) -> [f64; 3] {
-    [
-        (lo[0] + hi[0]) / 2.,
-        (lo[1] + hi[1]) / 2.,
-        (lo[2] + hi[2]) / 2.,
-    ]
-}
-
 pub(super) fn relative(p: [f64; 3], origin: [f64; 3]) -> [f64; 3] {
     [p[0] - origin[0], p[1] - origin[1], p[2] - origin[2]]
 }
@@ -233,8 +227,11 @@ pub(super) fn relative(p: [f64; 3], origin: [f64; 3]) -> [f64; 3] {
 /// (flattened within [`SurfaceOptions::tolerance`]). Everything else is counted in
 /// [`SurfaceReport::skipped`].
 ///
-/// Two faces with the same set of corners (outline points rounded to a millionth of the
-/// model size) are drawn once, as the one with the longer walk path: a CityGML building lists
+/// Two faces with the same rings are drawn once, as the one with the longer walk path. Rings
+/// are the same when they visit the same corners in the same cyclic order, from any corner
+/// and either way round; holes count, and corners are compared rounded to a millionth of the
+/// face's own size, so a face and the same face with a hole, or two different polygons
+/// through one set of corners, are both drawn. A CityGML building lists
 /// the faces of its solid and again each boundary surface (wall, roof, ground), whose nested
 /// copy carries the surface type as its layer. Colors are resolved like the SVG export
 /// (`Entity::resolved_color_in`: `ByLayer`, `ByBlock` through block references).
@@ -296,10 +293,8 @@ pub fn surface_mesh(doc: &Document, options: &SurfaceOptions) -> Result<SurfaceM
         truncated: collected.truncated,
         ..SurfaceReport::default()
     };
-    let (lo, hi) = collected.bounds().unwrap_or_default();
     let origin = collected.median().unwrap_or_default();
-    let size = (hi[0] - lo[0]).max(hi[1] - lo[1]).max(hi[2] - lo[2]);
-    let sequence = deduplicate(&collected, center(lo, hi), size, &mut work, &mut report);
+    let sequence = deduplicate(&collected, origin, &mut work, &mut report);
     let (mut drawn, triangles) = triangulate_faces(
         &collected,
         &sequence,
@@ -333,10 +328,10 @@ pub fn surface_mesh(doc: &Document, options: &SurfaceOptions) -> Result<SurfaceM
     }
     let mut mesh = SurfaceMesh {
         origin,
-        min: relative(lo, origin),
-        max: relative(hi, origin),
         ..SurfaceMesh::default()
     };
+    // The box covers what was drawn, not faces left out as degenerate or over budget.
+    let mut bounds = None;
     let mut encoder = Encoder {
         origin,
         components: 3,
@@ -383,10 +378,19 @@ pub fn surface_mesh(doc: &Document, options: &SurfaceOptions) -> Result<SurfaceM
                 }
             }
             if encoded.is_ok() && d.segments {
+                // Face outlines are segments too: contrasted like wires.
+                let color = match options.line_background {
+                    Some([br, bg, bb]) if item.surface => {
+                        let [r, g, b] = item.color;
+                        let (r, g, b) = cadkit_core::svg::with_contrast((r, g, b), (br, bg, bb));
+                        [r, g, b]
+                    }
+                    _ => item.color,
+                };
                 encoded = segments.push(
                     &collected,
                     collected.rings_of(item),
-                    item.color,
+                    color,
                     index,
                     &mut encoder,
                 );
@@ -402,6 +406,9 @@ pub fn surface_mesh(doc: &Document, options: &SurfaceOptions) -> Result<SurfaceM
                 segments.rollback(mark);
                 report.degenerate += 1;
                 continue;
+            }
+            for ring in collected.rings_of(item) {
+                extend_bounds(&mut bounds, collected.points_of(ring));
             }
             collect::push_item(&mut mesh.items, &collected, item);
             if item.surface {
@@ -422,6 +429,10 @@ pub fn surface_mesh(doc: &Document, options: &SurfaceOptions) -> Result<SurfaceM
             first_segment,
             segments.items.len(),
         ));
+    }
+    if let Some((lo, hi)) = bounds {
+        mesh.min = relative(lo, origin);
+        mesh.max = relative(hi, origin);
     }
     report.triangles = mesh.triangle_items.len();
     report.segments = segments.items.len();
@@ -461,16 +472,9 @@ struct Drawn {
 fn deduplicate(
     collected: &Collected,
     origin: [f64; 3],
-    size: f64,
     work: &mut u64,
     report: &mut SurfaceReport,
 ) -> Vec<usize> {
-    let scale = if size.is_finite() && size > 0. {
-        1e6 / size
-    } else {
-        1.
-    };
-    let q = |v: f64, o: f64| ((v - o) * scale).round() as i64;
     let mut sequence: Vec<usize> = Vec::with_capacity(collected.items.len());
     let mut slots: HashMap<Vec<[i64; 3]>, usize> = HashMap::new();
     for (index, item) in collected.items.iter().enumerate() {
@@ -478,26 +482,10 @@ fn deduplicate(
             sequence.push(index);
             continue;
         }
-        let corners = collected
-            .rings_of(item)
-            .first()
-            .map(|r| collected.points_of(r))
-            .unwrap_or_default();
-        let cost = u64::try_from(corners.len())
-            .unwrap_or(u64::MAX)
-            .saturating_add(1);
-        if cost > *work {
-            *work = 0;
+        let Some(key) = face_key(collected, item, origin, work) else {
             report.truncated = true;
             break;
-        }
-        *work -= cost;
-        let mut key: Vec<[i64; 3]> = corners
-            .iter()
-            .map(|p| [q(p.x, origin[0]), q(p.y, origin[1]), q(p.z, origin[2])])
-            .collect();
-        key.sort_unstable();
-        key.dedup();
+        };
         match slots.entry(key) {
             Entry::Vacant(slot) => {
                 slot.insert(sequence.len());
@@ -518,6 +506,105 @@ fn deduplicate(
         }
     }
     sequence
+}
+
+/// Spends `cost` units of `work`; `None` (and an empty budget) when it cannot cover it.
+fn charge(work: &mut u64, cost: usize) -> Option<()> {
+    let cost = u64::try_from(cost).unwrap_or(u64::MAX);
+    match work.checked_sub(cost) {
+        Some(left) => {
+            *work = left;
+            Some(())
+        }
+        None => {
+            *work = 0;
+            None
+        }
+    }
+}
+
+/// What makes two faces the same: every ring as its corners in cyclic order, read from its
+/// smallest corner in the direction that gives the smaller sequence (so neither the first
+/// corner nor the winding matters), the outline first and the holes sorted after it, each
+/// ring led by its length. Corners are rounded to a millionth of the face's own size rather
+/// than the model's: a stray entity far away must not make small faces look alike. `None`
+/// when the work budget runs out.
+fn face_key(
+    collected: &Collected,
+    item: &Item,
+    origin: [f64; 3],
+    work: &mut u64,
+) -> Option<Vec<[i64; 3]>> {
+    let rings = collected.rings_of(item);
+    let mut bounds = None;
+    if let Some(outline) = rings.first() {
+        extend_bounds(&mut bounds, collected.points_of(outline));
+    }
+    let size = bounds.map_or(0., |(lo, hi)| {
+        (hi[0] - lo[0]).hypot(hi[1] - lo[1]).hypot(hi[2] - lo[2])
+    });
+    let scale = if size.is_finite() && size > 0. {
+        1e6 / size
+    } else {
+        1.
+    };
+    // Saturates instead of overflowing for a degenerate size far from the origin.
+    let q = |v: f64, o: f64| ((v - o) * scale).round() as i64;
+    let mut keys: Vec<Vec<[i64; 3]>> = Vec::with_capacity(rings.len());
+    for ring in rings {
+        let points = collected.points_of(ring);
+        charge(work, points.len().saturating_add(1))?;
+        let mut corners: Vec<[i64; 3]> = points
+            .iter()
+            .map(|p| [q(p.x, origin[0]), q(p.y, origin[1]), q(p.z, origin[2])])
+            .collect();
+        corners.dedup();
+        while corners.len() > 1 && corners.first() == corners.last() {
+            corners.pop();
+        }
+        keys.push(canonical(&corners, work)?);
+    }
+    // The outline stays first; the holes may come in any order.
+    keys.get_mut(1..).unwrap_or_default().sort_unstable();
+    let total = keys
+        .iter()
+        .fold(0usize, |n, k| n.saturating_add(k.len()).saturating_add(1));
+    let mut key = Vec::with_capacity(total);
+    for ring in &keys {
+        key.push([i64::try_from(ring.len()).unwrap_or(i64::MAX), 0, 0]);
+        key.extend_from_slice(ring);
+    }
+    Some(key)
+}
+
+/// `ring` rotated to start at its smallest corner and read in the direction that gives the
+/// smaller sequence; `None` when the work budget runs out (a ring that visits its smallest
+/// corner many times costs one pass per visit).
+fn canonical(ring: &[[i64; 3]], work: &mut u64) -> Option<Vec<[i64; 3]>> {
+    let n = ring.len();
+    let Some(&smallest) = ring.iter().min() else {
+        return Some(Vec::new());
+    };
+    let mut best: Option<Vec<[i64; 3]>> = None;
+    for start in (0..n).filter(|&i| ring.get(i) == Some(&smallest)) {
+        for forward in [true, false] {
+            charge(work, n)?;
+            let candidate: Vec<[i64; 3]> = (0..n)
+                .filter_map(|k| {
+                    let i = if forward {
+                        (start + k) % n
+                    } else {
+                        (start + n - k) % n
+                    };
+                    ring.get(i).copied()
+                })
+                .collect();
+            if best.as_ref().is_none_or(|b| candidate < *b) {
+                best = Some(candidate);
+            }
+        }
+    }
+    best
 }
 
 /// Triangulates the faces of `sequence` until a budget runs out.
@@ -1218,8 +1305,433 @@ mod tests {
         assert!(empty.positions.is_empty() && empty.layers.is_empty());
     }
 
+    /// World coordinates of mesh vertex i.
+    fn world(mesh: &SurfaceMesh, i: u32) -> [f64; 3] {
+        let v = vertex(mesh, i);
+        [0, 1, 2].map(|k| mesh.origin[k] + v[k])
+    }
+
+    #[test]
+    fn faces_that_share_corners_are_not_duplicates() {
+        let outer = vec![
+            p(0., 0., 0.),
+            p(10., 0., 0.),
+            p(10., 10., 0.),
+            p(0., 10., 0.),
+        ];
+        let hole = vec![p(2., 2., 0.), p(4., 2., 0.), p(4., 4., 0.), p(2., 4., 0.)];
+        // Two concave quads through the same four corners (the fourth inside the triangle of
+        // the other three), joined differently: different faces of area 5 each.
+        let (a, b, c, d) = (
+            p(20., 0., 0.),
+            p(24., 0., 0.),
+            p(22., 4., 0.),
+            p(22., 1., 0.),
+        );
+        let mut doc = Document::new();
+        let model = doc.model_space_mut();
+        model.entities.push(polygon("0", &outer));
+        model.entities.push(Entity::new(EntityKind::Polygon {
+            exterior: outer.clone(),
+            interiors: vec![hole],
+        }));
+        model.entities.push(polygon("0", &[a, b, c, d]));
+        model.entities.push(polygon("0", &[a, b, d, c]));
+        // Two triangles of one quad share an edge but not all corners.
+        model.entities.push(polygon(
+            "0",
+            &[p(30., 0., 0.), p(31., 0., 0.), p(31., 1., 0.)],
+        ));
+        model.entities.push(polygon(
+            "0",
+            &[p(30., 0., 0.), p(31., 1., 0.), p(30., 1., 0.)],
+        ));
+        // The same face again, starting elsewhere and wound the other way: a duplicate.
+        model.entities.push(polygon("0", &[d, c, b, a]));
+        let mesh = surface_mesh(&doc, &SurfaceOptions::new()).unwrap();
+        assert_eq!((mesh.report.faces, mesh.report.duplicates), (6, 1));
+        assert!(
+            (area(&mesh) - (100. + 96. + 5. + 5. + 1.)).abs() < 1e-9,
+            "{}",
+            area(&mesh)
+        );
+    }
+
+    #[test]
+    fn a_stray_entity_at_zero_keeps_the_origin_extents_and_errors_right() {
+        let (x0, y0, z0) = (500_000.123, 4_000_000.456, 50.789);
+        let mut doc = Document::new();
+        let model = doc.model_space_mut();
+        // The usual leftover at 0,0 in a drawing at map coordinates.
+        model
+            .entities
+            .push(Entity::line(p(0., 0., 0.), p(1., 0., 0.)));
+        for i in 0..20 {
+            let x = x0 + f64::from(i) * 3.1;
+            model.entities.push(polygon(
+                "0",
+                &[p(x, y0, z0), p(x + 1., y0, z0), p(x + 1., y0 + 1., z0 + 2.)],
+            ));
+        }
+        // Two different small triangles a few decimetres apart: not duplicates, although
+        // they are tiny against the extents of the model.
+        model.entities.push(polygon(
+            "0",
+            &[
+                p(x0, y0 + 5., z0),
+                p(x0 + 1., y0 + 5., z0),
+                p(x0, y0 + 6., z0),
+            ],
+        ));
+        model.entities.push(polygon(
+            "0",
+            &[
+                p(x0, y0 + 5., z0),
+                p(x0 + 1., y0 + 5., z0),
+                p(x0 + 0.3, y0 + 6., z0),
+            ],
+        ));
+        let mesh = surface_mesh(&doc, &SurfaceOptions::new()).unwrap();
+        assert_eq!((mesh.report.faces, mesh.report.duplicates), (22, 0));
+        // The origin sits among the faces, not between them and the stray line.
+        assert!((mesh.origin[0] - x0).abs() < 100. && (mesh.origin[1] - y0).abs() < 10.);
+        let lo = [0, 1, 2].map(|k| mesh.origin[k] + mesh.min[k]);
+        let hi = [0, 1, 2].map(|k| mesh.origin[k] + mesh.max[k]);
+        for (got, want) in lo.into_iter().zip([0., 0., 0.]).chain(hi.into_iter().zip([
+            x0 + 19. * 3.1 + 1.,
+            y0 + 6.,
+            z0 + 2.,
+        ])) {
+            assert!((got - want).abs() < 1e-6, "{lo:?} {hi:?}");
+        }
+        // The stray line is 4,000 km from the origin: its f32 offsets are a quarter metre
+        // apart, and max_error says so.
+        assert!(
+            mesh.max_error > 0.01 && mesh.max_error <= 0.25,
+            "{}",
+            mesh.max_error
+        );
+        // The stray line comes first in walk order, and so first on its layer.
+        let wire = mesh.layers[0].first_segment as usize;
+        assert_eq!(
+            mesh.items.path(mesh.segment_items[wire] as usize),
+            Some(&[0][..])
+        );
+        for (k, want) in [0., 0., 0., 1., 0., 0.].into_iter().enumerate() {
+            let axis = k % 3;
+            let got = mesh.origin[axis] + f64::from(mesh.segments[wire * 6 + k]);
+            assert!((got - want).abs() <= mesh.max_error, "{got} {want}");
+        }
+        // Every face vertex round-trips within the stated error, which is far smaller there.
+        let mut source = Vec::new();
+        for e in &doc.models[0].entities {
+            if let EntityKind::Polygon { exterior, .. } = &e.kind {
+                source.extend(exterior.iter().copied());
+            }
+        }
+        assert_eq!(source.len(), mesh.positions.len() / 3);
+        for (i, q) in source.iter().enumerate() {
+            let w = world(&mesh, i as u32);
+            for (got, want) in w.into_iter().zip([q.x, q.y, q.z]) {
+                assert!((got - want).abs() <= mesh.max_error);
+                assert!((got - want).abs() < 1e-4);
+            }
+        }
+        // The line buffer, flat and in 3D, uses the same origin rule.
+        for three_d in [false, true] {
+            let options = super::super::LineOptions::new().with_three_d(three_d);
+            let lines = super::super::line_buffer(&doc, &options).unwrap();
+            let n = usize::from(lines.components);
+            assert_eq!(lines.origin[..2], mesh.origin[..2]);
+            assert_eq!(lines.origin[2], if three_d { mesh.origin[2] } else { 0. });
+            assert!(lines.max_error > 0.01 && lines.max_error <= 0.25);
+            let first = lines.layers[0].first_segment as usize;
+            assert_eq!(
+                lines.items.path(lines.segment_items[first] as usize),
+                Some(&[0][..])
+            );
+            for k in 0..2 * n {
+                let want = if k == n { 1. } else { 0. };
+                let got = lines.origin[k % n] + f64::from(lines.segments[first * 2 * n + k]);
+                assert!((got - want).abs() <= lines.max_error, "{got} {want}");
+            }
+            let lo = [0, 1, 2].map(|k| lines.origin[k] + lines.min[k]);
+            assert!(lo.iter().all(|v| v.abs() < 1e-6), "{lo:?}");
+            assert_eq!(
+                lines.max[2],
+                if three_d { hi[2] - lines.origin[2] } else { 0. }
+            );
+        }
+    }
+
+    #[test]
+    fn extents_cover_what_was_drawn() {
+        let mut doc = Document::new();
+        let model = doc.model_space_mut();
+        model
+            .entities
+            .push(polygon("0", &[p(0., 0., 0.), p(1., 0., 0.), p(1., 1., 0.)]));
+        // A collinear "face" far away is not drawn and must not stretch the box.
+        model.entities.push(polygon(
+            "0",
+            &[p(1e5, 1e5, 0.), p(2e5, 2e5, 0.), p(3e5, 3e5, 0.)],
+        ));
+        let mesh = surface_mesh(&doc, &SurfaceOptions::new()).unwrap();
+        assert_eq!((mesh.report.faces, mesh.report.degenerate), (1, 1));
+        let hi = [0, 1, 2].map(|k| mesh.origin[k] + mesh.max[k]);
+        assert_eq!(hi, [1., 1., 0.]);
+        // A face left out by the triangle budget is not in the box either.
+        let mut doc = Document::new();
+        let model = doc.model_space_mut();
+        model
+            .entities
+            .push(polygon("0", &[p(0., 0., 0.), p(1., 0., 0.), p(1., 1., 0.)]));
+        model.entities.push(polygon(
+            "0",
+            &[p(9., 0., 0.), p(10., 0., 0.), p(10., 1., 0.)],
+        ));
+        let mesh = surface_mesh(&doc, &SurfaceOptions::new().with_max_triangles(1)).unwrap();
+        assert!(mesh.report.truncated);
+        let hi = [0, 1, 2].map(|k| mesh.origin[k] + mesh.max[k]);
+        assert_eq!(hi, [1., 1., 0.]);
+        // Nothing drawn: an empty box at the origin.
+        let none = surface_mesh(&doc, &SurfaceOptions::new().with_max_triangles(0)).unwrap();
+        assert_eq!((none.min, none.max), ([0.; 3], [0.; 3]));
+    }
+
+    #[test]
+    fn mirrored_blocks_keep_triangles_wound_about_their_normals() {
+        let mut doc = Document::new();
+        doc.model_space_mut().is_3d = true;
+        let square = vec![p(0., 0., 0.), p(1., 0., 0.), p(1., 1., 0.), p(0., 1., 0.)];
+        let ell = vec![
+            p(0., 0., 1.),
+            p(3., 0., 1.),
+            p(3., 1., 1.),
+            p(1., 1., 1.),
+            p(1., 3., 1.),
+            p(0., 3., 1.),
+        ];
+        doc.blocks.push(Block::new("tile").with_entities(vec![
+            Entity::new(EntityKind::Face {
+                points: square,
+                filled: true,
+            }),
+            Entity::polyline(ell, true),
+        ]));
+        for (k, scale) in [
+            Vec3::new(1., 1., 1.),
+            Vec3::new(-1., 1., 1.),
+            Vec3::new(1., -2., 1.),
+            Vec3::new(1., 1., -1.),
+            Vec3::new(-1., -1., -1.),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut insert = Entity::insert("tile", p(10. * k as f64, 0., 0.));
+            if let EntityKind::Insert { scale: s, .. } = &mut insert.kind {
+                *s = scale;
+            }
+            doc.model_space_mut().entities.push(insert);
+        }
+        let mesh = surface_mesh(&doc, &SurfaceOptions::new()).unwrap();
+        assert_eq!(mesh.report.faces, 10);
+        // area() checks each triangle against its normal; |det| scales the areas.
+        let expected = (1. + 5.) * (1. + 1. + 2. + 1. + 1.);
+        assert!((area(&mesh) - expected).abs() < 1e-9, "{}", area(&mesh));
+        // A mirror that reverses the winding seen along the face's normal flips the normal: x
+        // or y mirrored (an odd number of them), but not z, which keeps the plane's winding.
+        let z: Vec<f32> = (0..mesh.items.len())
+            .map(|item| {
+                let t = mesh
+                    .triangle_items
+                    .iter()
+                    .position(|&i| i as usize == item)
+                    .unwrap();
+                mesh.normals[mesh.indices[3 * t] as usize * 3 + 2]
+            })
+            .collect();
+        assert_eq!(z, [1., 1., -1., -1., -1., -1., 1., 1., 1., 1.]);
+    }
+
+    #[test]
+    fn colors_through_nested_blocks_match_the_svg_export() {
+        let mut doc = Document::new();
+        doc.layers.push(Layer::new("0"));
+        doc.layers
+            .push(Layer::new("roof").with_color(Color::rgb(200, 0, 0)));
+        doc.layers
+            .push(Layer::new("blue").with_color(Color::rgb(0, 0, 250)));
+        let line = |y: f64, color: Color, layer: Option<&str>| {
+            let mut e = Entity::line(p(0., y, 0.), p(1., y, 0.));
+            e.color = color;
+            e.layer = layer.map(str::to_owned);
+            e
+        };
+        let mut face = Entity::new(EntityKind::Face {
+            points: vec![p(0., 5., 0.), p(1., 5., 0.), p(1., 6., 0.)],
+            filled: true,
+        });
+        face.color = Color::ByBlock;
+        doc.blocks.push(Block::new("inner").with_entities(vec![
+            line(0., Color::ByBlock, Some("0")),
+            line(1., Color::ByLayer, Some("0")),
+            line(2., Color::ByLayer, Some("blue")),
+            line(3., Color::ByLayer, None),
+            face,
+        ]));
+        let mut nested = Entity::insert("inner", p(0., 0., 0.));
+        nested.color = Color::ByBlock;
+        doc.blocks.push(
+            Block::new("outer").with_entities(vec![nested, line(4., Color::ByBlock, Some("0"))]),
+        );
+        let mut green = Entity::insert("outer", p(0., 0., 0.)).on_layer("roof");
+        green.color = Color::rgb(0, 128, 0);
+        let mut by_layer = Entity::insert("outer", p(10., 0., 0.)).on_layer("roof");
+        by_layer.color = Color::ByLayer;
+        let mut on_zero = Entity::insert("inner", p(20., 0., 0.));
+        on_zero.color = Color::ByLayer;
+        let model = doc.model_space_mut();
+        model.entities.extend([green, by_layer, on_zero]);
+
+        let lines = super::super::line_buffer(&doc, &super::super::LineOptions::new()).unwrap();
+        let mut ours = std::collections::BTreeSet::new();
+        for s in 0..lines.segment_items.len() {
+            let item = lines.segment_items[s] as usize;
+            let path = lines.items.path(item).unwrap();
+            let model_path = &path[..lines.items.items[item].model_path_len as usize];
+            let rgb = &lines.segment_colors[s * 6..s * 6 + 3];
+            ours.insert((
+                format!("{}", model_path[0]),
+                format!("#{:02x}{:02x}{:02x}", rgb[0], rgb[1], rgb[2]),
+            ));
+        }
+        let mut options = cadkit_core::svg::SvgOptions::new();
+        options.entity_refs = true;
+        let svg = cadkit_core::svg::render(&doc, &options);
+        let mut theirs = std::collections::BTreeSet::new();
+        for element in svg.split('<').skip(1) {
+            let attr = |name: &str| {
+                let key = format!("{name}=\"");
+                let start = element.find(&key)? + key.len();
+                Some(element[start..].split('"').next()?.to_owned())
+            };
+            if let (Some(e), Some(stroke)) = (attr("data-e"), attr("stroke")) {
+                theirs.insert((e, stroke));
+            }
+        }
+        assert_eq!(ours, theirs, "{svg}");
+        // And the colors themselves: the green reference, its ByLayer twin on red "roof",
+        // and the reference on layer 0 whose ByBlock children come out black.
+        let expect = [
+            ("0", "#008000"), // ByBlock, nested ByBlock
+            ("0", "#c80000"), // ByLayer on layer 0 inherits "roof"
+            ("0", "#0000fa"), // ByLayer on "blue"
+            ("1", "#c80000"),
+            ("1", "#0000fa"),
+            ("2", "#000000"),
+            ("2", "#0000fa"),
+        ];
+        let expect: std::collections::BTreeSet<_> = expect
+            .iter()
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .collect();
+        assert_eq!(ours, expect);
+        // Faces resolve the same way (without the neutral color for black).
+        let mesh = surface_mesh(&doc, &SurfaceOptions::new().with_neutral_color(None)).unwrap();
+        let mut face_colors: Vec<(u32, [u8; 3])> = (0..mesh.items.len())
+            .filter(|&i| mesh.items.items[i].surface)
+            .map(|i| {
+                let t = mesh
+                    .triangle_items
+                    .iter()
+                    .position(|&k| k as usize == i)
+                    .unwrap();
+                let v = mesh.indices[3 * t] as usize * 3;
+                (
+                    mesh.items.path(i).unwrap()[0],
+                    [mesh.colors[v], mesh.colors[v + 1], mesh.colors[v + 2]],
+                )
+            })
+            .collect();
+        face_colors.sort_unstable();
+        assert_eq!(
+            face_colors,
+            [(0, [0, 128, 0]), (1, [200, 0, 0]), (2, [0, 0, 0])]
+        );
+    }
+
+    #[test]
+    fn face_outlines_are_contrasted_like_other_segments() {
+        let mut doc = Document::new();
+        let mut white = polygon("0", &[p(0., 0., 0.), p(1., 0., 0.), p(1., 1., 0.)]);
+        white.color = Color::rgb(255, 255, 255);
+        doc.model_space_mut().entities.push(white);
+        let options = SurfaceOptions::new().with_line_background(Some([255; 3]));
+        let mesh = surface_mesh(&doc, &options).unwrap();
+        // The face keeps its color; its outline on a white background turns black.
+        assert_eq!(mesh.colors[..3], [255, 255, 255]);
+        assert_eq!(mesh.segment_colors[..6], [0, 0, 0, 0, 0, 0]);
+        let plain = surface_mesh(&doc, &SurfaceOptions::new()).unwrap();
+        assert_eq!(plain.segment_colors[..3], [255, 255, 255]);
+    }
+
+    #[test]
+    fn a_huge_insert_array_stops_at_the_budgets() {
+        let mut doc = Document::new();
+        doc.blocks.push(
+            Block::new("cell").with_entities(vec![Entity::new(EntityKind::Face {
+                points: vec![p(0., 0., 0.), p(1., 0., 0.), p(1., 1., 0.), p(0., 1., 0.)],
+                filled: true,
+            })]),
+        );
+        let mut array = Entity::insert("cell", p(0., 0., 0.));
+        if let EntityKind::Insert {
+            columns,
+            rows,
+            column_spacing,
+            row_spacing,
+            ..
+        } = &mut array.kind
+        {
+            (*columns, *rows, *column_spacing, *row_spacing) = (1000, 1000, 2., 2.);
+        }
+        doc.model_space_mut().entities.push(array);
+        let options = SurfaceOptions::new()
+            .with_max_triangles(1000)
+            .with_max_segments(1000);
+        let start = std::time::Instant::now();
+        let mesh = surface_mesh(&doc, &options).unwrap();
+        assert!(mesh.report.truncated);
+        assert!(mesh.report.triangles <= 1000 && mesh.report.segments <= 1000);
+        assert!(mesh.report.faces >= 250, "{:?}", mesh.report);
+        // Every cell has the same path; none of them is a duplicate of another.
+        assert_eq!(mesh.report.duplicates, 0);
+        assert!(start.elapsed().as_secs() < 5, "{:?}", start.elapsed());
+        let lines = super::super::line_buffer(
+            &doc,
+            &super::super::LineOptions::new().with_max_segments(1000),
+        )
+        .unwrap();
+        assert!(lines.report.truncated && lines.report.segments <= 1000);
+    }
+
+    /// Peak resident memory of the test process (Linux), for the measurement below.
+    fn peak_memory() -> String {
+        std::fs::read_to_string("/proc/self/status")
+            .ok()
+            .and_then(|s| {
+                s.lines()
+                    .find(|l| l.starts_with("VmHWM"))
+                    .map(str::to_owned)
+            })
+            .unwrap_or_default()
+    }
+
     /// Timing and buffer sizes of 100,000 closed quads at map coordinates. Run with
-    /// `cargo test -p cadkit-scene --features document -- --ignored --nocapture`.
+    /// `cargo test -p cadkit-scene --features document --profile release -- --ignored --nocapture`
+    /// (a debug build is several times slower).
     #[test]
     #[ignore = "measurement"]
     fn measure_hundred_thousand_quads() {
@@ -1274,6 +1786,39 @@ mod tests {
             (lines.segments.len() * 4 + lines.segment_colors.len() + lines.segment_items.len() * 4)
                 as f64
                 / 1e6,
+        );
+        println!("peak memory so far: {}", peak_memory());
+        // A hostile insert array: 1000 x 1000 references to a block with one face, with the
+        // default budgets.
+        let mut doc = Document::new();
+        doc.blocks.push(
+            Block::new("cell").with_entities(vec![Entity::new(EntityKind::Face {
+                points: vec![p(0., 0., 0.), p(1., 0., 0.), p(1., 1., 0.), p(0., 1., 0.)],
+                filled: true,
+            })]),
+        );
+        let mut array = Entity::insert("cell", p(500_000., 5_600_000., 0.));
+        if let EntityKind::Insert {
+            columns,
+            rows,
+            column_spacing,
+            row_spacing,
+            ..
+        } = &mut array.kind
+        {
+            (*columns, *rows, *column_spacing, *row_spacing) = (1000, 1000, 2., 2.);
+        }
+        doc.model_space_mut().entities.push(array);
+        let start = std::time::Instant::now();
+        let mesh = surface_mesh(&doc, &SurfaceOptions::new()).unwrap();
+        println!(
+            "1000 x 1000 array: {:?}, {} faces, {} triangles, {} segments, truncated {}, peak memory {}",
+            start.elapsed(),
+            mesh.report.faces,
+            mesh.report.triangles,
+            mesh.report.segments,
+            mesh.report.truncated,
+            peak_memory(),
         );
     }
 }
