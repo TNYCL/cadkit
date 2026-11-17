@@ -432,10 +432,8 @@ impl V8Seed {
         // Only a DGN V8 element id can name one of the seed's raster attachments; a DWG
         // handle on an image would make the writer look for (and fail to find) a seed
         // attachment to preserve, so images from other formats become new attachments.
-        if matches!(
-            out.source.format,
-            Format::Dwg | Format::Dxf | Format::DgnV7 | Format::CityGml
-        ) {
+        // Documents of unknown origin keep their ids, which may come from the seed.
+        if !matches!(out.source.format, Format::DgnV8 | Format::Unknown) {
             clear_image_ids(&mut chosen.entities);
         }
         out.models = vec![chosen];

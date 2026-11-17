@@ -245,8 +245,7 @@ fn repack_preserves_streams_and_storage_metadata() {
 
 #[test]
 fn corpus_repack_and_new_geometry() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../corpus/public/gdal/test_dgnv8.dgn");
+    let path = crate::fuzz_tests::corpus_root().join("public/gdal/test_dgnv8.dgn");
     let Ok(seed) = std::fs::read(path) else {
         return;
     };

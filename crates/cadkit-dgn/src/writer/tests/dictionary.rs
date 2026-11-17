@@ -584,8 +584,7 @@ fn a_second_level_table_joins_the_first_on_its_page() {
 /// dictionary streams byte for byte.
 #[test]
 fn public_seed_dictionary_is_kept_byte_for_byte() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../corpus/public/gdal/test_dgnv8.dgn");
+    let path = crate::fuzz_tests::corpus_root().join("public/gdal/test_dgnv8.dgn");
     let Ok(seed) = std::fs::read(path) else {
         return;
     };

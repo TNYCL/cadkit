@@ -262,6 +262,58 @@ fn private_shapes_decode_and_standalone_tags_have_null_targets() {
     }
 }
 
+/// Writing a private file back into itself (`clear_seed_model`) keeps the type of every
+/// graphic record: the histograms of the graphic pages before and after are equal, the
+/// one-vertex shapes included (type 6, not the zero-length line a point is written as).
+/// Files the writer refuses (nonzero Z in a 2D seed, FORMAT_NOTES "Source model, dimension
+/// and text length") are counted.
+#[cfg(feature = "write")]
+#[test]
+fn private_write_back_keeps_element_types() {
+    let read = ReadOptions::default();
+    let options = cadkit_dgn::WriteOptions::default()
+        .with_clear_seed_model(true)
+        .with_timestamp_ms(1.7e12);
+    let histogram = |bytes: &[u8]| {
+        let mut h: BTreeMap<u16, usize> = BTreeMap::new();
+        let native = cadkit_dgn::native::v8::read(bytes, &read).unwrap();
+        for raw in native
+            .models
+            .iter()
+            .flat_map(|m| &m.graphic_pages)
+            .flat_map(|p| &p.elements)
+        {
+            *h.entry(raw.type_code()).or_default() += 1;
+        }
+        h
+    };
+    let (mut written, mut refused, mut shapes) = (0usize, 0usize, 0usize);
+    for path in common::private_dgn_paths() {
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        let doc = cadkit_dgn::read(&bytes, &read).unwrap();
+        let Ok(out) = cadkit_dgn::write_v8(&doc, &bytes, &options) else {
+            refused += 1;
+            continue;
+        };
+        written += 1;
+        let before = histogram(&bytes);
+        assert!(
+            histogram(&out) == before,
+            "a write-back changed element types"
+        );
+        shapes += before.get(&6).copied().unwrap_or(0);
+    }
+    if written + refused > 0 {
+        eprintln!(
+            "write-back element types: {written} files kept every type ({shapes} shapes), \
+             {refused} refused"
+        );
+        assert!(written > 0);
+    }
+}
+
 /// Every raster frame of the private corpus is placed from its matrix and edge lengths
 /// (`0x108`/`0x110` along the image axes) and fits inside its own element range: neither
 /// range fallback is needed, and every frame knows its pixel size.

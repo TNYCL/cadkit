@@ -108,6 +108,13 @@ fn other_documents_need_an_explicit_model_index() {
             .to_string()
             .contains("design models only")
     );
+    // The only model of a document is taken, but a layout is not a design model.
+    assert!(
+        write_v8(&models(&[ModelKind::Layout]), &seed, &defaults)
+            .unwrap_err()
+            .to_string()
+            .contains("design models only")
+    );
     // The pre-parsed seed path chooses alike.
     let parsed = V8Seed::from_bytes(&seed).unwrap();
     let report =
@@ -190,6 +197,8 @@ fn prepared_images_from_other_formats_are_new_attachments() {
     for (format, kept) in [
         (cadkit_core::Format::Dwg, false),
         (cadkit_core::Format::Dxf, false),
+        (cadkit_core::Format::DgnV7, false),
+        (cadkit_core::Format::CityGml, false),
         (cadkit_core::Format::DgnV8, true),
         (cadkit_core::Format::Unknown, true),
     ] {
@@ -273,5 +282,51 @@ fn unmeasured_center_text_takes_the_estimate_when_asked() {
         assert!(position.distance_to(*expected) < 1e-9);
         // 6 characters x height 2 x width factor 0.5, stored as the text's length.
         assert_eq!(got.props["dgn.text_length"], Value::Float(6.0));
+    }
+}
+
+/// A one-vertex shape read from a file (a `Point` with `dgn.type` = 6) is written as a
+/// type 6 record with one vertex (0x70 + one point), so a file written back into itself
+/// keeps its element types; a point of any other origin stays a zero-length line (type 3).
+#[test]
+fn one_vertex_shapes_are_written_back_as_shapes() {
+    for three in [false, true] {
+        let z = if three { 3.5 } else { 0.0 };
+        let mut shape = Entity::new(EntityKind::Point {
+            position: Point3::new(1.5, 2.5, z),
+        });
+        shape.props.insert("dgn.type".into(), Value::Int(6));
+        shape
+            .props
+            .insert("dgn.graphic_group".into(), Value::Int(7));
+        let mut line_point = Entity::new(EntityKind::Point {
+            position: Point3::new(4.0, 5.0, 0.0),
+        });
+        line_point.props.insert("dgn.type".into(), Value::Int(3));
+        let plain = Entity::new(EntityKind::Point {
+            position: Point3::new(6.0, 7.0, 0.0),
+        });
+        let d = document(three, vec![shape, line_point, plain]);
+        let bytes = write_v8(&d, &seed(three), &WriteOptions::default()).unwrap();
+        let native = v8::read(&bytes, &ReadOptions::default()).unwrap();
+        let records = &native.models[0].graphic_pages[0].elements;
+        let types: Vec<u16> = records.iter().map(|r| r.type_code()).collect();
+        assert_eq!(types, [6, 3, 3]);
+        let psize = if three { 24 } else { 16 };
+        assert_eq!(records[0].bytes.len(), 0x70 + psize);
+        assert_eq!(records[0].bytes[0x68..0x6c], 1u32.to_le_bytes());
+        let read = crate::read(&bytes, &ReadOptions::default()).unwrap();
+        assert!(
+            read.warnings
+                .iter()
+                .all(|w| !w.code.starts_with("dgn.decode_failed"))
+        );
+        let entities = &read.models[0].entities;
+        for (got, want) in entities.iter().zip(&d.models[0].entities) {
+            assert_eq!(got.kind, want.kind);
+        }
+        assert_eq!(entities[0].props["dgn.type"], Value::Int(6));
+        assert_eq!(entities[0].props["dgn.graphic_group"], Value::Int(7));
+        assert_eq!(entities[2].props["dgn.type"], Value::Int(3));
     }
 }

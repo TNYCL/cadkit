@@ -68,21 +68,27 @@ pub struct WriteOptions {
     /// ([`ModelKind::Model`]) and every other model is a paper layout
     /// ([`ModelKind::Layout`], as DXF and DWG documents have), that design model. Models
     /// that are not written are listed by [`write_v8_report`] as `dgn.model_not_written`
-    /// warnings. The chosen model must be a design model.
+    /// warnings. The chosen model must be a design model (a document whose only model is a
+    /// layout fails). The DGN reader maps every model of a file, sheet models included, to
+    /// [`ModelKind::Model`], so a DGN document with more than one model needs an index.
     pub model_index: Option<usize>,
     /// How a source model whose 2D/3D dimension differs from the seed's is written.
     /// [`DimensionPolicy::Strict`] (the default) fails; [`DimensionPolicy::Promote2dTo3d`]
     /// writes a 2D model into a 3D seed with the Z it has (0 for 2D geometry) and a 3D model
     /// into a 2D seed only when every Z is 0; [`DimensionPolicy::ProjectToSeed`] also
-    /// projects 3D geometry onto `z = 0` for a 2D seed, as [`V8Seed::prepare_document`] does.
+    /// projects 3D geometry onto `z = 0` for a 2D seed, as [`V8Seed::prepare_document`] does:
+    /// points lose their Z and tilted normals become `+Z`, so a tilted circle, arc or text
+    /// is written in the XY plane at its own size, not as its projection.
     pub dimension_policy: DimensionPolicy,
     /// Center/right text without `dgn.text_length` is written with the estimated length
     /// `characters × character width` (height × width factor, drawing units) instead of
-    /// failing. It is the estimate the reader and left text use, and reads back with the
-    /// same anchor; MicroStation's measured lengths are 0.6–0.9 of it (FORMAT_NOTES,
-    /// "Mapping decisions"), so another application may draw such text shifted along its
-    /// baseline. [`write_v8_report`] counts these texts (`dgn.text_length_estimated`).
-    /// Defaults to false.
+    /// failing. It is the estimate the reader and left text use, and cadkit reads the text
+    /// back with the same anchor. An application that measures its glyphs places the text
+    /// from the stored origin instead: MicroStation's measured lengths are 0.6–0.9 of the
+    /// estimate (FORMAT_NOTES, "Mapping decisions"), so center text appears shifted back
+    /// along its baseline by 0.05–0.2 and right text by 0.1–0.4 of the estimated length.
+    /// [`write_v8_report`] counts these texts (`dgn.text_length_estimated`). Defaults to
+    /// false.
     pub estimate_text_length: bool,
 }
 impl Default for WriteOptions {
@@ -944,6 +950,28 @@ impl State<'_> {
         let flags = if component { 0x4000_0000 } else { 0 };
         let mut links = vec![];
         let mut b = match &e.kind {
+            // A shape with a single vertex, which the reader maps to a point (FORMAT_NOTES,
+            // "Degenerate shapes and null tag targets"), goes back as the record it was, so
+            // a file written back into itself keeps its element types; any other point is
+            // the zero-length line DGN draws as a point.
+            EntityKind::Point { position }
+                if matches!(e.props.get("dgn.type"), Some(Value::Int(6))) =>
+            {
+                let p = coordinate(*position, self.model)?;
+                let mut b = self.header(
+                    6 | flags,
+                    0x70 + psize,
+                    id,
+                    level,
+                    self.options.timestamp_ms,
+                    e,
+                    three,
+                )?;
+                u32_at(&mut b, 0x68, 1)?;
+                point(&mut b, 0x70, p, three)?;
+                range(&mut b, &[p])?;
+                b
+            }
             EntityKind::Point { position } => {
                 let p = coordinate(*position, self.model)?;
                 let mut b = self.header(
