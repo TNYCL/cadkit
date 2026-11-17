@@ -459,7 +459,6 @@ export function buildMesh(doc: DocJson, model: number, opts: SurfaceOptions = {}
 	};
 	for (const f of raw) for (const r of f.rings) r.forEach(grow);
 	const center: [number, number, number] = [(lo[0]! + hi[0]!) / 2, (lo[1]! + hi[1]!) / 2, (lo[2]! + hi[2]!) / 2];
-	const size = Math.max(hi[0]! - lo[0]!, hi[1]! - lo[1]!, hi[2]! - lo[2]!, 1e-12);
 
 	// Duplicates: the same rings, each as its corners in cyclic order from its smallest corner
 	// in the direction that gives the smaller sequence (so neither the first corner nor the
