@@ -37,7 +37,7 @@
 		"@resvg/resvg-js": "2.6.2",
 		"fontkit": "3.0.0",
 		"typescript": "6.0.3",
-		"parse5": "8.0.0",
+		"parse5": "8.1.1",
 		"wrangler": "4.163.0"
 	}
 }
